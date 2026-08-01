@@ -135,6 +135,10 @@ def build_dashboard_object(dash_id, title, panels):
             "panelsJSON": json.dumps(panels_json),
             "optionsJSON": json.dumps({"useMargins": True, "syncColors": False, "hidePanelTitles": False}),
             "version": 1,
+            # dashboard 对象本身也必须有 searchSourceJSON(存整页 query/filter),缺失会导致
+            # "Cannot read properties of undefined (reading 'searchSourceJSON')" 报错
+            "kibanaSavedObjectMeta": {
+                "searchSourceJSON": json.dumps({"query": {"query": "", "language": "kuery"}, "filter": []})},
         },
         "references": [{"name": f"{pi}:panel_{pi}", "type": "visualization", "id": vid}
                        for pi, vid, *_ in panels],
