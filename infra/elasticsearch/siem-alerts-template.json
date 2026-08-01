@@ -22,7 +22,8 @@
         "event.action": { "type": "keyword" },
         "event.category": { "type": "keyword" },
         "event.raw": { "type": "match_only_text" },
-        "event_count": { "type": "integer" }
+        "event_count": { "type": "integer" },
+        "related_events": { "type": "nested", "dynamic": true }
       }
     }
   }

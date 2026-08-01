@@ -3,8 +3,6 @@ package com.siem;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.api.common.functions.FlatMapFunction;
 import org.apache.flink.util.Collector;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -12,13 +10,12 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * 规则评估函数:解析事件 → 逐规则求值 → 命中则输出符合 Alert Schema 的告警 JSON。
+ * 单事件规则评估:对每条事件逐规则求值,命中则输出符合 Alert Schema 的告警 JSON。
  *
  * 告警为扁平结构(决策 D):关键事件字段提升到告警顶层,完整事件存为扁平字符串 event.raw。
  */
-public class DetectionFunction implements FlatMapFunction<String, String> {
+public class DetectionFunction implements FlatMapFunction<Event, String> {
 
-    private static final Logger LOG = LoggerFactory.getLogger(DetectionFunction.class);
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private final RuleRegistry registry;
@@ -28,18 +25,11 @@ public class DetectionFunction implements FlatMapFunction<String, String> {
     }
 
     @Override
-    public void flatMap(String json, Collector<String> out) throws Exception {
-        Map<String, Object> event;
-        try {
-            event = EventParser.parse(json);
-        } catch (Exception e) {
-            LOG.warn("跳过无法解析的事件: {}", json, e);
-            return;
-        }
-
+    public void flatMap(Event event, Collector<String> out) throws Exception {
+        Map<String, Object> fields = event.getFields();
         for (Rule rule : registry.getRules()) {
-            if (rule.getCondition().matches(event)) {
-                out.collect(MAPPER.writeValueAsString(buildAlert(json, event, rule)));
+            if (rule.getCondition().matches(fields)) {
+                out.collect(MAPPER.writeValueAsString(buildAlert(event.getRawJson(), fields, rule)));
             }
         }
     }

@@ -74,7 +74,7 @@ public class RuleEngineTest {
                 + "\"source.ip\":\"10.0.0.8\","
                 + "\"host.name\":\"server04\"}";
         java.util.List<String> out = new java.util.ArrayList<>();
-        fn.flatMap(eventJson, new org.apache.flink.util.Collector<>() {
+        fn.flatMap(EventParser.parseEvent(eventJson), new org.apache.flink.util.Collector<>() {
             @Override
             public void collect(String record) {
                 out.add(record);

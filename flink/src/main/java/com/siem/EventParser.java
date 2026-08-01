@@ -2,11 +2,12 @@ package com.siem;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * 事件解析:将 Kafka 中的事件 JSON 解析为扁平点分字段 Map。
+ * 事件解析:将 Kafka 中的事件 JSON 解析为扁平点分字段 Map,并提取事件时间戳。
  *
  * Logstash json codec 输出的点分字段(如 source.ip)可能是嵌套对象
  * ({"source":{"ip":...}}),统一展开为扁平 key (source.ip),便于规则按字段名匹配。
@@ -24,6 +25,22 @@ public final class EventParser {
         Map<String, Object> flat = new LinkedHashMap<>();
         flatten("", raw, flat);
         return flat;
+    }
+
+    public static Event parseEvent(String json) throws Exception {
+        Map<String, Object> fields = parse(json);
+        return new Event(json, fields, timestampMillis(fields.get("@timestamp")));
+    }
+
+    private static long timestampMillis(Object ts) {
+        if (ts == null) {
+            return System.currentTimeMillis();
+        }
+        try {
+            return Instant.parse(ts.toString()).toEpochMilli();
+        } catch (Exception e) {
+            return System.currentTimeMillis();
+        }
     }
 
     private static void flatten(String prefix, Map<String, Object> map, Map<String, Object> out) {
