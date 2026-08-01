@@ -45,32 +45,16 @@ public class DetectionJob {
 
 
         /*
-         * Detection Rule:
+         * 规则引擎:解析事件 → 逐规则匹配(RuleRegistry)→ 生成符合 Alert Schema 的告警 JSON。
          *
-         * authentication_failure
-         *
+         * 告警为扁平结构(决策 D):关键事件字段提升到告警顶层,完整事件存为 event.raw 扁平字符串。
          */
 
         DataStream<String> alerts =
-                events
-                        .filter(
-                                json -> json.contains(
-                                        "authentication_failure"
-                                )
-                        )
-                        .map(
-                                json -> String.format(
-                                        """
-                                        {
-                                          "alert_type":"ssh_authentication_failure",
-                                          "severity":"medium",
-                                          "description":"SSH authentication failure detected",
-                                          "raw_event":%s
-                                        }
-                                        """,
-                                        json
-                                )
-                        );
+                events.flatMap(
+                        new DetectionFunction(new RuleRegistry())
+                );
+
 
         alerts.print();
         alerts.sinkTo(
@@ -83,7 +67,7 @@ public class DetectionJob {
                         .setElementConverter((element, context) ->
                                 new IndexOperation.Builder<JsonData>()
                                         .index("siem-alerts")
-                                        .document(JsonData.fromJson(element))   // element 是 JSON 字符串
+                                        .document(JsonData.fromJson(element))   // element 是告警 JSON 字符串
                                         .build()
                         )
                         .build()

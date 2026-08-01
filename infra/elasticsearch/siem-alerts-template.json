@@ -1,0 +1,29 @@
+{
+  "index_patterns": ["siem-alerts"],
+  "priority": 100,
+  "template": {
+    "settings": {
+      "number_of_shards": 1,
+      "number_of_replicas": 1
+    },
+    "mappings": {
+      "properties": {
+        "@timestamp": { "type": "date" },
+        "alert.created_at": { "type": "date" },
+        "alert.id": { "type": "keyword" },
+        "alert.rule_id": { "type": "keyword" },
+        "alert.rule_name": { "type": "keyword" },
+        "alert.type": { "type": "keyword" },
+        "alert.severity": { "type": "keyword" },
+        "alert.description": { "type": "text" },
+        "source.ip": { "type": "ip" },
+        "user.name": { "type": "keyword" },
+        "host.name": { "type": "keyword" },
+        "event.action": { "type": "keyword" },
+        "event.category": { "type": "keyword" },
+        "event.raw": { "type": "match_only_text" },
+        "event_count": { "type": "integer" }
+      }
+    }
+  }
+}

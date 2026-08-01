@@ -1,0 +1,47 @@
+{
+  "index_patterns": ["siem-events-*"],
+  "priority": 100,
+  "template": {
+    "settings": {
+      "number_of_shards": 1,
+      "number_of_replicas": 1
+    },
+    "mappings": {
+      "properties": {
+        "@timestamp": { "type": "date" },
+        "event": {
+          "properties": {
+            "category": { "type": "keyword" },
+            "action": { "type": "keyword" },
+            "outcome": { "type": "keyword" },
+            "type": { "type": "keyword" },
+            "original": { "type": "match_only_text" },
+            "schema_version": { "type": "keyword" }
+          }
+        },
+        "source": {
+          "properties": {
+            "ip": { "type": "ip" }
+          }
+        },
+        "user": {
+          "properties": {
+            "name": { "type": "keyword" }
+          }
+        },
+        "host": {
+          "properties": {
+            "name": { "type": "keyword" }
+          }
+        },
+        "related": {
+          "properties": {
+            "ip": { "type": "keyword" }
+          }
+        },
+        "message": { "type": "text" },
+        "pipeline": { "type": "keyword" }
+      }
+    }
+  }
+}

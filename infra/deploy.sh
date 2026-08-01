@@ -18,10 +18,16 @@ DEPLOY="$HOME/projects/mini-siem"
 JAR="detection-job-1.0.jar"
 
 echo "==> 同步基础设施配置到 $DEPLOY"
-rm -rf "$DEPLOY/logstash"
-mkdir -p "$DEPLOY/logstash"
 cp "$REPO/infra/docker-compose.yml" "$DEPLOY/docker-compose.yml"
-cp -r "$REPO/infra/logstash/." "$DEPLOY/logstash/"
+mkdir -p "$DEPLOY/logstash"
+# 注意:不能 rm -rf logstash 目录——它是 Logstash 容器的 bind mount 源,
+# 删目录会让 Docker Desktop 的挂载注册失效,容器重启时挂载失败(exit 127)。
+# 必须原地同步,保留目录本身。
+if command -v rsync >/dev/null 2>&1; then
+    rsync -a --delete "$REPO/infra/logstash/" "$DEPLOY/logstash/"
+else
+    cp -r "$REPO/infra/logstash/." "$DEPLOY/logstash/"
+fi
 
 echo "==> 同步 Flink 工程"
 rm -rf "$DEPLOY/flink/src"
