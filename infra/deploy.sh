@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+#
+# deploy.sh — 将 Windows 仓库(唯一来源)同步到 WSL 部署目录,并构建/部署 Flink job
+#
+# 用法:
+#   Windows 仓库根目录执行:  wsl bash infra/deploy.sh
+#   或在 WSL 内执行:         bash /mnt/d/Project/hsiem-platform/infra/deploy.sh
+#
+# 说明:
+#   - infra 配置(如 logstash.conf)同步后需重启对应容器才生效:
+#       docker compose -f ~/projects/mini-siem/docker-compose.yml restart logstash
+#   - 更新运行中的 Flink job 前,先 cancel 旧 job 再重新提交,避免重复运行。
+#
+set -euo pipefail
+
+REPO="/mnt/d/Project/hsiem-platform"
+DEPLOY="$HOME/projects/mini-siem"
+JAR="detection-job-1.0.jar"
+
+echo "==> 同步基础设施配置到 $DEPLOY"
+rm -rf "$DEPLOY/logstash"
+mkdir -p "$DEPLOY/logstash"
+cp "$REPO/infra/docker-compose.yml" "$DEPLOY/docker-compose.yml"
+cp -r "$REPO/infra/logstash/." "$DEPLOY/logstash/"
+
+echo "==> 同步 Flink 工程"
+rm -rf "$DEPLOY/flink/src"
+mkdir -p "$DEPLOY/flink"
+cp "$REPO/flink/pom.xml" "$DEPLOY/flink/pom.xml"
+cp -r "$REPO/flink/src" "$DEPLOY/flink/src"
+
+echo "==> 构建 Flink job jar (mvn clean package)"
+(cd "$DEPLOY/flink" && mvn -q clean package -DskipTests)
+
+echo "==> 拷贝 $JAR 到 siem-flink-jobmanager 容器"
+docker cp "$DEPLOY/flink/target/$JAR" siem-flink-jobmanager:/opt/flink/
+
+echo ""
+echo "✅ 部署就绪。提交运行(如需更新运行中的 job,先 cancel 旧 job):"
+echo "   docker exec siem-flink-jobmanager flink run -d /opt/flink/$JAR"
+echo ""
+echo "💡 发送一条测试日志:"
+echo "   echo 'Jul 31 10:20:00 server03 sshd[9999]: Failed password for test from 172.16.1.20' | nc -w1 localhost 5000"
