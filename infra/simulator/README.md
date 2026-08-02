@@ -1,11 +1,19 @@
 # simulator — 日志模拟器
 
-Phase 2 落地物。用于向 Logstash (localhost:5000) 发送测试日志。
+向 Logstash (localhost:5000) 发送测试日志,验证链路。
 
-当前手动示例(单条 SSH 登录失败日志):
+## 单条测试日志
 
 ```bash
-echo 'Jul 31 10:20:00 server03 sshd[9999]: Failed password for test from 172.16.1.20' | nc -w1 localhost 5000
+echo 'Aug 1 10:20:00 server03 sshd[9999]: Failed password for test from 172.16.1.20' | nc -w1 localhost 5000
 ```
 
-Phase 2 规划:写一个可配置的模拟器脚本,支持批量/持续生成、随机 IP/用户/时间,方便多规则与时间窗口检测测试。
+## 暴力破解测试
+
+`brute-force-test.sh` 发送 5 条同一源 IP 的认证失败 + 1 条推进 watermark 的事件,触发时间窗口规则(rule-ssh-brute-force-001):
+
+```bash
+bash /mnt/d/Project/hsiem-platform/infra/simulator/brute-force-test.sh
+```
+
+> 事件时间窗口在 watermark 越过窗口边界时才关闭,所以需要一条时间戳在窗口之后的事件来推进 watermark(脚本已处理)。
