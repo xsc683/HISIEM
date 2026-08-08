@@ -6,7 +6,7 @@
 # 因此除了窗口内的事件,还要发一条时间戳在窗口之后的事件来推进 watermark。
 #
 # 用法(在 WSL 内执行):
-#   bash /mnt/d/Project/hsiem-platform/infra/simulator/brute-force-test.sh
+#   bash /mnt/d/Project/SIEM/infra/simulator/brute-force-test.sh
 #
 set -euo pipefail
 

@@ -10,7 +10,9 @@
 #
 set -euo pipefail
 
-REPO="/mnt/d/Project/hsiem-platform/infra/elasticsearch"
+# 本脚本所在目录 = 模板文件位置,不依赖具体挂载路径
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO="$SCRIPT_DIR"
 
 echo "==> 应用 siem-events 索引模板"
 curl -s -X PUT "http://localhost:9200/_index_template/siem-events" \

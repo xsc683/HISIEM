@@ -2,17 +2,19 @@
 """创建 Kibana Data View、可视化、Dashboard,并导出 NDJSON 存档。
 
 用法(在 WSL 内执行,依赖本仓库 /mnt/d 路径):
-    python3 /mnt/d/Project/hsiem-platform/infra/kibana/create_dashboards.py
+    python3 /mnt/d/Project/SIEM/infra/kibana/create_dashboards.py
 
 幂等:重复执行会覆盖同 id 的对象。
 """
 import json
+import os
 import urllib.error
 import urllib.request
 
 KIBANA = "http://localhost:5601"
-REPO_DIR = "/mnt/d/Project/hsiem-platform/infra/kibana"
-NDJSON_PATH = REPO_DIR + "/siem-dashboards.ndjson"
+# 本脚本所在目录 = NDJSON 存档位置,不依赖具体挂载路径
+REPO_DIR = os.path.dirname(os.path.abspath(__file__))
+NDJSON_PATH = os.path.join(REPO_DIR, "siem-dashboards.ndjson")
 
 
 def api(method, path, body=None, headers=None):

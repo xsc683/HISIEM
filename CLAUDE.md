@@ -23,19 +23,19 @@
 ./mvnw -f flink/pom.xml clean package
 
 # 部署(同步仓库 → WSL + 构建 + 拷 jar 进 jobmanager)
-MSYS_NO_PATHCONV=1 wsl bash /mnt/d/Project/hsiem-platform/infra/deploy.sh
+MSYS_NO_PATHCONV=1 wsl bash /mnt/d/Project/SIEM/infra/deploy.sh
 
 # 提交/取消 Flink job(容器内)
 docker exec siem-flink-jobmanager flink run -d /opt/flink/detection-job-1.0.jar
 docker exec siem-flink-jobmanager flink cancel <JobID>   # 先 flink list 查 ID
 
 # 应用 ES 模板 / 建 Kibana dashboard(在 WSL 内)
-bash /mnt/d/Project/hsiem-platform/infra/elasticsearch/apply-templates.sh
-bash /mnt/d/Project/hsiem-platform/infra/kibana/create-dashboards.sh
+bash /mnt/d/Project/SIEM/infra/elasticsearch/apply-templates.sh
+bash /mnt/d/Project/SIEM/infra/kibana/create-dashboards.sh
 
 # 发测试日志 / 暴力破解测试
 echo 'Aug 1 10:20:00 server03 sshd[9999]: Failed password for test from 172.16.1.20' | nc -w1 localhost 5000
-bash /mnt/d/Project/hsiem-platform/infra/simulator/brute-force-test.sh
+bash /mnt/d/Project/SIEM/infra/simulator/brute-force-test.sh
 ```
 
 > WSL 从 Windows 调用时加 `MSYS_NO_PATHCONV=1`(避免 Git Bash 路径转换)。

@@ -4,7 +4,7 @@
 #
 # 用法:
 #   Windows 仓库根目录执行:  wsl bash infra/deploy.sh
-#   或在 WSL 内执行:         bash /mnt/d/Project/hsiem-platform/infra/deploy.sh
+#   或在 WSL 内执行:         bash /mnt/d/Project/SIEM/infra/deploy.sh
 #
 # 说明:
 #   - infra 配置(如 logstash.conf)同步后需重启对应容器才生效:
@@ -13,7 +13,9 @@
 #
 set -euo pipefail
 
-REPO="/mnt/d/Project/hsiem-platform"
+# 仓库根目录 = 本脚本(infra/deploy.sh)所在目录的上一级,不依赖具体挂载路径
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO="$(cd "$SCRIPT_DIR/.." && pwd)"
 DEPLOY="$HOME/projects/mini-siem"
 JAR="detection-job-1.0.jar"
 
@@ -35,11 +37,20 @@ mkdir -p "$DEPLOY/flink"
 cp "$REPO/flink/pom.xml" "$DEPLOY/flink/pom.xml"
 cp -r "$REPO/flink/src" "$DEPLOY/flink/src"
 
+echo "==> 同步 kafka 脚本"
+mkdir -p "$DEPLOY/kafka"
+cp "$REPO/infra/kafka/create-topics.sh" "$DEPLOY/kafka/create-topics.sh"
+
 echo "==> 构建 Flink job jar (mvn clean package)"
 (cd "$DEPLOY/flink" && mvn -q clean package -DskipTests)
 
 echo "==> 拷贝 $JAR 到 siem-flink-jobmanager 容器"
-docker cp "$DEPLOY/flink/target/$JAR" siem-flink-jobmanager:/opt/flink/
+if docker inspect siem-flink-jobmanager >/dev/null 2>&1; then
+    docker cp "$DEPLOY/flink/target/$JAR" siem-flink-jobmanager:/opt/flink/
+else
+    echo "  [warn] 容器 siem-flink-jobmanager 不存在,跳过 docker cp。先 docker compose up 再手动拷入:"
+    echo "         docker cp $DEPLOY/flink/target/$JAR siem-flink-jobmanager:/opt/flink/"
+fi
 
 echo ""
 echo "✅ 部署就绪。提交运行(如需更新运行中的 job,先 cancel 旧 job):"

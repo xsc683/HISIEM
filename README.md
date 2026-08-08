@@ -28,7 +28,7 @@ Linux 日志 ──> Logstash (Grok 解析 + ECS 标准化)
 ## 仓库结构
 
 ```
-hsiem-platform/
+SIEM/
 ├── pom.xml / src/          Spring Boot 应用(占位,未来 alert-service 告警服务)
 ├── flink/                  独立 Flink job 工程(规则引擎 + 检测任务)
 │   ├── pom.xml             Flink 2.1,shade 打 jar,mainClass com.siem.DetectionJob
@@ -59,12 +59,12 @@ hsiem-platform/
 ```bash
 # 1. 克隆仓库,进入 infra/
 # 2. 部署基础设施(docker compose)
-wsl bash /mnt/d/Project/hsiem-platform/infra/deploy.sh   # 同步到 ~/projects/mini-siem 并构建
+wsl bash /mnt/d/Project/SIEM/infra/deploy.sh   # 同步到 ~/projects/mini-siem 并构建
 cd ~/projects/mini-siem && docker compose up -d
 # 3. 应用 ES 索引模板
-bash /mnt/d/Project/hsiem-platform/infra/elasticsearch/apply-templates.sh
+bash /mnt/d/Project/SIEM/infra/elasticsearch/apply-templates.sh
 # 4. 创建 Kibana dashboard
-bash /mnt/d/Project/hsiem-platform/infra/kibana/create-dashboards.sh
+bash /mnt/d/Project/SIEM/infra/kibana/create-dashboards.sh
 # 5. 提交 Flink 检测 job
 docker exec siem-flink-jobmanager flink run -d /opt/flink/detection-job-1.0.jar
 # 6. 验证(发一条测试日志)

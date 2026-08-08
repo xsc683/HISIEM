@@ -19,7 +19,7 @@
 ```bash
 # WSL 内建议部署目录(与 deploy.sh 默认一致)
 mkdir -p ~/projects/mini-siem
-# 仓库在 Windows 侧路径,假设 D:\Project\hsiem-platform,即 WSL 内 /mnt/d/Project/hsiem-platform
+# 仓库在 Windows 侧路径:D:\Project\SIEM,即 WSL 内 /mnt/d/Project/SIEM
 ```
 
 ## 3. 一键同步 + 构建(可选,或手动)
@@ -28,7 +28,7 @@ mkdir -p ~/projects/mini-siem
 
 ```bash
 # 从 Windows 仓库根执行(WSL 内则去掉 wsl 前缀和 MSYS_NO_PATHCONV=1)
-MSYS_NO_PATHCONV=1 wsl bash /mnt/d/Project/hsiem-platform/infra/deploy.sh
+MSYS_NO_PATHCONV=1 wsl bash /mnt/d/Project/SIEM/infra/deploy.sh
 ```
 
 `deploy.sh` 做的事:
@@ -38,6 +38,12 @@ MSYS_NO_PATHCONV=1 wsl bash /mnt/d/Project/hsiem-platform/infra/deploy.sh
 4. WSL 内 `mvn clean package` 构建 jar
 5. `docker cp` 进 `siem-flink-jobmanager` 容器
 
+> ⚠️ **新机器上 deploy.sh 的 `docker cp` 会失败**(容器还不存在)。新机器流程:
+> 只跑前 3 步同步 + 第 4 步构建,跳过 `docker cp`;先 `docker compose up`,
+> 再拷 jar 进容器并提交(见 §8)。
+> 若 WSL 内没有 Java/Maven,改在 Windows 侧用 IDEA 自带 Maven 构建(见 §11),
+> 再 `docker cp /mnt/d/Project/SIEM/flink/target/detection-job-1.0.jar siem-flink-jobmanager:/opt/flink/`。
+
 ## 4. 启动基础设施
 
 ```bash
@@ -46,24 +52,34 @@ cd ~/projects/mini-siem && docker compose up -d
 docker ps
 ```
 
-## 5. 应用 ES 索引模板
+## 5. 创建 Kafka topic
 
 ```bash
-bash /mnt/d/Project/hsiem-platform/infra/elasticsearch/apply-templates.sh
+bash /mnt/d/Project/SIEM/infra/kafka/create-topics.sh
+```
+
+> 必需:apache/kafka:3.8 默认关闭 `auto.create.topics.enable`,而 Flink 订阅 topic
+> 的元数据查询不会触发自动建主题。不建的话 Flink job 会因 `UnknownTopicOrPartitionException`
+> 反复 RESTARTING。
+
+## 6. 应用 ES 索引模板
+
+```bash
+bash /mnt/d/Project/SIEM/infra/elasticsearch/apply-templates.sh
 ```
 
 > 若 `siem-alerts` 索引已存在旧 mapping,需要删掉重建才能套上新模板:
 > `curl -X DELETE http://localhost:9200/siem-alerts`
 
-## 6. 创建 Kibana dashboard
+## 7. 创建 Kibana dashboard
 
 ```bash
-bash /mnt/d/Project/hsiem-platform/infra/kibana/create-dashboards.sh
+bash /mnt/d/Project/SIEM/infra/kibana/create-dashboards.sh
 # 访问 http://localhost:5601/app/dashboards#/view/dashboard-siem-overview
 # 记得把时间范围选大(如 Last 7 days)以看到数据
 ```
 
-## 7. 提交 Flink 检测 job
+## 8. 提交 Flink 检测 job
 
 ```bash
 # jar 已在容器 /opt/flink/ 下(deploy.sh 或手动 docker cp)
@@ -73,7 +89,7 @@ docker exec siem-flink-jobmanager flink run -d /opt/flink/detection-job-1.0.jar
 > 更新 job:先 `flink list` 拿到 JobID → `flink cancel <JobID>` → 重新 `flink run`。
 > 因为已开 checkpointing + `committedOffsets`,重启**不会重放历史**(不会重复告警)。
 
-## 8. 验证链路
+## 9. 验证链路
 
 ```bash
 # 发一条测试日志
@@ -85,25 +101,37 @@ curl -s "http://localhost:9200/siem-events-2026.08.01/_count"
 curl -s "http://localhost:9200/siem-alerts/_count"
 
 # 暴力破解测试(5 条同 IP 失败 + 1 条推进 watermark)
-bash /mnt/d/Project/hsiem-platform/infra/simulator/brute-force-test.sh
+bash /mnt/d/Project/SIEM/infra/simulator/brute-force-test.sh
 ```
 
-## 9. 常见故障
+## 10. 常见故障
 
 | 症状 | 原因 | 处理 |
 | --- | --- | --- |
+| Flink job 一直 RESTARTING,日志报 `UnknownTopicOrPartitionException: siem-events` | Kafka topic 未创建(3.8 默认关 auto-create) | 跑 `create-topics.sh` 建 topic 后重启 job |
 | Logstash 容器 exit 127 | Docker Desktop bind mount 注册失效(曾对挂载目录 rm -rf) | 重启 Docker Desktop 清缓存 |
 | 重启 job 后告警翻倍 | 用 `earliest()` 忽略已提交 offset | 用 `committedOffsets(EARLIEST)`(已是默认) |
 | Logstash 配置报 Unknown setting 'naming_strategy' | 该选项在 Logstash 8.14 不存在 | 移除(仓库已无此配置) |
 | Kibana dashboard 报 searchSourceJSON undefined | dashboard 对象缺 `kibanaSavedObjectMeta.searchSourceJSON` | 用 create_dashboards.py 重建 |
+| WSL 跑 `.sh` 报 `set: pipefail: invalid option name` | 脚本 CRLF 换行(仓库已强制 `*.sh` 用 LF) | 重新 checkout 或 `sed -i 's/\r$//'` |
 | 单机 24G 内存吃紧 | ES 4G + Flink TM | 调低 ES_JAVA_OPTS 或加内存 |
 
-## 10. 构建命令参考
+## 11. 构建命令参考
+
+Windows 侧用 **IDEA 自带的 Maven**(已验证:3.9.16 + Java 21,依赖已缓存到 `C:\Users\1\.m2\repository`),
+绕开 `./mvnw`(bash 版)在 Windows 用 curl 下载 Maven 时的 schannel 证书吊销报错
+(`CRYPT_E_REVOCATION_OFFLINE`)。在 Git Bash 里执行:
 
 ```bash
-# Flink job(Windows 侧,mvnw)
-./mvnw -f flink/pom.xml clean package     # 含测试
+MVN="D:/application/IntelliJ IDEA 2026.2.0.1/plugins/maven-plugin/lib/maven3/bin/mvn.cmd"
 
-# Spring Boot 应用(占位)
-./mvnw clean package
+# Flink 检测 job —— 注意用 -f flink/pom.xml(根 pom.xml 是 Spring Boot 占位工程,不是它)
+"$MVN" -f flink/pom.xml clean package          # 含 9 个 JUnit 用例
+"$MVN" -f flink/pom.xml clean package -DskipTests   # 部署时加快
+
+# Spring Boot 占位应用(根 pom)
+"$MVN" -f pom.xml clean package
 ```
+
+> 备选:`mvnw.cmd`(.cmd 版 wrapper)下载走 PowerShell,也能绕开 curl 的 schannel 问题;
+> 或在 IDEA 里直接把 `flink/` 作为 Maven 工程打开,点 Build 即可(IDEA 默认就用自带 Maven)。

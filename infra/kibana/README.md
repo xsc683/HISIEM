@@ -21,7 +21,7 @@ Phase 2 已落地(2026-08-01)。
 
 ```bash
 # 创建/更新(Kibana 需在运行)
-bash /mnt/d/Project/hsiem-platform/infra/kibana/create-dashboards.sh
+bash /mnt/d/Project/SIEM/infra/kibana/create-dashboards.sh
 ```
 
 > 注意:Kibana 8.14 API 写操作需 `kbn-xsrf` 头(脚本已带)。
