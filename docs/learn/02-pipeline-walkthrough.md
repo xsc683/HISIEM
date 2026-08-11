@@ -1,55 +1,50 @@
-# 功课 2 — 用本项目管道走一遍全流程
+# 功课 2 — 本项目管道全流程走读
 
-> 目标:拿一条真实日志,从发送到告警,逐段看懂每个组件做了什么。读完你会对"日志 → 事件 → 告警"有体感,并知道每个环节对应哪个文件。
+> 本文档以一条真实日志为样本,逐段说明它经过的每个组件做了什么,使"日志 → 事件 → 告警"有具体对应。每个阶段给出**所在组件、文件位置、处理逻辑与中间产物**。
 
-## 1. 完整旅程(总览)
+## 1. 完整旅程总览
 
 ```
-① 发日志         echo '...' | nc -w1 localhost 5000
-② Logstash 收     tcp input 收到一行文本
-③ Logstash 解析   grok 提取字段 → date 定时间 → mutate 加 ECS 字段 → 变成「事件」
-④ Logstash 双写   → ES siem-events-*   +   → Kafka siem-events
-⑤ Flink 消费      KafkaSource 读事件 → EventParser 扁平化
-⑥ Flink 检测      DetectionFunction 逐条规则匹配 → 命中生成「告警」JSON
-⑦ Flink 写 ES     ES sink → siem-alerts
-⑧ Kibana 展示     分析师在 dashboard 看到告警
+① 发送日志     echo '...' | nc -w1 localhost 5000
+② Logstash 采集 tcp input 接收一行原始文本
+③ Logstash 解析 grok 提取字段 → date 设置事件时间 → mutate 补充 ECS 字段 → 生成「事件」
+④ Logstash 双写 → Elasticsearch siem-events-*(长期存储)+ Kafka siem-events(事件总线)
+⑤ Flink 消费    KafkaSource 读取事件 → EventParser 扁平化为字段 Map
+⑥ Flink 检测    DetectionFunction 逐条规则匹配,命中则生成「告警」JSON
+⑦ Flink 写出    ES sink 写入 siem-alerts
+⑧ Kibana 呈现   分析师在 SIEM 总览 dashboard 查看告警
 ```
 
-## 2. 我们用一条真实日志走一遍
+## 2. 样本日志与处理过程
 
-发送这条(注意:这是 SSH 认证失败,用户 `test`,来自 `172.16.1.20`):
+**样本日志**(SSH 认证失败,目标用户 `test`,来源 IP `172.16.1.20`):
 
-```bash
-echo 'Aug 1 10:20:00 server03 sshd[9999]: Failed password for test from 172.16.1.20' | nc -w1 localhost 5000
+```
+Aug 1 10:20:00 server03 sshd[9999]: Failed password for test from 172.16.1.20
 ```
 
-### ②③ Logstash:一行文本 → 一个事件
+### ②③ Logstash:文本行 → 结构化事件
 
-`infra/logstash/pipeline/logstash.conf` 三段:
+配置文件:`infra/logstash/pipeline/logstash.conf`,由 input/filter/output 三段组成。
 
-**input**:TCP 5000 收原始行
-```
+**input**:从 TCP 5000 接收原始日志行。
+```ruby
 tcp { port => 5000 }
 ```
 
-**filter** 按顺序做三件事(看 `logstash.conf`):
-```ruby
-grok {   # ① 正则提取:把文本里的信息挖出来
-  match => { "message" => "%{SYSLOGTIMESTAMP:timestamp} %{HOSTNAME:host.name} sshd.*Failed password for %{USERNAME:user.name} from %{IP:source.ip}" }
-}
-date {   # ② @timestamp = 日志里写的时间(事件时间),时区 Asia/Shanghai
-  match => [ "timestamp", "MMM dd HH:mm:ss" ]
-  timezone => "Asia/Shanghai"
-}
-mutate { # ③ 补 ECS 标准字段:统一命名,规则才好写
-  add_field => { "event.action" => "authentication_failure" "event.category" => "authentication" ... }
-}
-```
+**filter** 按顺序执行三次处理:
 
-**这条日志解析后变成的事件**(就是写进 ES/Kafka 的 JSON,可简化理解):
+| 步骤 | 插件 | 作用 | 本样本结果 |
+| --- | --- | --- | --- |
+| ① 字段提取 | `grok` | 用正则从文本中提取结构化字段 | `host.name=server03`、`user.name=test`、`source.ip=172.16.1.20` |
+| ② 时间解析 | `date` | 将日志中写的时间解析为 `@timestamp`(事件时间,时区 Asia/Shanghai) | `@timestamp=2026-08-01T02:20:00.000Z` |
+| ③ ECS 补全 | `mutate` | 补充规则依赖的标准字段 | `event.action=authentication_failure`、`event.category=authentication` 等 |
+
+**解析后生成的事件**(即写入 ES 与 Kafka 的 JSON 内容):
+
 ```json
 {
-  "@timestamp": "2026-08-01T02:20:00.000Z",   // 事件时间(日期由 date filter 补当年)
+  "@timestamp": "2026-08-01T02:20:00.000Z",
   "event.action": "authentication_failure",
   "event.category": "authentication",
   "source.ip": "172.16.1.20",
@@ -58,113 +53,128 @@ mutate { # ③ 补 ECS 标准字段:统一命名,规则才好写
   "message": "Aug 1 10:20:00 server03 sshd[9999]: Failed password for test from 172.16.1.20"
 }
 ```
-> 注意:**文本 → 结构化**,字段名统一成 ECS 点分(`source.ip`),这就是「归一化」。
 
-### ④ Logstash 双写(一份存,一份给检测)
+> 此阶段的关键点:文本被**结构化**(字段从无到有)且**归一化**(字段命名统一为 ECS 点分形式)。
 
-`output` 段同时写两个地方:
-- **Elasticsearch** → `siem-events-%{+YYYY.MM.dd}`(按日志日期分索引,长期存储)
-- **Kafka** → topic `siem-events`(事件总线,给 Flink)
+### ④ Logstash 双写:一份用于存储,一份用于检测
 
-> 为什么两份?**存储和检测解耦**——ES 管"能不能查到",Kafka 管"能不能实时吃到"。
+`output` 段同时写两个目标:
 
-### ⑤ Flink:消费 + 扁平化
+| 目标 | 索引 / topic | 用途 |
+| --- | --- | --- |
+| Elasticsearch | `siem-events-%{+YYYY.MM.dd}` | 长期存储与检索(按日志日期分索引) |
+| Kafka | `siem-events` | 事件总线,供 Flink 实时消费 |
 
-`flink/.../DetectionJob.java`:
+**设计意图**:存储与检测解耦——ES 解决"能否检索到历史",Kafka 解决"能否实时消费并检测"。
+
+### ⑤ Flink:消费与扁平化
+
+`flink/src/main/java/com/siem/DetectionJob.java`:
+
 ```java
 KafkaSource<String> source = KafkaSource.builder().setTopics("siem-events")...build();
 DataStream<Event> parsed = env.fromSource(source, ...).map(EventParser::parseEvent);
 ```
-`EventParser.parseEvent` 把 JSON 再展开成**扁平字段 Map**(`source.ip` 作为 key),并抽出事件时间戳。这就是 Flink 内部流转的 `Event` 对象。
 
-### ⑥ Flink:规则匹配(关键一步)
+`EventParser.parseEvent` 将事件 JSON 展开为**扁平字段 Map**(将 `source.ip` 作为单一 key),并提取事件时间戳,生成 Flink 内部流转的 `Event` 对象。
 
-`DetectionFunction` 对每个事件**逐条规则问**:
+### ⑥ Flink:规则匹配(检测核心)
+
+`DetectionFunction` 对每个事件逐条规则求值:
+
 ```java
 for (Rule rule : registry.getRules()) {
-    if (rule.getCondition().matches(fields)) {   // 满足条件?
-        out.collect(告警JSON);                   // 命中 → 生成告警
+    if (rule.getCondition().matches(fields)) {   // 条件满足
+        out.collect(告警JSON);                    // 命中 → 生成告警
     }
 }
 ```
 
-这条 `test` 用户的日志**命中 2 条规则**(看 `RuleRegistry.java`):
-| 规则 | 条件 | severity |
+本样本事件(`test` 用户)命中 **2 条规则**(见 `RuleRegistry.java`):
+
+| 规则 ID | 条件 | severity |
 | --- | --- | --- |
-| rule-ssh-auth-failure-001 | `event.action == authentication_failure` | medium |
-| rule-common-user-bruteforce-001 | `event.action == auth_failure` 且 `user.name ∈ {test, admin, ...}` | high |
+| `rule-ssh-auth-failure-001` | `event.action == authentication_failure` | medium |
+| `rule-common-user-bruteforce-001` | `event.action == authentication_failure` 且 `user.name ∈ {test, admin, ...}` | high |
 
-> 所以 **1 条事件 → 2 条告警**。
+因此 **1 条事件 → 2 条告警**。
 
-### ⑦ 生成的告警 JSON(写进 siem-alerts)
+### ⑦ 生成的告警 JSON(写入 siem-alerts)
 
 ```json
 {
-  "@timestamp": "2026-08-01T02:20:00.000Z",   // 事件时间(单事件规则)
-  "alert.created_at": "2026-08-01T02:20:00.5Z", // 检测时间
+  "@timestamp": "2026-08-01T02:20:00.000Z",
+  "alert.created_at": "2026-08-01T02:20:00.5Z",
   "alert.id": "a1b2...",
   "alert.rule_id": "rule-common-user-bruteforce-001",
   "alert.rule_name": "常见账号被爆破",
   "alert.severity": "high",
   "source.ip": "172.16.1.20",
   "user.name": "test",
-  "event.raw": "{...完整事件JSON...}",           // 取证用
+  "event.raw": "{...完整事件JSON...}",
   "event_count": 1
 }
 ```
-> 告警是**扁平结构**:关键事件字段提升到顶层(`source.ip`/`user.name`),完整事件存 `event.raw`。
 
-### ⑧ Kibana 展示
+告警采用**扁平结构**:关键事件字段提升到顶层(便于筛选/聚合),完整事件存于 `event.raw` 供取证。
 
-`siem-alerts` 进 `SIEM 总览` dashboard:告警严重级分布、TOP 源 IP 等可视化。
+### ⑧ Kibana 呈现
 
-## 3. 时间窗口规则在流程里的位置(补充)
+`siem-alerts` 的数据进入 `SIEM 总览` dashboard,展示告警严重级分布、TOP 源 IP 等可视化。
 
-上面是**单事件规则**(逐条判)。还有一条**时间窗口规则**(暴力破解)走的是另一条 Flink 分支:
+## 3. 时间窗口规则的处理差异(第二条 Flink 分支)
+
+上述走的是**单事件规则**(逐条判断)。本项目还有一条**时间窗口规则**(SSH 暴力破解),走另一条分支:
 
 ```java
 parsed
-  .assignTimestampsAndWatermarks(...)   // 事件时间 + watermark
-  .keyBy(source.ip)                      // 按源 IP 分组
-  .window(TumblingEventTimeWindows.of(5min))  // 5 分钟窗口
-  .process(new WindowRuleFunction(...));       // 窗口关时统计 ≥5 次 → 告警
+  .assignTimestampsAndWatermarks(...)                    // 指定事件时间并设置乱序容忍
+  .keyBy(source.ip)                                      // 按来源 IP 分组
+  .window(TumblingEventTimeWindows.of(5min))             // 5 分钟滚动窗口
+  .process(new WindowRuleFunction(...));                 // 窗口关闭时统计 ≥5 次 → 告警
 ```
 
-差异:**单事件规则**是"看到一条就判断";**窗口规则**是"攒一个窗口再统计判断"。后者能识别"5 分钟内 5 次失败"这种单条看不出来的攻击模式。
+**两者差异**:
 
-## 4. 每步对应文件速查
+| 规则类型 | 判断时机 | 能识别的模式 | 例子 |
+| --- | --- | --- | --- |
+| 单事件规则 | 事件到达即判断 | 单条事件即可判定 | 一条 root 登录失败 |
+| 时间窗口规则 | 窗口关闭时统计判断 | 需聚合多条事件的模式 | 5 分钟内 ≥5 次失败 |
 
-| 步骤 | 组件 | 文件 |
+**场景举例**:攻击者使用脚本对同一服务器每 30 秒尝试一次密码。单条失败事件无法判定为攻击(可能是正常输错),但窗口规则聚合后识别出"5 分钟内 ≥5 次"的规律,判定为暴力破解。
+
+## 4. 阶段与文件对照
+
+| 阶段 | 组件 | 文件 |
 | --- | --- | --- |
-| 收日志/解析 | Logstash | `infra/logstash/pipeline/logstash.conf` |
-| 双写 | Logstash | 同上 output 段 |
+| 采集与解析 | Logstash | `infra/logstash/pipeline/logstash.conf` |
 | 建 topic | Kafka | `infra/kafka/create-topics.sh` |
-| 消费+检测+写告警 | Flink | `flink/src/main/java/com/siem/DetectionJob.java`、`DetectionFunction.java`、`RuleRegistry.java`、`WindowRuleFunction.java` |
-| 告警/事件存储 | ES | `infra/elasticsearch/*-template.json` |
-| 展示 | Kibana | `infra/kibana/create_dashboards.py` |
+| 消费、检测、写出告警 | Flink | `flink/src/main/java/com/siem/DetectionJob.java`、`DetectionFunction.java`、`RuleRegistry.java`、`WindowRuleFunction.java` |
+| 事件/告警存储 | ES | `infra/elasticsearch/*-template.json` |
+| 呈现 | Kibana | `infra/kibana/create_dashboards.py` |
 
-## 5. 动手验证(在自己的环境跑)
+## 5. 动手验证
 
 ```bash
-# 发一条日志
+# 发送一条测试日志
 echo 'Aug 1 10:20:00 server03 sshd[9999]: Failed password for test from 172.16.1.20' | nc -w1 localhost 5000
 
-# 看事件数(应该 +1)
+# 事件数应增加(该日志产生 1 条事件)
 curl -s "http://localhost:9200/siem-events-*/_count"
 
-# 看告警数(这条日志会产生 2 条告警)
+# 告警数应增加(该日志命中 2 条规则,产生 2 条告警)
 curl -s "http://localhost:9200/siem-alerts/_count"
 
-# 在 Logstash 容器看解析过程(stdout rubydebug 开着的话)
+# 查看 Logstash 解析中间结果(stdout rubydebug 开启时)
 docker logs siem-logstash --tail 20
 
-# 看 Flink job 是否在跑
+# 确认 Flink job 处于运行状态
 docker exec siem-flink-jobmanager flink list
 ```
 
 ## 6. 自测
 
-1. 这条日志会产生几条告警?为什么?(2 条:命中 2 条单事件规则)
-2. `event.raw` 里存的是什么?(触发事件的完整 JSON,取证用)
-3. 窗口规则和单事件规则在 Flink 里走的是同一条分支吗?(不是,两条 DataStream 分支最后 union)
-4. 为什么既要写 ES 又要写 Kafka?(存储 vs 检测解耦)
+1. 样本日志产生几条告警?为什么?(2 条:命中"SSH 认证失败"与"常见弱账号"两条规则)
+2. `event.raw` 的作用是什么?(保存触发事件的完整 JSON,供取证查看)
+3. 单事件规则与窗口规则在 Flink 中是否走同一分支?(否,两条分支,最终通过 `union` 合并)
+4. 为何需要同时写入 ES 与 Kafka?(存储与检测解耦,ES 管检索、Kafka 管实时消费)

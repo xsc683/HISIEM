@@ -1,41 +1,48 @@
-# docs/learn — 入门功课
+# docs/learn — 入门功课(基础概念与关键组件)
 
-> 目的:补上 SIEM 平台设计概念 + 事件→告警流程称谓 + 关键组件(Kafka/ES/Flink/Logstash)的基础认知。
-> 特点:**每个概念都锚定本项目的实际代码和配置**——读完能看懂 `docs/design/` 的设计文档和你已经跑通的管道。
+> 本系列为**基础性学习材料**,系统讲解 SIEM 平台设计概念、事件→告警流程的称谓,以及关键组件(Kafka、Elasticsearch、Flink、Logstash)的核心原理。
+> 每一份文档均以 **正式定义 + 场景举例 + 本项目对应** 的方式组织,并锚定本项目的实际代码与配置,可作为理解 `docs/design/` 设计文档的基础。
 
-## 怎么读(建议顺序)
+## 阅读建议(推荐顺序)
 
 ```text
-第 1 步  01-siem-basics.md            SIEM 是什么 + 事件→告警术语链(先有"心智模型")
-第 2 步  02-pipeline-walkthrough.md   用本项目管道走一遍全流程(把术语和实际系统对上)
-第 3 步  03-kafka.md                  四大组件:先懂数据怎么流转
-第 4 步  04-elasticsearch.md          再懂数据怎么存和查
-第 5 步  05-flink.md                  再懂检测引擎怎么算
-第 6 步  06-logstash.md               再懂入口怎么解析
-读完     → 回看 docs/design/01-requirements.md 的能力域模型,应该都能对上号
+第 1 步  01-siem-basics.md            SIEM 的定义、事件→告警术语链(建立整体心智模型)
+第 2 步  02-pipeline-walkthrough.md   本项目管道全流程走读(将术语与具体系统对应)
+第 3 步  03-kafka.md                  数据如何流转(Kafka 概念)
+第 4 步  04-elasticsearch.md          数据如何存储与检索(ES 概念)
+第 5 步  05-flink.md                  数据如何被检测(Flink 概念)
+第 6 步  06-logstash.md               数据如何被解析(Logstash 概念)
+读完     → 回看 docs/design/01-requirements.md 的能力域模型,应能逐一对应
 ```
 
-> 前置要求:能跑通本项目的部署(见 `docs/deployment.md`),发过一条测试日志。
+> 前置要求:能跑通本项目部署(见 `docs/deployment.md`),并发送过一条测试日志。
 
 ## 文档地图
 
 | 文档 | 内容 | 读后能回答 |
 | --- | --- | --- |
-| [01-siem-basics.md](01-siem-basics.md) | SIEM 定义、日志/事件/告警/案件术语链、TP/FP、severity/risk_score 等 | 数据在 SIEM 里的每个阶段叫什么 |
-| [02-pipeline-walkthrough.md](02-pipeline-walkthrough.md) | 一条真实日志从发送到告警的完整旅程,每步对应文件 | 我的日志到底经过了什么 |
-| [03-kafka.md](03-kafka.md) | topic/分区/offset/消费组/retention,SIEM 里当缓冲 | Kafka 为什么是"事件总线" |
-| [04-elasticsearch.md](04-elasticsearch.md) | 索引/文档/mapping/分片/查询/ILM | ES 怎么存和查事件/告警 |
-| [05-flink.md](05-flink.md) | DataStream/算子/窗口/watermark/状态/checkpoint | DetectionJob 到底在干嘛 |
-| [06-logstash.md](06-logstash.md) | input/filter/output、grok、pipeline、队列 | logstash.conf 每段是什么意思 |
+| [01-siem-basics.md](01-siem-basics.md) | SIEM 定义、日志/事件/命中/告警/案件术语链、TP/FP、severity/risk_score、时间语义 | 数据在 SIEM 中每个阶段的确切称谓与产生者 |
+| [02-pipeline-walkthrough.md](02-pipeline-walkthrough.md) | 以一条真实日志走读完整管道,逐段给出组件、文件与中间产物 | 自己的日志到底经过了哪些处理 |
+| [03-kafka.md](03-kafka.md) | topic/分区/offset/消费组/副本/retention,以及 minISR 等可靠性参数 | Kafka 作为事件总线的定位与机制 |
+| [04-elasticsearch.md](04-elasticsearch.md) | 索引/文档/mapping/字段类型/分片/检索聚合/ILM | ES 如何存储与检索事件与告警 |
+| [05-flink.md](05-flink.md) | DataStream/算子/分组/窗口/事件时间/watermark/状态/checkpoint | DetectionJob 各算子的作用与容错机制 |
+| [06-logstash.md](06-logstash.md) | input/filter/output pipeline、grok 原理、队列机制 | logstash.conf 各段的作用与解析原理 |
 
-## 每份文档的结构
+## 统一组织方式
 
-每份都统一包含:一句话是什么 → 为什么 SIEM 需要它 → 核心概念表 → **本项目对应在哪** → 常见坑 → 动手验证命令 → 自测题。
+每份文档都包含以下部分:
+1. **定义**:概念的形式化定义与要点。
+2. **为什么 SIEM 需要它**:该组件在 SIEM 管道中的角色与具体能力。
+3. **核心概念**:每个概念给出定义、关键性质与场景举例。
+4. **本项目对应**:概念在本项目代码/配置中的具体位置。
+5. **常见问题与设计关注点**:已踩过的坑与设计稿关注事项。
+6. **动手验证**:可在本环境执行的命令。
+7. **自测**:检验是否掌握关键结论。
 
 ## 读完自查
 
-- 能不能画出本项目的完整数据流(日志 → 事件 → 告警)并指出每步的组件?
-- 能不能解释:`@timestamp` 为什么是事件时间、watermark 是什么、`_id` 幂等防什么、mapping 为什么建了不能改?
-- 能不能看懂 `docs/design/03-component-best-practices.md` 里每条落地项改的是哪个文件、为什么?
+- 能否画出本项目的完整数据流(日志 → 事件 → 命中 → 告警),并指出每个阶段的组件与文件?
+- 能否解释:`@timestamp` 为何采用事件时间、watermark 的作用、确定性 `_id` 防什么、mapping 为何创建后不可修改?
+- 能否看懂 `docs/design/03-component-best-practices.md` 中每条落地项改动哪个文件、为什么?
 
-> 如果某份还是看不懂,或想更深,可以直接问 Claude:报上你看不懂的具体段落,我针对性讲。
+> 若某份文档仍有疑问,请指出具体段落,可针对性补充讲解。

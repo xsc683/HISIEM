@@ -21,9 +21,9 @@
 | [design/04-detection-engineering.md](design/04-detection-engineering.md) | 检测工程化(规则元数据/MITRE/Sigma/告警生命周期/富化) |
 | [design/05-roadmap.md](design/05-roadmap.md) | 实施路线图(Phase 3.0-3.5) |
 
-## 入门功课(概念 + 组件速成)
+## 入门功课(基础概念与关键组件)
 
-> 给对 SIEM 概念 / 事件→告警流程称谓 / 关键组件(Kafka/ES/Flink/Logstash)了解不足的人补基础,全部锚定本项目实际代码。
+> 系统性讲解 SIEM 概念、事件→告警流程称谓与关键组件(Kafka/ES/Flink/Logstash)的核心原理,以**定义 + 场景举例**方式组织,全部锚定本项目实际代码。
 
 | 文档 | 内容 |
 | --- | --- |
