@@ -23,7 +23,7 @@
 | --- | --- | --- |
 | [01-siem-basics.md](01-siem-basics.md) | SIEM 定义、日志/事件/命中/告警/案件术语链、TP/FP、severity/risk_score、时间语义 | 数据在 SIEM 中每个阶段的确切称谓与产生者 |
 | [02-pipeline-walkthrough.md](02-pipeline-walkthrough.md) | 以一条真实日志走读完整管道,逐段给出组件、文件与中间产物 | 自己的日志到底经过了哪些处理 |
-| [03-kafka.md](03-kafka.md) | topic/分区/offset/消费组/副本/retention,以及 minISR 等可靠性参数 | Kafka 作为事件总线的定位与机制 |
+| [03-kafka.md](03-kafka.md) | topic/分区/offset/消费组/副本/retention、minISR 等可靠性参数、Spring Kafka 并行消费(扩展) | Kafka 作为事件总线的定位与机制 |
 | [04-elasticsearch.md](04-elasticsearch.md) | 索引/文档/mapping/字段类型/分片/检索聚合/ILM | ES 如何存储与检索事件与告警 |
 | [05-flink.md](05-flink.md) | DataStream/算子/分组/窗口/事件时间/watermark/状态/checkpoint | DetectionJob 各算子的作用与容错机制 |
 | [06-logstash.md](06-logstash.md) | input/filter/output pipeline、grok 原理、队列机制 | logstash.conf 各段的作用与解析原理 |
