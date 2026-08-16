@@ -1,5 +1,6 @@
 package com.xscsiem.hsiem_platform.rules;
 
+import com.xscsiem.hsiem_platform.notify.NotificationService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -18,10 +19,12 @@ public class RuleController {
 
     private final RuleService rules;
     private final RulesDeployer deployer;
+    private final NotificationService notify;
 
-    public RuleController(RuleService rules, RulesDeployer deployer) {
+    public RuleController(RuleService rules, RulesDeployer deployer, NotificationService notify) {
         this.rules = rules;
         this.deployer = deployer;
+        this.notify = notify;
     }
 
     /** 规则列表(infra/rules/*.yaml,含 enabled 状态)。 */
@@ -63,6 +66,7 @@ public class RuleController {
     public ResponseEntity<Map<String, Object>> deploy() {
         deployer.syncRules();
         String jobId = deployer.restartDetectionJob();
+        notify.notify("rule_deploy", jobId, "检测规则已部署(job " + jobId + "),enabled 变更生效");
         Map<String, Object> resp = Map.of(
                 "status", "deployed",
                 "jobId", jobId,

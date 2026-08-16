@@ -1,5 +1,6 @@
 package com.xscsiem.hsiem_platform.health;
 
+import com.xscsiem.hsiem_platform.notify.NotificationService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -15,14 +16,24 @@ import java.util.Map;
 public class DataHealthController {
 
     private final DataHealthService service;
+    private final NotificationService notify;
 
-    public DataHealthController(DataHealthService service) {
+    public DataHealthController(DataHealthService service, NotificationService notify) {
         this.service = service;
+        this.notify = notify;
     }
 
     @GetMapping("/sources")
     public List<Map<String, Object>> sources() {
-        return service.sources();
+        List<Map<String, Object>> sources = service.sources();
+        // 健康异常 → 通知(频控:同源 1h 1 条,见 story-10)
+        for (Map<String, Object> s : sources) {
+            if (Boolean.TRUE.equals(s.get("anomalous"))) {
+                notify.notify("health_anomaly", String.valueOf(s.get("sourceId")),
+                        "数据源 " + s.get("sourceName") + " 解析异常(" + s.get("reason") + ")");
+            }
+        }
+        return sources;
     }
 
     @GetMapping("/sources/{id}/trend")

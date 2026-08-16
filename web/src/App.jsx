@@ -6,6 +6,7 @@ import {
   dataHealthSources, dataHealthTrend, dataHealthFailures,
   listCriticality, setCriticality, deleteCriticality, recalcCriticality,
   login, logout, authMe, listUsers, createUser, deleteUser, updateUserRole, listRoles, auditLogs,
+  listNotifications, readNotification, readAllNotifications, deleteNotification,
 } from './api.js'
 
 const styles = {
@@ -65,6 +66,31 @@ export default function App() {
   const [newUname, setNewUname] = useState('')
   const [newPass, setNewPass] = useState('')
   const [newRole, setNewRole] = useState('analyst')
+
+  // 通知中心(Story 10)
+  const [notifs, setNotifs] = useState([])
+
+  useEffect(() => {
+    const loadNotifs = () => listNotifications().then(setNotifs).catch(() => {})
+    loadNotifs()
+    const timer = setInterval(loadNotifs, 20000)   // 20s 轮询(健康异常/部署通知)
+    return () => clearInterval(timer)
+  }, [])
+
+  async function handleReadNotif(id) {
+    await readNotification(id).catch(() => {})
+    setNotifs(await listNotifications().catch(() => []))
+  }
+
+  async function handleReadAllNotifs() {
+    await readAllNotifications().catch(() => {})
+    setNotifs(await listNotifications().catch(() => []))
+  }
+
+  async function handleDelNotif(id) {
+    await deleteNotification(id).catch(() => {})
+    setNotifs(await listNotifications().catch(() => []))
+  }
 
   useEffect(() => {
     listTemplates().then(setTemplates).catch((e) => alert(e.message))
@@ -528,6 +554,35 @@ export default function App() {
             </details>
           </>
         )}
+      </section>
+
+      <section style={styles.section}>
+        <h2 style={styles.h2}>
+          ⑨ 通知中心
+          {notifs.filter((n) => !n.read).length > 0 && (
+            <span style={{ ...styles.bad, marginLeft: 8 }}>🔔 {notifs.filter((n) => !n.read).length} 条未读</span>
+          )}
+        </h2>
+        <button style={styles.button} onClick={handleReadAllNotifs}>全部已读</button>
+        {notifs.length === 0 && <p style={{ color: '#888' }}>暂无通知(规则部署 / 实体风险重算 / 数据源健康异常会在此提示)</p>}
+        <div style={{ marginTop: 8 }}>
+          {notifs.slice().reverse().map((n) => (
+            <div key={n.id} style={{
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+              padding: '6px 10px', marginBottom: 4, borderRadius: 6,
+              background: n.read ? '#f5f5f5' : '#fffbe6', fontSize: 13,
+            }}>
+              <div>
+                <code style={{ color: '#888', fontSize: 11 }}>[{n.type}]</code> {n.message}
+                <div style={{ fontSize: 11, color: '#999' }}>{n.timestamp}</div>
+              </div>
+              <div style={{ display: 'flex', gap: 6 }}>
+                {!n.read && <button style={styles.button} onClick={() => handleReadNotif(n.id)}>已读</button>}
+                <button style={{ ...styles.button, color: '#c00' }} onClick={() => handleDelNotif(n.id)}>删</button>
+              </div>
+            </div>
+          ))}
+        </div>
       </section>
     </div>
   )

@@ -189,3 +189,21 @@ export function listRoles() {
 export function auditLogs() {
   return request('/auth/audit-logs')
 }
+
+// ---- 通知中心(Story 10) ----
+
+export function listNotifications(unread) {
+  return request(`/notifications${unread ? '?unread=true' : ''}`)
+}
+
+export function readNotification(id) {
+  return request(`/notifications/${id}/read`, { method: 'POST' })
+}
+
+export function readAllNotifications() {
+  return request('/notifications/read-all', { method: 'POST' })
+}
+
+export function deleteNotification(id) {
+  return request(`/notifications/${id}`, { method: 'DELETE' })
+}

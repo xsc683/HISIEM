@@ -1,5 +1,6 @@
 package com.xscsiem.hsiem_platform.settings;
 
+import com.xscsiem.hsiem_platform.notify.NotificationService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -21,10 +22,13 @@ public class CriticalityController {
 
     private final CriticalityService service;
     private final CriticalityDeployer deployer;
+    private final NotificationService notify;
 
-    public CriticalityController(CriticalityService service, CriticalityDeployer deployer) {
+    public CriticalityController(CriticalityService service, CriticalityDeployer deployer,
+                                 NotificationService notify) {
         this.service = service;
         this.deployer = deployer;
+        this.notify = notify;
     }
 
     /** 全量:按类型返回 {key: {level, weight}}。 */
@@ -51,6 +55,7 @@ public class CriticalityController {
     @PostMapping("/recalc")
     public ResponseEntity<Map<String, Object>> recalc() {
         String output = deployer.recalcEntityRisk();
+        notify.notify("criticality", "entity-risk", "实体风险已按最新资产关键度重算");
         return ResponseEntity.accepted().body(Map.of(
                 "status", "recalculated", "output", output));
     }
