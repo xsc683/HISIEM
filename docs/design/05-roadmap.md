@@ -1,6 +1,6 @@
 # Phase 3 设计 — 实施路线图
 
-> 状态:已实现基线见各阶段状态列 · 2026-08-16(Phase 3.0–3.3 已全部实现,B1 排序清单/FP 率视图/cancel→restore 演练 于 2026-08-16 补齐,规则 YAML 化已落地;剩余待做:规则 lint/CI、ES snapshot 恢复演练、TI 富化;3.4/3.5 部分落地;commit 7e86478 / b284fa3 / da1a0f6 / 6524fb6 / c6fb407)
+> 状态:已实现基线见各阶段状态列 · 2026-08-16(Phase 3.0–3.3 已全部实现;B1 排序清单/FP 率视图/cancel→restore 演练 于 2026-08-16 补齐;规则 YAML 化 + 规则 lint 门禁(RuleLintTest)+ ES snapshot 恢复演练 于 2026-08-16 落地;剩余待做:TI 富化;3.4/3.5 部分落地;commit 7e86478 / b284fa3 / da1a0f6 / 6524fb6 / c6fb407)
 > 分阶段落地顺序。每阶段独立可验收、可交付,依赖前置阶段。优先级符号:P0=立即 / P1=近期 / P2=计划 / P3=远期。
 
 ---
@@ -97,7 +97,7 @@
 | snapshot repository + delete 前快照(backup.sh) | 03-E6 | P2 | backup.sh 可执行创建快照 | ✅ 已实现(6524fb6) |
 | ES basic auth + RBAC(最小权限) | 03-E5 | P2 | 非 admin 用户仅读 siem-* | ✅ 已实现(6524fb6) |
 | 合规 dashboard(留存/归档视图) | — | P3 | 留存/归档状态可视化 | ⏳ 待做 |
-| snapshot 恢复演练 | 03-E6 | P3 | 从快照恢复索引 | ⏳ 待做 |
+| snapshot 恢复演练 | 03-E6 | P3 | 从快照恢复索引 | ✅ 已做(2026-08-16:siem-backups 仓库注册 + siem-drill 快照 → 恢复到 restored_* 计数一致 47=47,已清理) |
 
 ---
 

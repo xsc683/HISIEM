@@ -91,6 +91,12 @@
 3. `flink run -d -s file:///opt/flink/savepoints/<savepoint> /opt/flink/detection-job-1.0.jar` 恢复。
 4. 验证:job RUNNING,发新日志检测正常,无重放重复(幂等 `_id` + committedOffsets)。
 
+### 坑 7:ES snapshot fs 仓库需 `path.repo`,且 config 也要目录级挂载
+
+**根因**:fs 仓库(`siem-backups`)要求 `path.repo` 在 elasticsearch.yml 中配置,未配置时注册报 `path.repo because this setting is empty`。单文件挂载 elasticsearch.yml 会踩 Docker Desktop 文件级 bind mount 的坑(坑 5)。
+
+**处理**(2026-08-16):`infra/elasticsearch/config/` 目录级挂载 `/usr/share/elasticsearch/config`(补齐 jvm.options/log4j2 等默认文件,与 logstash 同款),elasticsearch.yml 带 `path.repo: ["/usr/share/elasticsearch/backups"]`。演练通过:注册仓库 → 快照 `siem-events-*` → 恢复到 `restored_*` → 计数一致(47=47)→ 清理临时索引。
+
 ## 资源参考
 
 - ECS 官方文档:https://www.elastic.co/guide/en/ecs/current/index.html

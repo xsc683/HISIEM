@@ -41,10 +41,9 @@ echo "==> 同步 kafka 脚本"
 mkdir -p "$DEPLOY/kafka"
 cp "$REPO/infra/kafka/create-topics.sh" "$DEPLOY/kafka/create-topics.sh"
 
-echo "==> 同步 elasticsearch 配置(供 compose bind mount)"
+echo "==> 同步 elasticsearch 配置(供 compose bind mount,目录级 rsync 原地同步)"
 mkdir -p "$DEPLOY/elasticsearch"
-rm -rf "$DEPLOY/elasticsearch/elasticsearch.yml"   # 清理 Docker 自动创建的目录残留
-cp "$REPO/infra/elasticsearch/elasticsearch.yml" "$DEPLOY/elasticsearch/elasticsearch.yml"
+rsync -a --delete "$REPO/infra/elasticsearch/config/" "$DEPLOY/elasticsearch/config/"
 
 echo "==> 构建 Flink job jar (mvn clean package)"
 (cd "$DEPLOY/flink" && mvn -q clean package -DskipTests)

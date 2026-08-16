@@ -10,6 +10,10 @@ services:
       - "9200:9200"
     volumes:
       - es-data:/usr/share/elasticsearch/data
+      # 目录级挂载 config(含补齐的 jvm.options/log4j2 默认文件 + 带 path.repo 的 elasticsearch.yml)。
+      # 不要改回单文件挂载 elasticsearch.yml:Docker Desktop 文件级 bind mount 在文件被替换后
+      # 快照失效,容器重启报 mount: no such file or directory(exit 127)。
+      - ./elasticsearch/config:/usr/share/elasticsearch/config
 
   kibana:
     image: kibana:8.14.0
