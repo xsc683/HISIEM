@@ -24,6 +24,22 @@
 | [design/07-product-design.md](design/07-product-design.md) | 产品设计(接入模块:角色、体验、竞品对标) |
 | [design/08-product-design.md](design/08-product-design.md) | 产品设计总览(ELK 流程、定位、完整模块地图、MVP) |
 
+## Story(需求拆解)
+
+> 按产品模块拆分为 Story,每份按模板填写(用户旅程 + 后端架构 + 数据流 + 验收)。
+
+| 文档 | 说明 |
+| --- | --- |
+| [story/README.md](story/README.md) | Story 索引(模块 → Story 映射) |
+| [story/_template.md](story/_template.md) | Story 设计文档模板(联网参考最佳实践生成) |
+| [story/story-01-onboarding.md](story/story-01-onboarding.md) | 数据源接入向导(MVP) |
+| [story/story-02-parser.md](story/story-02-parser.md) | 解析模板库与自定义解析 |
+| [story/story-03-detection-rules.md](story/story-03-detection-rules.md) | 检测规则管理 |
+| [story/story-04-alert-triage.md](story/story-04-alert-triage.md) | 告警三线处置 |
+| [story/story-05-data-health.md](story/story-05-data-health.md) | 数据源健康监控 |
+| [story/story-06-settings.md](story/story-06-settings.md) | 系统设置·资产关键度 |
+| [story/story-07-investigation.md](story/story-07-investigation.md) | 调查台·案件聚合(远期) |
+
 ## 入门功课(基础概念与关键组件)
 
 > 系统性讲解 SIEM 概念、事件→告警流程称谓与关键组件(Kafka/ES/Flink/Logstash)的核心原理,以**定义 + 场景举例**方式组织,全部锚定本项目实际代码。
