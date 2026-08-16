@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import {
   listTemplates, testParse, previewLogSource,
   listLogSources, createLogSource, activateLogSource, getLogSource,
+  listDetectionRules, toggleRule, deployRules, ruleMitre,
 } from './api.js'
 
 const styles = {
@@ -33,10 +34,37 @@ export default function App() {
   const [srcPort, setSrcPort] = useState(5001)
   const [activating, setActivating] = useState({})
 
+  // 检测规则管理(Story 03)
+  const [detRules, setDetRules] = useState([])
+  const [deploying, setDeploying] = useState(false)
+  const [deployMsg, setDeployMsg] = useState('')
+  const [mitre, setMitre] = useState({})
+
   useEffect(() => {
     listTemplates().then(setTemplates).catch((e) => alert(e.message))
     listLogSources().then(setSources).catch(() => {})
+    listDetectionRules().then(setDetRules).catch(() => {})
+    ruleMitre().then(setMitre).catch(() => {})
   }, [])
+
+  async function handleToggleRule(id) {
+    try {
+      const updated = await toggleRule(id)
+      setDetRules((prev) => prev.map((r) => (r.id === id ? { ...r, enabled: updated.enabled } : r)))
+      alert(`规则 ${id} → ${updated.enabled ? '已启用' : '已停用'}(写回 infra/rules,点「部署生效」后重启检测 job 才生效)`)
+    } catch (e) { alert(e.message) }
+  }
+
+  async function handleDeployRules() {
+    setDeploying(true)
+    setDeployMsg('')
+    try {
+      const r = await deployRules()
+      setDeployMsg(`部署完成:jobId=${r.jobId},enabled 变更已生效`)
+    } catch (e) {
+      setDeployMsg(`部署失败: ${e.message}`)
+    } finally { setDeploying(false) }
+  }
 
   const selected = templates.find((t) => t.id === selectedId)
 
@@ -175,6 +203,54 @@ export default function App() {
             ))}
           </tbody>
         </table>
+      </section>
+
+      <section style={styles.section}>
+        <h2 style={styles.h2}>⑤ 检测规则(infra/rules/*.yaml,只读 + 启停)</h2>
+        <button style={styles.button} onClick={handleDeployRules} disabled={deploying}>
+          {deploying ? '部署生效中(约 15-35s)…' : '部署生效(同步规则 + 重启检测 job)'}
+        </button>
+        {deployMsg && <p style={{ marginTop: 8, color: deployMsg.startsWith('部署失败') ? styles.bad.color : 'green' }}>{deployMsg}</p>}
+        <table style={{ ...styles.table, marginTop: 12 }} border={1} cellPadding={6}>
+          <thead>
+            <tr><th>规则 id</th><th>名称</th><th>类别</th><th>type</th><th>风险分</th><th>MITRE</th><th>状态</th><th>启停</th></tr>
+          </thead>
+          <tbody>
+            {detRules.map((r) => (
+              <tr key={r.id}>
+                <td><code>{r.id}</code></td>
+                <td>{r.name}</td>
+                <td>{r.category}</td>
+                <td><code>{r.type}</code></td>
+                <td>{r.riskScore}</td>
+                <td>{Array.isArray(r.tags) ? r.tags.join(', ') : ''}</td>
+                <td style={{ color: r.enabled ? styles.ok.color : styles.bad.color }}>{r.enabled ? '✅ 启用' : '⏸ 停用'}</td>
+                <td>
+                  <button style={styles.button} onClick={() => handleToggleRule(r.id)}>
+                    {r.enabled ? '停用' : '启用'}
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {mitre.coverage && (
+          <details style={{ marginTop: 12 }}>
+            <summary>MITRE ATT&CK 覆盖(由规则 tags 动态聚合,{mitre.coverage.length} 条)</summary>
+            <table style={{ ...styles.table, marginTop: 8 }} border={1} cellPadding={4}>
+              <thead><tr><th>技术</th><th>规则</th><th>覆盖</th></tr></thead>
+              <tbody>
+                {mitre.coverage.map((row, i) => (
+                  <tr key={i}>
+                    <td><code>{row.technique}</code></td>
+                    <td>{row.ruleId}</td>
+                    <td>{row.coverage}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </details>
+        )}
       </section>
     </div>
   )

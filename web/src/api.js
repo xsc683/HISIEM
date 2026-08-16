@@ -61,3 +61,25 @@ export function saveTemplate(template) {
     body: JSON.stringify(template),
   })
 }
+
+// ---- 检测规则管理(Story 03) ----
+
+export function listDetectionRules() {
+  return request('/detection-rules')
+}
+
+export function getRuleHits(id) {
+  return request(`/detection-rules/${id}/hits`)
+}
+
+export function toggleRule(id) {
+  return request(`/detection-rules/${id}/toggle`, { method: 'POST' })
+}
+
+export function deployRules() {
+  return request('/detection-rules/deploy', { method: 'POST' })
+}
+
+export function ruleMitre() {
+  return request('/detection-rules/mitre')
+}
