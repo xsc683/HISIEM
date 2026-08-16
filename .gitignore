@@ -35,3 +35,7 @@ build/
 ### Claude Code ###
 .claude/settings.local.json
 __pycache__/
+
+# web 前端
+web/node_modules/
+web/dist/

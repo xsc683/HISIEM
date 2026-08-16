@@ -1,0 +1,43 @@
+# 解析模板:OpenSSH 认证日志(Phase 4 用户接入层)
+# 由 generate-logstash.py 生成 Logstash filter;后端 API 加载用于解析测试。
+id: ssh-auth
+name: SSH 认证日志
+description: OpenSSH 认证失败/成功(认证类,规则依赖 event.action)
+protocol: tcp
+ecs:
+  event.category: authentication
+patterns:
+  - "%{SYSLOGTIMESTAMP:timestamp} %{HOSTNAME:host.name} sshd.*Failed password for %{USERNAME:user.name} from %{IP:source.ip}"
+  - "%{SYSLOGTIMESTAMP:timestamp} %{HOSTNAME:host.name} sshd.*Failed password for invalid user %{USERNAME:user.name} from %{IP:source.ip}"
+  - "%{SYSLOGTIMESTAMP:timestamp} %{HOSTNAME:host.name} sshd.*Accepted password for %{USERNAME:user.name} from %{IP:source.ip}"
+timestamp:
+  source: timestamp
+  formats: ["MMM dd HH:mm:ss", "MMM  d HH:mm:ss"]
+  timezone: Asia/Shanghai
+actions:
+  - match: "/Failed password/"
+    fields:
+      event.action: authentication_failure
+      event.outcome: failure
+      event.type: denied
+  - match: "/Accepted password/"
+    fields:
+      event.action: authentication_success
+      event.outcome: success
+      event.type: allowed
+tests:
+  - sample: "Aug 1 10:20:00 server03 sshd[9999]: Failed password for test from 172.16.1.20"
+    expect:
+      user.name: test
+      source.ip: 172.16.1.20
+      host.name: server03
+      event.action: authentication_failure
+  - sample: "Aug 1 10:21:00 server04 sshd[5555]: Failed password for invalid user root from 203.0.113.7"
+    expect:
+      user.name: root
+      event.action: authentication_failure
+  - sample: "Aug 1 10:25:00 server03 sshd[9999]: Accepted password for test from 172.16.1.20"
+    expect:
+      user.name: test
+      event.action: authentication_success
+status: stable

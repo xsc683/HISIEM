@@ -37,6 +37,19 @@
 			<artifactId>spring-boot-starter-webmvc</artifactId>
 		</dependency>
 
+		<!-- 解析模板 YAML 加载 -->
+		<dependency>
+			<groupId>com.fasterxml.jackson.dataformat</groupId>
+			<artifactId>jackson-dataformat-yaml</artifactId>
+		</dependency>
+
+		<!-- Logstash grok 的 Java 移植:解析测试(parse-test) -->
+		<dependency>
+			<groupId>io.krakens</groupId>
+			<artifactId>java-grok</artifactId>
+			<version>0.1.9</version>
+		</dependency>
+
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-webmvc-test</artifactId>
