@@ -1,0 +1,22 @@
+{
+  "index_patterns": ["siem-entity-risk"],
+  "priority": 100,
+  "template": {
+    "settings": {
+      "number_of_shards": 1,
+      "number_of_replicas": 0,
+      "index.refresh_interval": "5s"
+    },
+    "mappings": {
+      "properties": {
+        "@timestamp": { "type": "date" },
+        "entity.type": { "type": "keyword" },
+        "entity.value": { "type": "keyword" },
+        "asset.criticality": { "type": "float" },
+        "risk_score": { "type": "float" },
+        "risk_level": { "type": "keyword" },
+        "alert_count": { "type": "integer" }
+      }
+    }
+  }
+}

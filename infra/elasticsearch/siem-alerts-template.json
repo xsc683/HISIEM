@@ -38,6 +38,9 @@
         "event.category": { "type": "keyword" },
         "event.raw": { "type": "match_only_text" },
         "event_count": { "type": "integer" },
+        "anomaly.baseline_mean": { "type": "float" },
+        "anomaly.baseline_sigma": { "type": "float" },
+        "anomaly.threshold": { "type": "float" },
         "related_events": { "type": "nested", "dynamic": true }
       }
     }

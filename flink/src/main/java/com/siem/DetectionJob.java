@@ -172,7 +172,23 @@ public class DetectionJob {
                 .uid("cep-attack-chain");
 
 
-        DataStream<String> alerts = singleAlerts.union(windowAlerts).union(cepAlerts);
+        /*
+         * 4) 基线异常(Phase 3.5):按主机统计每 1 小时认证失败数,与滚动基线(最近 24 小时)
+         *    比较,当前值 > μ+3σ 且基线足够(≥3 小时)时产出"认证失败率异常"告警。
+         */
+        DataStream<String> anomalyAlerts = parsed
+                .assignTimestampsAndWatermarks(
+                        WatermarkStrategy.<Event>forBoundedOutOfOrderness(Duration.ofSeconds(10))
+                                .withTimestampAssigner((e, ts) -> e.getTimestampMillis())
+                                .withIdleness(Duration.ofSeconds(60)))
+                .uid("anomaly-watermark")
+                .keyBy(e -> String.valueOf(e.getFields().getOrDefault("host.name", "unknown")))
+                .window(TumblingEventTimeWindows.of(Duration.ofHours(1)))
+                .process(new BaselineAnomalyFunction(24, 3))
+                .uid("baseline-anomaly");
+
+
+        DataStream<String> alerts = singleAlerts.union(windowAlerts).union(cepAlerts).union(anomalyAlerts);
 
         alerts.print();
         alerts.sinkTo(

@@ -1,0 +1,13 @@
+{
+  "_comment": "资产关键度权重(Phase 3.5,对齐 Elastic:Low 0.5 / Medium 1 / High 1.5 / Extreme 2)。",
+  "ip": {
+    "10.0.0.1": 2.0
+  },
+  "user": {
+    "root": 1.5,
+    "admin": 1.5
+  },
+  "host": {
+    "server01": 2.0
+  }
+}

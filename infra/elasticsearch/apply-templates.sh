@@ -39,6 +39,12 @@ curl -s -X PUT "http://localhost:9200/_index_template/siem-alerts" \
   --data-binary @"$REPO/siem-alerts-template.json"
 echo
 
+echo "==> 应用 siem-entity-risk 索引模板(实体风险聚合,Phase 3.5)"
+curl -s -X PUT "http://localhost:9200/_index_template/siem-entity-risk" \
+  -H 'Content-Type: application/json' \
+  --data-binary @"$REPO/siem-entity-risk-template.json"
+echo
+
 echo "==> 已存在的 siem-events-* 索引套用 ILM(模板只对新索引生效)"
 curl -s -X PUT "http://localhost:9200/siem-events-*/_settings" \
   -H 'Content-Type: application/json' \

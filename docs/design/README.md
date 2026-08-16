@@ -15,6 +15,7 @@
 | [mitre-coverage.md](mitre-coverage.md) | MITRE ATT&CK 覆盖矩阵 + Navigator layer(检测覆盖盲区) |
 | [ocsf-mapping.md](ocsf-mapping.md) | OCSF 可移植层映射(ECS → OCSF 字段) |
 | [security-rbac.md](security-rbac.md) | ES 安全与最小权限 RBAC 启用步骤 |
+| [threat-intel.md](threat-intel.md) | 威胁情报(TI)富化方案(轻量查表) |
 
 ## 核心结论(Design North Star)
 
