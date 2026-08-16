@@ -20,7 +20,9 @@
 | [design/03-component-best-practices.md](design/03-component-best-practices.md) | 组件最佳实践与落地清单(ES/Logstash/Kafka/Flink/Kibana) |
 | [design/04-detection-engineering.md](design/04-detection-engineering.md) | 检测工程化(规则元数据/MITRE/Sigma/告警生命周期/富化) |
 | [design/05-roadmap.md](design/05-roadmap.md) | 实施路线图(Phase 3.0-3.5) |
-| [design/06-user-onboarding.md](design/06-user-onboarding.md) | 用户接入层设计(日志接入 + 解析规则管理) |
+| [design/06-user-onboarding.md](design/06-user-onboarding.md) | 用户接入层技术设计(日志接入 + 解析规则管理) |
+| [design/07-product-design.md](design/07-product-design.md) | 产品设计(接入模块:角色、体验、竞品对标) |
+| [design/08-product-design.md](design/08-product-design.md) | 产品设计总览(ELK 流程、定位、完整模块地图、MVP) |
 
 ## 入门功课(基础概念与关键组件)
 

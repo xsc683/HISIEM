@@ -12,7 +12,9 @@
 | [03-component-best-practices.md](03-component-best-practices.md) | **组件最佳实践与落地清单**:ES/Logstash/Kafka/Flink/Kibana 的业界做法 → 现状 → 具体落地项(改哪个文件) |
 | [04-detection-engineering.md](04-detection-engineering.md) | **检测工程化**:规则三层抽象(单事件/窗口/CEP)、规则元数据(MITRE/risk_score)、Sigma 结合、告警生命周期(去重/评分/三线/verdict)、富化、检测质量 |
 | [05-roadmap.md](05-roadmap.md) | **路线图**:Phase 3.0-3.5 分阶段实施(目标/落地项/验收口径) |
-| [06-user-onboarding.md](06-user-onboarding.md) | **用户接入层设计**:日志接入 + 解析规则管理(业界参考:DSM/sourcetype/Integration/Cribl) |
+| [06-user-onboarding.md](06-user-onboarding.md) | **用户接入层技术设计**:解析模板/生成器/架构落地 |
+| [07-product-design.md](07-product-design.md) | **产品设计(接入模块)**:用户角色、体验流程、功能模块、竞品对标 |
+| [08-product-design.md](08-product-design.md) | **产品设计总览**:底层 ELK 流程、产品定位、完整模块地图、优先级/MVP |
 | [mitre-coverage.md](mitre-coverage.md) | MITRE ATT&CK 覆盖矩阵 + Navigator layer(检测覆盖盲区) |
 | [ocsf-mapping.md](ocsf-mapping.md) | OCSF 可移植层映射(ECS → OCSF 字段) |
 | [security-rbac.md](security-rbac.md) | ES 安全与最小权限 RBAC 启用步骤 |
