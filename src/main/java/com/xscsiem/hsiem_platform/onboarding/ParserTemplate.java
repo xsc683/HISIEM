@@ -24,8 +24,10 @@ public class ParserTemplate {
     public Timestamp timestamp;
     /** 按消息内容补 event.action/outcome/type 等。 */
     public List<Action> actions;
-    /** 正负样本。 */
+    /** 正样本(须命中并匹配 expect 字段)。 */
     public List<Test> tests;
+    /** 负样本(须不命中任何 grok 模式;story-09:顶层字段,置于 tests 之外)。 */
+    public List<String> negative;
 
     @JsonAutoDetect(fieldVisibility = JsonAutoDetect.Visibility.ANY)
     public static class Timestamp {

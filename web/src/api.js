@@ -29,3 +29,35 @@ export function previewLogSource(payload) {
     body: JSON.stringify(payload),
   })
 }
+
+// ---- 数据源生命周期(Story 01) ----
+
+export function listLogSources() {
+  return request('/log-sources')
+}
+
+export function getLogSource(id) {
+  return request(`/log-sources/${id}`)
+}
+
+export function createLogSource(payload) {
+  return request('/log-sources', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+}
+
+export function activateLogSource(id) {
+  return request(`/log-sources/${id}/activate`, { method: 'POST' })
+}
+
+// ---- 模板保存(Story 02) ----
+
+export function saveTemplate(template) {
+  return request('/parser-templates', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(template),
+  })
+}
