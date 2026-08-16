@@ -207,3 +207,45 @@ export function readAllNotifications() {
 export function deleteNotification(id) {
   return request(`/notifications/${id}`, { method: 'DELETE' })
 }
+
+// ---- 告警台(Story 04) ----
+
+export function listAlerts(status) {
+  return request(`/alerts${status ? `?status=${status}` : ''}`)
+}
+
+export function getAlert(id) {
+  return request(`/alerts/${id}`)
+}
+
+export function updateAlertStatus(id, status) {
+  return request(`/alerts/${id}/status`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status }),
+  })
+}
+
+export function updateAlertVerdict(id, verdict) {
+  return request(`/alerts/${id}/verdict`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ verdict }),
+  })
+}
+
+export function batchAlertStatus(ids, status) {
+  return request('/alerts/batch-status', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids, status }),
+  })
+}
+
+export function batchAlertVerdict(ids, verdict) {
+  return request('/alerts/batch-verdict', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids, verdict }),
+  })
+}
+
+export function fpRate() {
+  return request('/alerts/fp-rate')
+}

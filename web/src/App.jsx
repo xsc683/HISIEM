@@ -7,6 +7,8 @@ import {
   listCriticality, setCriticality, deleteCriticality, recalcCriticality,
   login, logout, authMe, listUsers, createUser, deleteUser, updateUserRole, listRoles, auditLogs,
   listNotifications, readNotification, readAllNotifications, deleteNotification,
+  listAlerts, getAlert, updateAlertStatus, updateAlertVerdict,
+  batchAlertStatus, batchAlertVerdict, fpRate,
 } from './api.js'
 
 const styles = {
@@ -69,6 +71,68 @@ export default function App() {
 
   // 通知中心(Story 10)
   const [notifs, setNotifs] = useState([])
+
+  // 告警台(Story 04)
+  const [alerts, setAlerts] = useState([])
+  const [alertFilter, setAlertFilter] = useState('open')
+  const [selAlerts, setSelAlerts] = useState(new Set())
+  const [detailAlert, setDetailAlert] = useState(null)
+  const [fpRates, setFpRates] = useState([])
+
+  useEffect(() => {
+    listAlerts(alertFilter).then(setAlerts).catch(() => {})
+    fpRate().then(setFpRates).catch(() => {})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  async function reloadAlerts() {
+    setAlerts(await listAlerts(alertFilter).catch(() => []))
+  }
+
+  function toggleSel(id) {
+    setSelAlerts((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }
+
+  async function handleAlertDetail(id) {
+    setDetailAlert(await getAlert(id).catch((e) => { alert(e.message); return null }))
+  }
+
+  async function handleAlertStatus(id, status) {
+    await updateAlertStatus(id, status).catch((e) => alert(e.message))
+    setDetailAlert(null)
+    reloadAlerts()
+  }
+
+  async function handleAlertVerdict(id, verdict) {
+    await updateAlertVerdict(id, verdict).catch((e) => alert(e.message))
+    if (detailAlert && detailAlert._id === id) setDetailAlert(await getAlert(id).catch(() => null))
+    reloadAlerts()
+  }
+
+  async function handleBatchStatus(status) {
+    if (selAlerts.size === 0) return alert('先勾选告警')
+    if (status === 'closed' && !window.confirm('批量结案将要求已打 verdict,确认?')) return
+    try {
+      const r = await batchAlertStatus([...selAlerts], status)
+      alert(`批量 ${status}:成功 ${r.succeeded}/${r.total}${r.failed.length ? `,失败 ${r.failed.join(',')}` : ''}`)
+      setSelAlerts(new Set())
+      reloadAlerts()
+    } catch (e) { alert(e.message) }
+  }
+
+  async function handleBatchVerdict(verdict) {
+    if (selAlerts.size === 0) return alert('先勾选告警')
+    try {
+      const r = await batchAlertVerdict([...selAlerts], verdict)
+      alert(`批量 verdict ${verdict}:成功 ${r.succeeded}/${r.total}`)
+      setSelAlerts(new Set())
+      reloadAlerts()
+    } catch (e) { alert(e.message) }
+  }
 
   useEffect(() => {
     const loadNotifs = () => listNotifications().then(setNotifs).catch(() => {})
@@ -583,6 +647,76 @@ export default function App() {
             </div>
           ))}
         </div>
+      </section>
+
+      <section style={styles.section}>
+        <h2 style={styles.h2}>⑩ 告警台(三线 + verdict + 批量,替代 triage-alert.py)</h2>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+          <select style={styles.input} value={alertFilter} onChange={(e) => { setAlertFilter(e.target.value); listAlerts(e.target.value).then(setAlerts) }}>
+            <option value="open">open</option><option value="acknowledged">acknowledged</option>
+            <option value="investigating">investigating</option><option value="resolved">resolved</option>
+            <option value="closed">closed</option>
+          </select>
+          <button style={styles.button} onClick={() => handleBatchStatus('acknowledged')}>批量 ack</button>
+          <button style={styles.button} onClick={() => handleBatchStatus('closed')}>批量 close</button>
+          <select style={styles.input} onChange={(e) => e.target.value && handleBatchVerdict(e.target.value)} defaultValue="">
+            <option value="">批量 verdict…</option>
+            <option value="true_positive">true_positive</option><option value="false_positive">false_positive</option>
+            <option value="duplicate">duplicate</option>
+          </select>
+        </div>
+        <table style={styles.table} border={1} cellPadding={6}>
+          <thead><tr><th>☑</th><th>风险</th><th>规则</th><th>severity</th><th>状态</th><th>verdict</th><th>来源</th><th>@timestamp</th></tr></thead>
+          <tbody>
+            {alerts.map((a) => (
+              <tr key={a['alert.id'] || a._id} onClick={() => handleAlertDetail(a._id || a['alert.id'])}
+                style={{ cursor: 'pointer', background: selAlerts.has(a._id) ? '#eef6ff' : '' }}>
+                <td onClick={(e) => e.stopPropagation()}><input type="checkbox" checked={selAlerts.has(a._id)}
+                  onChange={() => toggleSel(a._id)} /></td>
+                <td><b>{a['alert.risk_score']}</b></td>
+                <td><code>{a['alert.rule_id']}</code></td>
+                <td>{a['alert.severity']}</td>
+                <td>{a['alert.status']}</td>
+                <td style={{ color: a['alert.analyst_verdict'] === 'false_positive' ? '#c00' : '#555' }}>{a['alert.analyst_verdict'] || '—'}</td>
+                <td>{a['source.ip'] || a['user.name'] || a['host.name'] || ''}</td>
+                <td style={{ fontSize: 12 }}>{a['@timestamp']}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+
+        {detailAlert && (
+          <div style={{ marginTop: 12, border: '1px solid #ccc', borderRadius: 8, padding: 12 }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+              <b>详情 {detailAlert._id}</b>
+              <button style={styles.button} onClick={() => handleAlertStatus(detailAlert._id, 'acknowledged')}>ack</button>
+              <button style={styles.button} onClick={() => handleAlertStatus(detailAlert._id, 'investigating')}>investigating</button>
+              <button style={styles.button} onClick={() => handleAlertStatus(detailAlert._id, 'closed')}>close</button>
+              <select style={styles.input} onChange={(e) => e.target.value && handleAlertVerdict(detailAlert._id, e.target.value)} defaultValue="">
+                <option value="">打 verdict…</option>
+                <option value="true_positive">true_positive</option><option value="false_positive">false_positive</option>
+                <option value="duplicate">duplicate</option>
+              </select>
+              <button style={styles.button} onClick={() => setDetailAlert(null)}>关</button>
+            </div>
+            <pre style={{ ...styles.pre, fontSize: 12 }}>{JSON.stringify(detailAlert, null, 2).slice(0, 2500)}</pre>
+          </div>
+        )}
+
+        <details style={{ marginTop: 12 }}>
+          <summary style={{ fontSize: 13 }}>按规则 FP 率(FP/(TP+FP),{fpRates.filter((r) => r.high).length} 条 &gt;50% 需 review)</summary>
+          <table style={{ ...styles.table, marginTop: 6 }} border={1} cellPadding={4}>
+            <thead><tr><th>规则</th><th>总数</th><th>FP</th><th>TP</th><th>FP 率</th><th>标记</th></tr></thead>
+            <tbody>
+              {fpRates.map((r, i) => (
+                <tr key={i} style={{ background: r.high ? '#fdf0ee' : '' }}>
+                  <td><code>{r.ruleId}</code></td><td>{r.total}</td><td>{r.fp}</td><td>{r.tp}</td>
+                  <td><b>{r.fpRate}%</b></td><td>{r.high ? '⚠ 需 review' : '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </details>
       </section>
     </div>
   )

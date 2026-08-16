@@ -35,6 +35,12 @@ public class GlobalExceptionHandler {
         return Map.of("error", e.getMessage());
     }
 
+    @ExceptionHandler(ConflictException.class)
+    @ResponseStatus(HttpStatus.CONFLICT)
+    public Map<String, Object> conflict(ConflictException e) {
+        return Map.of("error", e.getMessage());
+    }
+
     @ExceptionHandler(UnauthorizedException.class)
     @ResponseStatus(HttpStatus.UNAUTHORIZED)
     public Map<String, Object> unauthorized(UnauthorizedException e) {

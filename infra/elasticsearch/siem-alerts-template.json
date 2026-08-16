@@ -17,6 +17,7 @@
         "alert.status": { "type": "keyword" },
         "alert.status_updated_at": { "type": "date" },
         "alert.analyst_verdict": { "type": "keyword" },
+        "alert.operator": { "type": "keyword" },
         "alert.id": { "type": "keyword" },
         "alert.rule_id": { "type": "keyword" },
         "alert.rule_name": { "type": "keyword" },
