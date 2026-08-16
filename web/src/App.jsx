@@ -4,6 +4,7 @@ import {
   listLogSources, createLogSource, activateLogSource, getLogSource,
   listDetectionRules, toggleRule, deployRules, ruleMitre,
   dataHealthSources, dataHealthTrend, dataHealthFailures,
+  listCriticality, setCriticality, deleteCriticality, recalcCriticality,
 } from './api.js'
 
 const styles = {
@@ -46,13 +47,52 @@ export default function App() {
   const [healthDetail, setHealthDetail] = useState(null)
   const [healthLoading, setHealthLoading] = useState(false)
 
+  // 设置·资产关键度(Story 06)
+  const [crit, setCrit] = useState({})
+  const [critType, setCritType] = useState('ip')
+  const [critKey, setCritKey] = useState('')
+  const [critLevel, setCritLevel] = useState('high')
+  const [recalcMsg, setRecalcMsg] = useState('')
+
   useEffect(() => {
     listTemplates().then(setTemplates).catch((e) => alert(e.message))
     listLogSources().then(setSources).catch(() => {})
     listDetectionRules().then(setDetRules).catch(() => {})
     ruleMitre().then(setMitre).catch(() => {})
     dataHealthSources().then(setHealth).catch(() => {})
+    listCriticality().then(setCrit).catch(() => {})
   }, [])
+
+  async function handleCritSet(type, key, level) {
+    try {
+      await setCriticality(type, key, level)
+      setCrit(await listCriticality())
+    } catch (e) { alert(e.message) }
+  }
+
+  async function handleCritDelete(type, key) {
+    try {
+      await deleteCriticality(type, key)
+      setCrit(await listCriticality())
+    } catch (e) { alert(e.message) }
+  }
+
+  async function handleCritAdd() {
+    if (!critKey.trim()) return alert('填资产键(IP/用户名/主机名)')
+    try {
+      await setCriticality(critType, critKey.trim(), critLevel)
+      setCritKey('')
+      setCrit(await listCriticality())
+    } catch (e) { alert(e.message) }
+  }
+
+  async function handleRecalc() {
+    setRecalcMsg('重算中(约数秒)…')
+    try {
+      const r = await recalcCriticality()
+      setRecalcMsg(`实体风险已重算:${r.output.split('\n').filter((l) => l.trim()).slice(-3).join(' / ')}`)
+    } catch (e) { setRecalcMsg(`重算失败: ${e.message}`) }
+  }
 
   async function handleHealthDetail(sourceId) {
     setHealthLoading(true)
@@ -320,6 +360,40 @@ export default function App() {
                 )}
               </div>
             )}
+          </div>
+        ))}
+      </section>
+
+      <section style={styles.section}>
+        <h2 style={styles.h2}>⑦ 设置·资产关键度(infra/elasticsearch/asset-criticality.json)</h2>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+          <select style={styles.input} value={critType} onChange={(e) => setCritType(e.target.value)}>
+            <option value="ip">IP</option><option value="user">用户</option><option value="host">主机</option>
+          </select>
+          <input style={styles.input} value={critKey} onChange={(e) => setCritKey(e.target.value)} placeholder="IP/用户名/主机名" />
+          <select style={styles.input} value={critLevel} onChange={(e) => setCritLevel(e.target.value)}>
+            <option value="low">Low ×0.5</option><option value="medium">Medium ×1</option>
+            <option value="high">High ×1.5</option><option value="extreme">Extreme ×2</option>
+          </select>
+          <button style={styles.button} onClick={handleCritAdd}>新增/更新</button>
+          <button style={styles.button} onClick={handleRecalc}>触发实体风险重算(entity-risk.py)</button>
+        </div>
+        {recalcMsg && <p style={{ marginTop: 4, fontSize: 12, color: '#555' }}>{recalcMsg}</p>}
+        {['ip', 'user', 'host'].map((type) => (
+          <div key={type} style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>{type === 'ip' ? 'IP' : type === 'user' ? '用户' : '主机'}</div>
+            {Object.entries(crit[type] || {}).length === 0 && <span style={{ fontSize: 12, color: '#888' }}>(空)</span>}
+            {Object.entries(crit[type] || {}).map(([key, item]) => (
+              <div key={key} style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 4, fontSize: 13 }}>
+                <code style={{ width: 160 }}>{key}</code>
+                <select value={item.level} onChange={(e) => handleCritSet(type, key, e.target.value)} style={styles.input}>
+                  <option value="low">Low ×0.5</option><option value="medium">Medium ×1</option>
+                  <option value="high">High ×1.5</option><option value="extreme">Extreme ×2</option>
+                </select>
+                <span style={{ color: '#888' }}>weight {item.weight}</span>
+                <button style={{ ...styles.button, color: '#c00' }} onClick={() => handleCritDelete(type, key)}>删</button>
+              </div>
+            ))}
           </div>
         ))}
       </section>

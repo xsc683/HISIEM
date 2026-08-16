@@ -97,3 +97,25 @@ export function dataHealthTrend(id) {
 export function dataHealthFailures(id, size) {
   return request(`/data-health/sources/${id}/failures?size=${size || 50}`)
 }
+
+// ---- 系统设置·资产关键度(Story 06) ----
+
+export function listCriticality() {
+  return request('/settings/criticality')
+}
+
+export function setCriticality(type, key, level) {
+  return request(`/settings/criticality/${type}/${key}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ level }),
+  })
+}
+
+export function deleteCriticality(type, key) {
+  return request(`/settings/criticality/${type}/${key}`, { method: 'DELETE' })
+}
+
+export function recalcCriticality() {
+  return request('/settings/criticality/recalc', { method: 'POST' })
+}
