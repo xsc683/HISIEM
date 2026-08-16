@@ -5,7 +5,7 @@
 
 ## 当前已实现基线
 
-Phase 3.0-3.5 主体落地(commit 7e86478~c6fb407,2026-08-16):可靠性基线 → 减噪 → 检测工程化 → 告警闭环与富化 → 智能化,检测引擎 6 条规则(3 单事件 + 1 窗口 + 1 CEP + 1 基线)、ILM 365d 留存、告警抑制与 5 态闭环、verdict 回流均已实现并验证;少量辅助项待做(B1 risk_score 排序清单、cancel→restore 演练、规则 YAML/转换器/lint/CI、按规则 FP 率视图)。
+Phase 3.0-3.5 主体落地(commit 7e86478~c6fb407,2026-08-16):可靠性基线 → 减噪 → 检测工程化 → 告警闭环与富化 → 智能化,检测引擎 6 条规则(3 单事件 + 1 窗口 + 1 CEP + 1 基线)、ILM 365d 留存、告警抑制与 5 态闭环、verdict 回流均已实现并验证;B1 risk_score 排序清单、按规则 FP 率视图、cancel→restore 演练 于 2026-08-16 补齐,规则 YAML 化已落地;剩余待做:规则 lint/CI、ES snapshot 恢复演练、TI 富化。
 
 ## 文档地图
 
@@ -39,7 +39,7 @@ Phase 3.0-3.5 主体落地(commit 7e86478~c6fb407,2026-08-16):可靠性基线 �
 | --- | --- | --- | --- |
 | 1 | ES sink 确定性 `_id`(告警幂等) | 03-F2 | ✅ 7e86478 |
 | 2 | Flink checkpoint 持久卷 + 显式可靠性配置 | 03-F1/F3 | ✅ 7e86478 |
-| 3 | 全算子 `.uid()` + savepoint 演练 | 03-F4 | .uid ✅ 7e86478;演练 ⏳ |
+| 3 | 全算子 `.uid()` + savepoint 演练 | 03-F4 | .uid ✅ 7e86478;演练 ✅ 2026-08-16(savepoint 恢复) |
 | 4 | ES 模板 replica=0 + ILM delete | 03-E1/E2 | ✅ 7e86478 |
 | 5 | Logstash PQ + 去 stdout + invalid-user grok | 03-L1/L3/L4 | ✅ 7e86478 |
 | 6 | Kafka 分区 1→3 + zstd + acks=all | 03-K1/K2 | ✅ 7e86478 |

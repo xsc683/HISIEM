@@ -139,6 +139,48 @@ def vis_verdict():
     return _pie("告警处置结论", "alert.analyst_verdict")
 
 
+def _table(title, aggs):
+    # 数据表格可视化(risk_score 排序清单 / FP 率等指标表)
+    return {
+        "title": title, "type": "table",
+        "params": {"perPage": 10, "showPartialRows": False, "showMetricsAtAllLevels": False,
+                   "showTotal": False, "showPartialColumns": False, "sort": {"columnIndex": 0, "direction": "desc"},
+                   "totalFunc": "sum", "percentageCol": "", "showMeticsAtAllLevels": False},
+        "aggs": aggs,
+        "listeners": {},
+    }
+
+
+def vis_alerts_risk():
+    # Phase 3.1-B1:按规则聚合的告警清单,以风险分(alert.risk_score)DESC 排序。
+    # 分析师从"高风险规则"开始处置(减噪/排优先级的关键输入)。
+    return _table("规则风险分排序清单(按 risk_score DESC)", [
+        {"id": "1", "enabled": True, "type": "count", "schema": "metric", "params": {}},
+        {"id": "2", "enabled": True, "type": "max", "schema": "metric",
+         "params": {"field": "alert.risk_score"}},
+        {"id": "3", "enabled": True, "type": "terms", "schema": "bucket",
+         "params": {"field": "alert.rule_id", "size": 10, "order": "desc", "orderBy": "2"}},
+    ])
+
+
+def vis_fp_rate():
+    # Phase 3.3-B4:按规则 FP 率(FP/(TP+FP),不含 duplicate),FP>50% 高亮触发规则 review。
+    # 误报闭环的度量视图。
+    return _table("按规则 FP 率(FP/(TP+FP))", [
+        {"id": "1", "enabled": True, "type": "count", "schema": "metric", "params": {}},
+        {"id": "2", "enabled": True, "type": "filter", "schema": "metric",
+         "params": {"filter": {"query": "alert.analyst_verdict: false_positive", "language": "kuery"}}},
+        {"id": "3", "enabled": True, "type": "filter", "schema": "metric",
+         "params": {"filter": {"query": "alert.analyst_verdict: true_positive", "language": "kuery"}}},
+        {"id": "4", "enabled": True, "type": "bucket_script", "schema": "metric",
+         "params": {"bucketsPath": {"fp": "2", "tp": "3"},
+                    "formula": "params.fp / (params.fp + params.tp) * 100",
+                    "format": {"id": "number", "params": {"pattern": "0.0%"}}}},
+        {"id": "5", "enabled": True, "type": "terms", "schema": "bucket",
+         "params": {"field": "alert.rule_id", "size": 10, "order": "desc", "orderBy": "1"}},
+    ])
+
+
 def build_vis_object(obj_id, title, vis_state, dv_id):
     return {
         "id": obj_id, "type": "visualization",
@@ -193,6 +235,9 @@ def main():
         build_vis_object("vis-top-rules", "TOP 规则(告警量)", vis_top_rules(), alerts_dv),
         build_vis_object("vis-alerts-status", "告警处置状态", vis_alerts_status(), alerts_dv),
         build_vis_object("vis-verdict", "告警处置结论", vis_verdict(), alerts_dv),
+        build_vis_object("vis-alerts-risk", "规则风险分排序清单(按 risk_score DESC)",
+                         vis_alerts_risk(), alerts_dv),
+        build_vis_object("vis-fp-rate", "按规则 FP 率(FP/(TP+FP))", vis_fp_rate(), alerts_dv),
     ]
 
     print("==> 3. Dashboard")
@@ -204,7 +249,9 @@ def main():
          (4, "vis-alerts-severity", 0, 30, 12, 15),
          (5, "vis-top-rules", 12, 30, 12, 15),
          (6, "vis-alerts-status", 0, 45, 12, 15),
-         (7, "vis-verdict", 12, 45, 12, 15)],
+         (7, "vis-verdict", 12, 45, 12, 15),
+         (8, "vis-alerts-risk", 0, 60, 24, 15),
+         (9, "vis-fp-rate", 0, 75, 24, 15)],
     ))
 
     code, data = api("POST", "/api/saved_objects/_bulk_create?overwrite=true", objects)

@@ -129,7 +129,7 @@ output {
 | F1 | `state.checkpoints.dir` / `state.savepoints.dir` → Docker 挂载持久卷 | compose / DetectionJob | P0 | ✅ 已落地(7e86478;`flink-checkpoints` 卷) |
 | F2 | ES sink `IndexOperation._id = sha1(rule_id + 实体 + @timestamp)`(幂等 upsert) | DetectionJob | P0 | ✅ 已落地(7e86478;`DetectionJob.alertId`) |
 | F3 | 显式 EXACTLY_ONCE、`timeout=5min`、`tolerable-failed-checkpoints=3`、`max-concurrent=1`、restart-strategy exponential-delay(initial 5s/max 2min/multiplier 1.5/jitter 0.1/attempts 10) | DetectionJob | P0 | ✅ 已落地(7e86478) |
-| F4 | 全算子 `.uid("...")` + 一次 cancel→restore 演练 | DetectionJob | P0 | ✅ 已落地(.uid 全算子,7e86478;cancel→restore 演练 ⏳) |
+| F4 | 全算子 `.uid("...")` + 一次 cancel→restore 演练 | DetectionJob | P0 | ✅ 已落地(.uid 全算子,7e86478;演练 2026-08-16:savepoint 恢复 RUNNING 且检测正常) |
 | F5 | 窗口分支 `.withIdleness(60s)`;评估 `allowedLateness`/迟到侧输出 | DetectionJob | P1 | ✅ 已落地(withIdleness 60s,b284fa3);`allowedLateness`/迟到侧输出 ⏳ 评估 |
 | F6 | 单事件规则后接 suppression:keyBy(rule_id + 实体)+ 处理时间对齐 60min 桶 + `registerProcessingTimeTimer` + `onTimer` 产最终 count(边界见下方注) | DetectionFunction→`AlertSuppressor` | P0 | ✅ 已落地(b284fa3;首个命中即发 count=1,窗口内累加 `alert.deduplicated_count` 不新建) |
 | F7 | 暴力破解 tumbling→sliding(5min/1min)或加 early trigger(修边界盲区) | DetectionJob/WindowRule | P2 | ⏳ 待做(保留为优化,参数建议见下方注) |
@@ -222,10 +222,10 @@ output {
 
 | # | 落地 | 优先级 | 状态 |
 | --- | --- | --- | --- |
-| B1 | 告警清单按 `alert.risk_score` DESC 排序(数据落地后) | P0 | ⏳ 待做(dashboard 现有 severity/rule 聚合,无 risk_score 排序清单) |
+| B1 | 告警清单按 `alert.risk_score` DESC 排序(数据落地后) | P0 | ✅ 已做(2026-08-16:vis-alerts-risk 表格,规则按 risk_score DESC) |
 | B2 | 告警三线视图(5 态:open/acknowledged/investigating/resolved/closed)+ verdict 回流 | P1 | 部分(状态/结论分布图已落地,6524fb6;5 态流转在 `infra/kibana/triage-alert.py`,verdict 枚举 `true_positive`/`false_positive`/`duplicate`) |
 | B3 | ATT&CK 覆盖矩阵(Detected/Logged/Blind)视图或 Navigator layer JSON | P2 | ✅ 已落地(文档层:`docs/design/mitre-coverage.md` §2 的 layer JSON 可直接导入 [ATT&CK Navigator](https://mitre-attack.github.io/attack-navigator/)) |
-| B4 | 按规则 FP 率统计视图(>50% 触发 review) | P1 | ⏳ 待做(ES 查询思路见下) |
+| B4 | 按规则 FP 率统计视图(>50% 触发 review) | P1 | ✅ 已做(2026-08-16:vis-fp-rate 表格,FP/(TP+FP) 按规则;ES 查询思路见下) |
 
 **B4 ES 查询思路(FP 率 = 已处置中 `false_positive` 的占比)**:按 `alert.rule_id` 分组聚合已打 verdict 的告警,再算各规则 FP 占比:
 

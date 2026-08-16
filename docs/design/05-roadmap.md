@@ -1,6 +1,6 @@
 # Phase 3 设计 — 实施路线图
 
-> 状态:已实现基线见各阶段状态列 · 2026-08-16(Phase 3.0–3.3 主体已实现、少量项待做(B1 排序/恢复演练/规则 YAML/lint/CI/FP 率视图),3.4/3.5 部分落地;commit 7e86478 / b284fa3 / da1a0f6 / 6524fb6 / c6fb407)
+> 状态:已实现基线见各阶段状态列 · 2026-08-16(Phase 3.0–3.3 已全部实现,B1 排序清单/FP 率视图/cancel→restore 演练 于 2026-08-16 补齐,规则 YAML 化已落地;剩余待做:规则 lint/CI、ES snapshot 恢复演练、TI 富化;3.4/3.5 部分落地;commit 7e86478 / b284fa3 / da1a0f6 / 6524fb6 / c6fb407)
 > 分阶段落地顺序。每阶段独立可验收、可交付,依赖前置阶段。优先级符号:P0=立即 / P1=近期 / P2=计划 / P3=远期。
 
 ---
@@ -9,10 +9,10 @@
 
 | 阶段 | 主题 | 核心目标 | 主要依赖 | 状态 |
 | --- | --- | --- | --- | --- |
-| 3.0 | 可靠性基线 | 告警不重、状态不丢、留存生效 | 无 | 🟡 部分(.uid 全算子 ✅ 7e86478;cancel→restore 演练待做) |
+| 3.0 | 可靠性基线 | 告警不重、状态不丢、留存生效 | 无 | ✅ 完成(.uid 全算子 + cancel→restore 演练,2026-08-16) |
 | 3.1 | 减噪 | 抑制 + 风险评分 | 3.0(幂等/schema) | 🟡 部分(抑制 ✅ b284fa3;risk_score 排序清单待做) |
 | 3.2 | 检测工程化 | 规则元数据 + 攻击链 CEP + 检测即代码 | 3.1 | 🟡 部分(CEP/OCSF/元数据 ✅ da1a0f6;规则 YAML/lint/CI 待做) |
-| 3.3 | 告警闭环与富化 | 三线流转 + verdict 回流 + GeoIP | 3.2 | 🟡 部分(三线/verdict/GeoIP ✅ 6524fb6;按规则 FP 率视图待做) |
+| 3.3 | 告警闭环与富化 | 三线流转 + verdict 回流 + GeoIP | 3.2 | ✅ 完成(三线/verdict/GeoIP + 按规则 FP 率视图,2026-08-16) |
 | 3.4 | 合规与归档 | ILM 长留存 + snapshot | 3.0 | 🟡 部分(ILM/backup/RBAC ✅ 6524fb6,其余待做) |
 | 3.5 | 智能化 | 基线异常 / 实体风险聚合 | 3.3 | 🟡 部分(基线/实体风险 ✅ c6fb407,威胁情报待做) |
 
@@ -27,7 +27,7 @@
 | Flink checkpoint/savepoint 持久卷 + 显式 EXACTLY_ONCE/timeout/restart-strategy | 03-F3/F1 | 重启 job 后从 checkpoint 恢复 | ✅ 已实现(7e86478) |
 | ES sink 确定性 `_id`(幂等 upsert) | 03-F2 | 重放同一批日志不产生重复告警 | ✅ 已实现(7e86478) |
 | 全算子 `.uid()` | 03-F4 | 算子具备确定性 uid | ✅ 已实现(7e86478) |
-| cancel→restore 演练 | 03-F4 | savepoint 恢复成功 | ⏳ 待做 |
+| cancel→restore 演练 | 03-F4 | savepoint 恢复成功 | ✅ 已做(2026-08-16:从 savepoint-c4f1c3-b08014e830a6 恢复,RUNNING 且检测正常、无重放重复) |
 | ES 模板 replica=0 + ILM delete 策略 + refresh/压缩 | 03-E1/E2/E3 | 无 yellow;`_ilm/explain` 显示策略 | ✅ 已实现(7e86478) |
 | Logstash PQ + 去 stdout + LS_HEAP + invalid-user grok | 03-L1/L2/L3/L4 | 崩溃窗口不丢;`_parsefailure` 可查 | ✅ 已实现(7e86478) |
 | Kafka 分区 1→3 + zstd + acks=all | 03-K1/K2 | 3 分区;lag 稳定 | ✅ 已实现(7e86478) |
@@ -47,7 +47,7 @@
 | 落地项 | 文档来源 | 优先级 | 状态 |
 | --- | --- | --- | --- |
 | 单事件规则 suppression(keyed state,处理时间对齐 60min 桶) | 03-F6 / 04-§4.1 | P0 | ✅ 已实现(b284fa3) |
-| Kibana 告警清单按 `alert.risk_score` DESC | 03-B1 | P0 | ⏳ 待做(现有视图仅 TOP 规则/处置状态/处置结论,无 risk_score 排序清单) |
+| Kibana 告警清单按 `alert.risk_score` DESC | 03-B1 | P0 | ✅ 已做(2026-08-16:vis-alerts-risk 表格,规则按 risk_score DESC) |
 | watermark `.withIdleness(60s)` | 03-F5 | P1 | ✅ 已实现(b284fa3) |
 | Kafka retention 3d + check-lag.sh | 03-K3/K4 | P1 | ✅ 已实现(b284fa3) |
 | DLQ 启用 | 03-L5 | P1 | ✅ 已实现(b284fa3) |
@@ -81,7 +81,7 @@
 | --- | --- | --- | --- |
 | `alert.status` / `alert.analyst_verdict` + Kibana 三线 | 04-§4.3 / 03-B2 | P1 | ✅ 已实现(6524fb6) |
 | GeoIP 富化(at-ingest) | 03-L7 / 04-§5 | P2 | ✅ 已实现(6524fb6,事件侧) |
-| 按规则 FP 率视图 | 03-B4 | P1 | ⏳ 待做(告警处置结论分布视图 vis_verdict 已实现,为 verdict 回流输入;按规则 FP 率视图待做) |
+| 按规则 FP 率视图 | 03-B4 | P1 | ✅ 已做(2026-08-16:vis-fp-rate 表格,FP/(TP+FP) 按规则,不含 duplicate) |
 
 **验收口径(已满足)**:Kibana 三线视图 + triage-alert.py 完成 5 态流转({open, acknowledged, investigating, resolved, closed},核心 open→ack→closed)并强制 verdict;`source.geo.*` 出现在事件(事件侧已实现;告警侧不富化 GeoIP,如需告警侧富化另列落地项)。
 

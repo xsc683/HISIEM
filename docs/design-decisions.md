@@ -81,6 +81,16 @@
 
 见决策 G。`earliest()` 忽略已提交 offset,重启从最早读 → 重放全部历史事件 → 重复告警。用 `committedOffsets(EARLIEST)` 解决。
 
+### 坑 6:checkpoint 默认在 cancel 时删除,savepoint 目录需 flink 属主
+
+**根因**:Flink checkpointing 默认 `cleanup-mode=DELETE_ON_CANCELLATION`,`flink cancel` 后 checkpoint 被清空,无法从 checkpoint 恢复。cancel→restore 演练必须走 **savepoint**。
+
+**处理**(已演练通过,2026-08-16):
+1. `docker exec siem-flink-jobmanager sh -c "chown flink:flink /opt/flink/savepoints"`(docker exec 以 root 创建目录会导致 Flink 进程写失败,报 `Failed to create savepoint directory`)。
+2. `flink cancel -s file:///opt/flink/savepoints <jobid>`(Flink 2.x 推荐 `flink stop -p <dir> <jobid>`,cancel -s 已弃用)。
+3. `flink run -d -s file:///opt/flink/savepoints/<savepoint> /opt/flink/detection-job-1.0.jar` 恢复。
+4. 验证:job RUNNING,发新日志检测正常,无重放重复(幂等 `_id` + committedOffsets)。
+
 ## 资源参考
 
 - ECS 官方文档:https://www.elastic.co/guide/en/ecs/current/index.html
