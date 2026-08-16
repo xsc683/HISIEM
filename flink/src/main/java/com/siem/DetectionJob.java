@@ -97,7 +97,12 @@ public class DetectionJob {
         DataStream<String> singleAlerts =
                 parsed
                         .flatMap(new DetectionFunction(new RuleRegistry()))
-                        .uid("single-event-detection");
+                        .uid("single-event-detection")
+                        // 告警抑制(Phase 3.1-F6):同一规则+实体在抑制窗口内只发一条,
+                        // 后续命中累加 alert.deduplicated_count。
+                        .keyBy(AlertSuppressor::suppressionKey)
+                        .process(new AlertSuppressor(Duration.ofMinutes(60)))
+                        .uid("alert-suppression");
 
 
         /*
@@ -123,6 +128,8 @@ public class DetectionJob {
                         .assignTimestampsAndWatermarks(
                                 WatermarkStrategy.<Event>forBoundedOutOfOrderness(Duration.ofSeconds(10))
                                         .withTimestampAssigner((e, ts) -> e.getTimestampMillis())
+                                        // 日志暂停(SSH 突发写入)时推进 watermark,窗口仍能按时关闭(Phase 3.1-F5)
+                                        .withIdleness(Duration.ofSeconds(60))
                         )
                         .uid("window-watermark")
                         .keyBy(e -> String.valueOf(

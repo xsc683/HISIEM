@@ -4,3 +4,6 @@
 # 队列数据存于 path.data(默认 /usr/share/logstash/data),已在 compose 挂持久卷。
 queue.type: persisted
 queue.max_bytes: 1gb
+
+# 死信队列(Phase 3.1-L5):ES 拒收(400/404 等不可重试错误)的事件落入 DLQ 兜底,可回读重放
+dead_letter_queue.enable: true

@@ -107,6 +107,12 @@ def vis_alerts_severity():
     }
 
 
+def vis_top_rules():
+    # Phase 3.1-B1:按规则聚合告警量,识别"哪条规则在刷屏"(减噪闭环的输入)
+    return bar_vis("TOP 规则(告警量)", "alert.rule_id", "terms",
+                   {"size": 10, "order": "desc", "orderBy": "1"})
+
+
 def build_vis_object(obj_id, title, vis_state, dv_id):
     return {
         "id": obj_id, "type": "visualization",
@@ -158,6 +164,7 @@ def main():
         build_vis_object("vis-top-srcip", "TOP 源 IP", vis_top_srcip(), events_dv),
         build_vis_object("vis-fail-by-user", "失败登录用户 TOP", vis_fail_by_user(), events_dv),
         build_vis_object("vis-alerts-severity", "告警严重级别分布", vis_alerts_severity(), alerts_dv),
+        build_vis_object("vis-top-rules", "TOP 规则(告警量)", vis_top_rules(), alerts_dv),
     ]
 
     print("==> 3. Dashboard")
@@ -166,7 +173,8 @@ def main():
         [(1, "vis-auth-trend", 0, 0, 24, 15),
          (2, "vis-top-srcip", 0, 15, 12, 15),
          (3, "vis-fail-by-user", 12, 15, 12, 15),
-         (4, "vis-alerts-severity", 0, 30, 12, 15)],
+         (4, "vis-alerts-severity", 0, 30, 12, 15),
+         (5, "vis-top-rules", 12, 30, 12, 15)],
     ))
 
     code, data = api("POST", "/api/saved_objects/_bulk_create?overwrite=true", objects)

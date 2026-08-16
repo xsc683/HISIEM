@@ -34,3 +34,4 @@ build/
 
 ### Claude Code ###
 .claude/settings.local.json
+__pycache__/

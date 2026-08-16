@@ -20,6 +20,7 @@
         "alert.type": { "type": "keyword" },
         "alert.severity": { "type": "keyword" },
         "alert.risk_score": { "type": "integer" },
+        "alert.deduplicated_count": { "type": "integer" },
         "alert.description": { "type": "text" },
         "rule.tags": { "type": "keyword" },
         "rule.status": { "type": "keyword" },

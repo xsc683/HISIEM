@@ -1,0 +1,5 @@
+# Logstash 管道定义(Phase 3.1-L6):显式声明 pipeline,锁定 ECS 兼容模式。
+# 当前单数据源(SSH)维持单 pipeline;引入第二个数据源时在此追加 pipeline 并按需调 workers。
+- pipeline.id: main
+  path.config: "/usr/share/logstash/pipeline/*.conf"
+  pipeline.ecs_compatibility: v8
