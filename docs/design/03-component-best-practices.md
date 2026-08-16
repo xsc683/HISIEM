@@ -17,7 +17,7 @@
 
 ### 1.2 本项目现状
 
-`infra/logstash/pipeline/logstash.conf`:单 pipeline,`tcp:5000` → grok → date → mutate → **ES output + Kafka output**(stdout rubydebug 已注释,调试时临时开);grok 支持 `Failed password for` / `invalid user` / `Accepted password` 三变体并 `tag_on_failure => ["_parsefailure"]`;geoip 已接入(Phase 3.3)。`config/logstash.yml`:已开 PQ + DLQ;`config/pipelines.yml`:已声明 main pipeline;compose:已设 `LS_HEAP_SIZE=1g`。未落地:9600 healthcheck(L8)。
+`infra/logstash/pipeline/logstash.conf`:单 pipeline,`tcp:5000` → grok → date → mutate → **ES output + Kafka output**(stdout rubydebug 已注释,调试时临时开);grok 支持 `Failed password for` / `invalid user` / `Accepted password` 三变体并 `tag_on_failure => ["_parsefailure"]`;geoip 已接入(Phase 3.3)。`config/logstash.yml`:已开 PQ + DLQ + 监控 API(9600,healthcheck 用);`config/pipelines.yml`:已声明 main pipeline;compose:已设 `LS_HEAP_SIZE=1g` + 9600 healthcheck(L8,2026-08-16 已做)。
 
 ### 1.2.1 siem-events-raw 未知桶(设计未落地,P2)
 
@@ -64,7 +64,7 @@ output {
 | L5 | `dead_letter_queue.enable: true`(ES 拒收兜底,可回读重放) | logstash.yml | P1 | ✅ 已落地(b284fa3) |
 | L6 | 建 `pipelines.yml` 显式声明 pipeline.id + `ecs_compatibility: v8` | 新增 | P1 | ✅ 已落地(b284fa3;`config/pipelines.yml`) |
 | L7 | geoip filter → `source.geo.country_name/city/location` | logstash.conf | P2 | ✅ 已落地(6524fb6;at-ingest,比 P2 车道提前) |
-| L8 | compose 加 9600 healthcheck + 暴露端口 | compose | P1 | ⏳ 待做 |
+| L8 | compose 加 9600 healthcheck + 暴露端口 | compose | P1 | ✅ 已做(2026-08-16:ES/Kafka/Logstash 均配 healthcheck,容器 healthy;**踩坑**——`api.http.host: 0.0.0.0` 会触发 API 空响应 bug,保持默认回环绑定即可,见 logstash.yml 注释) |
 | L9 | siem-events-raw 未知桶:output `if "_parsefailure" in [tags]` → 写 `siem-events-raw-%{+YYYY.MM.dd}` 不进 Kafka(不进检测);建 raw 索引模板 + 短留存 ILM;`logstash --config.test_and_exit` 校验后 reload | logstash.conf + 新增 `siem-events-raw-template.json` | P2 | ⏳ 待做(设计见 §1.2.1) |
 
 ---
@@ -93,7 +93,7 @@ output {
 | K2 | kafka output 加 `acks => "all"`、`retries => 5`、`retry_backoff_ms => 1000`、`compression_type => "zstd"`、`batch_size => 131072`、`linger_ms => 5` | logstash.conf | P0 | ✅ 已落地(7e86478) |
 | K3 | 显式 `retention.ms=259200000`(3 天,delete);**注释 min.insync.replicas=1 陷阱** | create-topics.sh | P1 | ✅ 已落地(7e86478;脚本已写 minISR=1 陷阱注释) |
 | K4 | 新增 `infra/kafka/check-lag.sh`(包 `--describe --group siem-detection`,看 LAG 趋势/热分区) | 新增 | P1 | ✅ 已落地(b284fa3) |
-| K5 | `siem-events` JSON Schema 草案文档 + `event.schema_version` 演进说明(不引 Schema Registry) | 建议 `infra/kafka/siem-events.schema.json` + 文档 | P2 | ⏳ 待做 |
+| K5 | `siem-events` JSON Schema 草案文档 + `event.schema_version` 演进说明(不引 Schema Registry) | 建议 `infra/kafka/siem-events.schema.json` + 文档 | P2 | ✅ 已做(2026-08-16:`infra/kafka/siem-events.schema.json`,基于实际管道事件结构;演进约定见文件内 x-evolution-notes) |
 
 ---
 
@@ -155,11 +155,11 @@ output {
 
 ### 4.2 本项目现状
 
-`infra/elasticsearch/siem-events-template.json` / `siem-alerts-template.json`:显式 mapping(正确),已挂 ILM 策略 `siem-events-retention`(hot→delete 365d,无 warm)、`number_of_replicas: 0`、`refresh_interval: 5s` / `codec: best_compression` / `translog async+30s`(7e86478);`apply-templates.sh` 对已存在索引套用 ILM 与 replica=0。未落地:dynamic templates(E4)、快照保留策略(E6)、ops 健康脚本(E7)。`xpack.security.enabled=false`(单机 lab 决策与启用步骤见 docs/design/security-rbac.md,E5)。
+`infra/elasticsearch/siem-events-template.json` / `siem-alerts-template.json`:显式 mapping(正确),已挂 ILM 策略 `siem-events-retention`(hot→delete 365d,无 warm)、`number_of_replicas: 0`、`refresh_interval: 5s` / `codec: best_compression` / `translog async+30s`(7e86478);`apply-templates.sh` 对已存在索引套用 ILM 与 replica=0。**2026-08-16 补齐**:dynamic templates(E4,2ecfa4b)、`siem-alerts-retention` ILM(180d,E8)、ops 健康脚本(E7)。`xpack.security.enabled=false`(单机 lab 决策与启用步骤见 docs/design/security-rbac.md,E5)。
 
 ### 4.2.1 siem-alerts 留存(当前无 ILM,需补设计)
 
-**背景**:`siem-alerts` 是单索引,模板 `siem-alerts-template.json` 未挂 ILM(`apply-templates.sh` 只对 `siem-events-*` 套用 `siem-events-retention`),索引随告警增长无限膨胀、无到期删除。决策依据见 `02-architecture.md` §6 决策 O(「建议 ILM delete 180d,或按天索引 + 别名」)。
+**背景**:`siem-alerts` 是单索引,模板 `siem-alerts-template.json` 未挂 ILM(`apply-templates.sh` 只对 `siem-events-*` 套用 `siem-events-retention`),索引随告警增长无限膨胀、无到期删除。决策依据见 `02-architecture.md` §6 决策 O(「建议 ILM delete 180d,或按天索引 + 别名」)。(**✅ 已落地,2026-08-16**:采用方案①,`siem-alerts-retention` 策略 + 模板 + 已存在索引套用,`_ilm/explain` managed=true)。
 
 **方案对比**:
 
@@ -184,8 +184,8 @@ output {
 | E4 | siem-events 模板加 dynamic templates(`*_id`→keyword、`*ip*`→ip、兜底 keyword);不改 message/event.original(match_only_text) | 模板 | P1 | ✅ 已落地(2ecfa4b;JSON 见下,与实现一致) |
 | E5 | 安全最小门槛:basic auth + RBAC `siem_ingest` / `siem_analyst` 角色;9200 绑 127.0.0.1;决策文档化 | compose / setup-rbac.sh / 文档 | P2 | 部分(setup-rbac.sh + elasticsearch.yml + security-rbac.md 已落地,6524fb6;`xpack.security.enabled` 默认关,启用需维护窗口) |
 | E6 | snapshot repository(本地/MinIO)+ delete 前定时快照 | backup.sh | P2 | ✅ 已落地(backup.sh,6524fb6;仓库注册命令/保留策略见下) |
-| E7 | 运维基线:`_cluster/health`、`_cat/indices?v&s=store.size:desc`、`_ilm/explain` 入脚本 | 建议 `infra/elasticsearch/ops-health.sh` | P3 | ⏳ 待做(命令集/判读见下) |
-| E8 | siem-alerts 挂 ILM:`siem-alerts-retention`(hot → delete **min_age 180d,无 warm**),模板 + 已存在 `siem-alerts` 索引套用 | apply-templates.sh + siem-alerts-template.json | P1 | ⏳ 待做(设计见 §4.2.1) |
+| E7 | 运维基线:`_cluster/health`、`_cat/indices?v&s=store.size:desc`、`_ilm/explain` 入脚本 | 建议 `infra/elasticsearch/ops-health.sh` | P3 | ✅ 已做(2026-08-16:`infra/elasticsearch/ops-health.sh` 已实现,含集群健康/索引排行/segment/ILM/计数五段;WSL 内运行验证通过) |
+| E8 | siem-alerts 挂 ILM:`siem-alerts-retention`(hot → delete **min_age 180d,无 warm**),模板 + 已存在 `siem-alerts` 索引套用 | apply-templates.sh + siem-alerts-template.json | P1 | ✅ 已做(2026-08-16:策略创建 + 模板 settings 挂载 + 已存在索引套用,`_ilm/explain` 显示 managed=true phase=hot) |
 
 **E4 可粘贴片段(siem-events-template.json 的 `mappings` 加 `dynamic_templates`)**:
 

@@ -1,0 +1,46 @@
+# 解析模板:iptables 风格防火墙日志(syslog,Phase 4,story-09)
+# 常见形态:"Aug 1 10:00:00 fw01 kernel: [IPTABLES] IN=eth0 OUT= SRC=1.2.3.4 DST=5.6.7.8 LEN=60 PROTO=TCP SPT=12345 DPT=80 SYN" 或包含 ACTION=DENY
+id: firewall
+name: 防火墙日志
+description: iptables 风格 syslog(IN/OUT/SRC/DST/DPT/PROTO);ACTION=DENY→denied、ACCEPT→allowed;event.category=network
+protocol: syslog
+ecs:
+  event.category: network
+patterns:
+  - '%{SYSLOGTIMESTAMP:timestamp} %{HOSTNAME:host.name} kernel: \[%{DATA:fw.chain}\] IN=%{WORD:network.direction} OUT=%{DATA:network.direction_out} SRC=%{IP:source.ip} DST=%{IP:destination.ip} .*PROTO=%{WORD:network.transport} SPT=%{NUMBER:source.port} DPT=%{NUMBER:destination.port}'
+  - '%{SYSLOGTIMESTAMP:timestamp} %{HOSTNAME:host.name} kernel: %{DATA:fw.action} IN=%{WORD:network.direction} OUT=%{DATA:network.direction_out} SRC=%{IP:source.ip} DST=%{IP:destination.ip} .*PROTO=%{WORD:network.transport} SPT=%{NUMBER:source.port} DPT=%{NUMBER:destination.port}'
+timestamp:
+  source: timestamp
+  formats: ["MMM dd HH:mm:ss", "MMM  d HH:mm:ss"]
+  timezone: Asia/Shanghai
+actions:
+  - match: "/DENY|DROP/"
+    fields:
+      event.action: denied
+      event.outcome: failure
+      event.type: denied
+  - match: "/ACCEPT|ALLOW/"
+    fields:
+      event.action: allowed
+      event.outcome: success
+      event.type: allowed
+tests:
+  - sample: "Aug 1 10:00:00 fw01 kernel: [IPTABLES] IN=eth0 OUT=eth1 SRC=203.0.113.9 DST=198.51.100.4 LEN=60 PROTO=TCP SPT=44444 DPT=22 SYN"
+    expect:
+      host.name: fw01
+      source.ip: 203.0.113.9
+      destination.ip: 198.51.100.4
+      network.transport: TCP
+      source.port: "44444"
+      destination.port: "22"
+  - sample: "Aug 1 10:00:05 fw01 kernel: DENY: IN=eth0 OUT= SRC=198.51.100.20 DST=203.0.113.1 LEN=40 PROTO=UDP SPT=55555 DPT=53"
+    expect:
+      source.ip: 198.51.100.20
+      destination.ip: 203.0.113.1
+      network.transport: UDP
+      event.action: denied
+      event.outcome: failure
+negative:
+  - "Aug 1 10:20:00 server03 sshd[9999]: Failed password for test from 172.16.1.20"
+  - "Aug 1 11:00:00 dc01 WinEvtLog: Security: AUDIT_SUCCESS(4624): account: bob: domain: CORP: logon type: 3"
+status: stable

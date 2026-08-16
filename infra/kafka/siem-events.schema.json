@@ -1,0 +1,130 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/xsc683/SIEM/blob/main/infra/kafka/siem-events.schema.json",
+  "title": "siem-events 消息 Schema 草案(K5)",
+  "description": "Kafka topic `siem-events` 上单条事件消息的 JSON 结构(ECS v8 对齐)。这是**草案文档**,不是 Schema Registry——演进靠 event.schema_version 字段,不引入 Schema Registry(见 03-component-best-practices.md K5)。",
+  "type": "object",
+  "required": ["@timestamp", "event", "message"],
+  "properties": {
+    "@timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "事件时间(Logstash date filter 解析后的 ISO8601,UTC)。"
+    },
+    "event": {
+      "type": "object",
+      "required": ["action", "category", "outcome", "type"],
+      "properties": {
+        "action": {
+          "type": "string",
+          "description": "动作:authentication_failure / authentication_success(由 grok 映射,事件字段)。"
+        },
+        "category": {
+          "type": "string",
+          "description": "ECS category,如 authentication。"
+        },
+        "outcome": {
+          "type": "string",
+          "enum": ["success", "failure", "unknown"],
+          "description": "结果:success/failure。"
+        },
+        "type": {
+          "type": "string",
+          "enum": ["allowed", "denied"],
+          "description": "ECS event.type:allowed=成功登录,denied=失败。"
+        },
+        "schema_version": {
+          "type": "string",
+          "default": "1.0",
+          "description": "Schema 演进版本(当前 1.0)。字段演进时递增并在此文档记录变更。"
+        },
+        "original": {
+          "type": "string",
+          "description": "原始日志原文(grok 解析前)。"
+        }
+      },
+      "additionalProperties": true
+    },
+    "host": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "产生日志的主机名(grok %{HOSTNAME} 捕获)。"
+        }
+      },
+      "additionalProperties": true
+    },
+    "source": {
+      "type": "object",
+      "properties": {
+        "ip": {
+          "type": "string",
+          "format": "ipv4",
+          "description": "源 IP(认证失败来自的 IP)。"
+        },
+        "geo": {
+          "type": "object",
+          "properties": {
+            "country_name": { "type": "string" },
+            "city_name": { "type": "string" },
+            "location": { "type": "object" }
+          },
+          "description": "GeoIP at-ingest 富化(Phase 3.3,6524fb6);私有 IP 查不到 → tags 加 _geoip_lookup_failure。"
+        }
+      },
+      "additionalProperties": true
+    },
+    "user": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "认证用户名。"
+        }
+      },
+      "additionalProperties": true
+    },
+    "threat": {
+      "type": "object",
+      "properties": {
+        "is_malicious": {
+          "type": "string",
+          "enum": ["true", "false"],
+          "description": "TI 查表结果(字符串,Logstash translate 输出;命中恶意 IP 字典→true)。"
+        },
+        "confidence": {
+          "type": "string",
+          "description": "TI 置信度(0.0-1.0 字符串;未命中→0)。"
+        }
+      },
+      "description": "TI 富化(Phase 3.5,664f6a6);字典未命中时字段可能缺省或为 fallback。"
+    },
+    "related": {
+      "type": "object",
+      "properties": {
+        "ip": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "ECS related.ip(Logstash 自动填充参与关系的 IP 列表)。"
+        }
+      },
+      "additionalProperties": true
+    },
+    "tags": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "处理标签:如 _geoip_lookup_failure(geoip 查不到)、_parsefailure(grok 匹配失败,见 L9 siem-events-raw 未落地)。"
+    },
+    "message": {
+      "type": "string",
+      "description": "日志消息体(grok 解析后的 message 字段;原始原文在 event.original)。"
+    }
+  },
+  "additionalProperties": true,
+  "x-evolution-notes": {
+    "version": "1.0",
+    "date": "2026-08-16",
+    "notes": "K5 草案:基于实际管道事件结构取样。字段演进约定——(1) 新增可选字段不破坏既有消费者(消费者须对未知字段宽容,默认 additionalProperties: true);(2) 删除/重命名字段必须递增 event.schema_version 并在本文件 x-evolution-notes 记录;(3) 不引入 Schema Registry,靠 producer(Logstash)与 consumer(Flink DetectionJob EventParser)双方遵循此草案 + 单测锁定字段名。"
+  }
+}

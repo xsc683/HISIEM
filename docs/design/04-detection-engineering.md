@@ -34,7 +34,7 @@ CEP 表达:`Pattern.begin("failures").where(fail).times(5, 100).next("success").
 | `falsepositives` | String[] | 已知误报场景(调优用)(未落地,需设计 schema) |
 
 **告警模板同步加**:`alert.risk_score`(numeric)、`rule.tags`(keyword[])、`rule.status`(keyword)、`rule.version`(keyword)。severity 可保留字符串但 Kibana 排序改用 `alert.risk_score`。
-> 注:`siem-alerts` 模板已含 `rule.version` mapping,但 WindowRule(rule-ssh-brute-force-001)/CEP(rule-ssh-bruteforce-success-001)/基线(rule-auth-rate-anomaly-001)的告警产出器暂未写 version(字段覆盖不全),需后续补齐。
+> 注:`siem-alerts` 模板已含 `rule.version` mapping;四类产出器(单事件 DetectionFunction / 窗口 WindowRuleFunction / CEP BruteforceSuccessFunction / 基线 BaselineAnomalyFunction)均已写 `rule.version`(2026-08-16 补齐,WindowRuleTest 有回归断言)。
 
 > ATT&CK 标注的价值 = **看得见覆盖盲区**。导出当前 6 规则覆盖矩阵(Detected/Logged/Blind),生成 ATT&CK Navigator layer JSON 放 `docs/design/`,按行业高价值技术排新规则优先级,避免只堆规则不测覆盖。
 

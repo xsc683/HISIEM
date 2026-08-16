@@ -27,6 +27,19 @@ curl -s -X PUT "http://localhost:9200/_ilm/policy/siem-events-retention" \
   }'
 echo
 
+echo "==> 创建 ILM 策略 siem-alerts-retention(hot → 180d 后 delete,无 warm;告警索引单索引非按天)"
+curl -s -X PUT "http://localhost:9200/_ilm/policy/siem-alerts-retention" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "policy": {
+      "phases": {
+        "hot": { "actions": { "set_priority": { "priority": 100 } } },
+        "delete": { "min_age": "180d", "actions": { "delete": {} } }
+      }
+    }
+  }'
+echo
+
 echo "==> 应用 siem-events 索引模板"
 curl -s -X PUT "http://localhost:9200/_index_template/siem-events" \
   -H 'Content-Type: application/json' \
@@ -59,6 +72,12 @@ echo
 curl -s -X PUT "http://localhost:9200/siem-alerts/_settings" \
   -H 'Content-Type: application/json' \
   -d '{"index.number_of_replicas": 0}'
+echo
+
+echo "==> 已存在的 siem-alerts 索引套用 ILM(模板只对新索引生效;单索引须显式设置)"
+curl -s -X PUT "http://localhost:9200/siem-alerts/_settings" \
+  -H 'Content-Type: application/json' \
+  -d '{"index.lifecycle.name": "siem-alerts-retention"}'
 echo
 
 echo "==> 当前模板列表"

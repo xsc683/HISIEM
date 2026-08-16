@@ -28,16 +28,25 @@ public class WindowRule implements Serializable {
     private final List<String> tags;
     /** 规则状态:experimental / stable / deprecated。 */
     private final String status;
+    /** 规则版本(如 1.0)。 */
+    private final String version;
 
     public WindowRule(String id, String name, String type, String severity, String description,
                       String keyField, Condition condition, long windowMinutes, int threshold) {
         this(id, name, type, severity, description, keyField, condition, windowMinutes, threshold,
-                0, List.of(), "experimental");
+                0, List.of(), "experimental", "1.0");
     }
 
     public WindowRule(String id, String name, String type, String severity, String description,
                       String keyField, Condition condition, long windowMinutes, int threshold,
                       int riskScore, List<String> tags, String status) {
+        this(id, name, type, severity, description, keyField, condition, windowMinutes, threshold,
+                riskScore, tags, status, "1.0");
+    }
+
+    public WindowRule(String id, String name, String type, String severity, String description,
+                      String keyField, Condition condition, long windowMinutes, int threshold,
+                      int riskScore, List<String> tags, String status, String version) {
         this.id = id;
         this.name = name;
         this.type = type;
@@ -50,6 +59,7 @@ public class WindowRule implements Serializable {
         this.riskScore = riskScore;
         this.tags = tags;
         this.status = status;
+        this.version = version;
     }
 
     public String getId() {
@@ -98,5 +108,9 @@ public class WindowRule implements Serializable {
 
     public String getStatus() {
         return status;
+    }
+
+    public String getVersion() {
+        return version;
     }
 }

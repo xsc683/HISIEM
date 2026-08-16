@@ -178,7 +178,8 @@ public class DetectionJob {
                             buildCepPattern(d.cep))
                     .process(new BruteforceSuccessFunction(
                             meta.id(), meta.name(), meta.type(), meta.severity(),
-                            meta.description(), meta.riskScore(), meta.tags(), meta.status()))
+                            meta.description(), meta.riskScore(), meta.tags(), meta.status(),
+                            meta.version()))
                     .uid("cep-" + d.id));
         }
         DataStream<String> cepAlerts = cepStreams.isEmpty()

@@ -188,7 +188,7 @@ Phase 3.0-3.5 检测引擎能力已全部实现并验证(commit `7e86478` / `b28
 - **F-R2 持久化状态**(✅ 已实现,`7e86478`):Flink checkpoint/savepoint 落到持久卷;显式 EXACTLY_ONCE、restart-strategy、timeout。
 - **F-R3 留存策略**(✅ 已实现,`7e86478`/`6524fb6`):`siem-events-*` 挂 ILM 生命周期(hot → delete `min_age 365d`,无 warm 阶段,单节点;满足 PCI 12 个月留存)。
 - **F-R4 单节点健康**(✅ 已实现,`7e86478`):replica=0(消除 yellow 与写放大)、refresh_interval/压缩/translog 调优。
-- **F-R5 规则元数据**(✅ 已实现,`7e86478`):Rule 增加 MITRE tags(`attack.*` 全小写)、risk_score、status;告警输出 `rule.tags`/`rule.status`/`alert.risk_score`/`rule.version`。YAML 声明化已落地(f1739e0);已知缺口:`rule.version` 在窗口(WindowRule)/CEP(BruteforceSuccess)/基线(BaselineAnomaly)产出器暂未写入(仅单事件 DetectionFunction 写),references 待补。
+- **F-R5 规则元数据**(✅ 已实现,`7e86478`):Rule 增加 MITRE tags(`attack.*` 全小写)、risk_score、status;告警输出 `rule.tags`/`rule.status`/`alert.risk_score`/`rule.version`。YAML 声明化已落地(f1739e0);`rule.version` 四类产出器(单事件/窗口/CEP/基线)均已写入(2026-08-16 补齐);references 待补。
 
 ### 5.2 Must(Phase 3.1 — 减噪)
 

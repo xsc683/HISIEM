@@ -8,6 +8,12 @@ services:
       - ES_JAVA_OPTS=-Xms4g -Xmx4g
     ports:
       - "9200:9200"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9200/_cluster/health?filter_path=status | grep -qE 'green|yellow' || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
     volumes:
       - es-data:/usr/share/elasticsearch/data
       # 目录级挂载 config(含补齐的 jvm.options/log4j2 默认文件 + 带 path.repo 的 elasticsearch.yml)。
@@ -31,8 +37,15 @@ services:
       - kafka
     ports:
       - "5000:5000"
+      - "9600:9600"
     environment:
       - LS_HEAP_SIZE=1g
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9600/ >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
     volumes:
       - ./logstash/pipeline:/usr/share/logstash/pipeline
       # 目录级挂载 config(内含补齐的 jvm.options/log4j2 等默认文件)。
@@ -46,6 +59,12 @@ services:
     container_name: siem-kafka
     ports:
       - "9092:9092"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller

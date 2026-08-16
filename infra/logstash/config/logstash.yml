@@ -7,3 +7,9 @@ queue.max_bytes: 1gb
 
 # 死信队列(Phase 3.1-L5):ES 拒收(400/404 等不可重试错误)的事件落入 DLQ 兜底,可回读重放
 dead_letter_queue.enable: true
+
+# 监控 API 绑定(踩坑,2026-08-16):**不要设 api.http.host: 0.0.0.0**——
+# 在该 Docker 环境下会触发 API 空响应 bug(容器内 curl 得到 Empty reply,连 /?pretty 也 000),
+# 导致 compose healthcheck 探测失败。保持默认(仅绑定容器内回环 127.0.0.1):
+# healthcheck 在容器内执行,localhost 可访问(已用 docker-compose 内 healthcheck 验证 healthy)。
+# 如需从宿主机访问 9600 监控 API,再单独研究;L8 目标(容器健康检查)已由默认配置达成。

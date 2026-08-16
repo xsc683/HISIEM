@@ -1,0 +1,59 @@
+# 解析模板:Windows Security 事件(syslog 转发形态,Phase 4,story-09)
+# 常见转发形态:"<PRI>timestamp host WinEvtLog: Security: AUDIT_SUCCESS(4625): account: user: domain: source.ip"
+# 关键:4625 失败登录 → event.action=authentication_failure,与 flink 暴力破解窗口规则取值一致,可直接命中检测。
+id: windows-security
+name: Windows 安全日志
+description: Windows Security 事件(4624 成功登录/4625 失败登录/4732 加组成员),syslog 转发形态;event.code 保留原 EventID
+protocol: tcp
+ecs:
+  event.category: authentication
+patterns:
+  # 带 client ip 的形态(4625 失败登录常用):提取 user.name/domain/source.ip
+  - '%{SYSLOGTIMESTAMP:timestamp} %{HOSTNAME:host.name} WinEvtLog: .*\(%{NUMBER:event.code}\): account: %{USERNAME:user.name}: domain: %{WORD:winlog.domain}: .*client ip: %{IP:source.ip}'
+  # 通用形态(4624 成功登录 / 4732 加组等):提取 user.name/domain,可选 logon type
+  - '%{SYSLOGTIMESTAMP:timestamp} %{HOSTNAME:host.name} WinEvtLog: .*\(%{NUMBER:event.code}\): account: %{USERNAME:user.name}: domain: %{WORD:winlog.domain}'
+timestamp:
+  source: timestamp
+  formats: ["MMM dd HH:mm:ss", "MMM  d HH:mm:ss"]
+  timezone: Asia/Shanghai
+actions:
+  - match: "/\\(4625\\)/"
+    fields:
+      event.action: authentication_failure
+      event.outcome: failure
+      event.type: denied
+  - match: "/\\(4624\\)/"
+    fields:
+      event.action: authentication_success
+      event.outcome: success
+      event.type: allowed
+  - match: "/\\(4732\\)/"
+    fields:
+      event.action: user_member_added
+      event.outcome: success
+      event.type: allowed
+tests:
+  - sample: "Aug 1 10:20:05 dc01 WinEvtLog: Security: AUDIT_FAILURE(4625): account: alice: domain: CORP: client ip: 172.16.1.20"
+    expect:
+      host.name: dc01
+      event.code: "4625"
+      user.name: alice
+      source.ip: 172.16.1.20
+      event.action: authentication_failure
+      event.outcome: failure
+  - sample: "Aug 1 11:00:00 dc01 WinEvtLog: Security: AUDIT_SUCCESS(4624): account: bob: domain: CORP: logon type: 3"
+    expect:
+      host.name: dc01
+      event.code: "4624"
+      user.name: bob
+      event.action: authentication_success
+      event.outcome: success
+  - sample: "Aug 1 12:00:00 dc01 WinEvtLog: Security: AUDIT_SUCCESS(4732): account: carol: domain: CORP: group: Domain Admins"
+    expect:
+      event.code: "4732"
+      user.name: carol
+      event.action: user_member_added
+negative:
+  - "Aug 1 10:20:00 server03 sshd[9999]: Failed password for test from 172.16.1.20"
+  - '127.0.0.1 - - [10/Oct/2000:13:55:36 -0700] "GET /index.html HTTP/1.1" 200 2326'
+status: stable

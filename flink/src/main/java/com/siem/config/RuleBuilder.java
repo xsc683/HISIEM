@@ -37,7 +37,8 @@ public class RuleBuilder {
                 d.keyField, buildCondition(d.condition), d.windowMinutes, d.threshold,
                 intValue(d.riskScore, 0),
                 d.tags == null ? List.of() : d.tags,
-                d.status == null ? "experimental" : d.status);
+                d.status == null ? "experimental" : d.status,
+                d.version == null ? "1.0" : d.version);
     }
 
     public RuleMeta toMeta(RuleDecl d) {

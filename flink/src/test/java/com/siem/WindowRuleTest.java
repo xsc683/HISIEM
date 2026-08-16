@@ -42,6 +42,7 @@ public class WindowRuleTest {
         assertEquals("ssh_brute_force", alert.get("alert.type"));
         assertEquals("rule-ssh-brute-force-001", alert.get("alert.rule_id"));
         assertEquals("1.2.3.4", alert.get("source.ip"));
+        assertEquals("1.0", alert.get("rule.version"));
         assertEquals(3, alert.get("event_count"));
         assertEquals(3, ((List<?>) alert.get("related_events")).size());
         assertEquals("authentication_failure", alert.get("event.action"));

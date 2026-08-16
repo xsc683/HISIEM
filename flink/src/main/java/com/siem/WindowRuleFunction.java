@@ -56,6 +56,7 @@ public class WindowRuleFunction extends ProcessWindowFunction<Event, String, Str
         alert.put("alert.risk_score", rule.getRiskScore());
         alert.put("rule.tags", rule.getTags());
         alert.put("rule.status", rule.getStatus());
+        alert.put("rule.version", rule.getVersion());
         alert.put(rule.getKeyField(), key);
         if (!matched.isEmpty()) {
             Map<String, Object> first = matched.get(0);

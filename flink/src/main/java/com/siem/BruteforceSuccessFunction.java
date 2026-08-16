@@ -27,9 +27,11 @@ public class BruteforceSuccessFunction extends PatternProcessFunction<Event, Str
     private final int riskScore;
     private final List<String> tags;
     private final String status;
+    private final String version;
 
     public BruteforceSuccessFunction(String ruleId, String ruleName, String type, String severity,
-                                     String description, int riskScore, List<String> tags, String status) {
+                                     String description, int riskScore, List<String> tags, String status,
+                                     String version) {
         this.ruleId = ruleId;
         this.ruleName = ruleName;
         this.type = type;
@@ -38,6 +40,7 @@ public class BruteforceSuccessFunction extends PatternProcessFunction<Event, Str
         this.riskScore = riskScore;
         this.tags = tags;
         this.status = status;
+        this.version = version;
     }
 
     @Override
@@ -64,6 +67,7 @@ public class BruteforceSuccessFunction extends PatternProcessFunction<Event, Str
         alert.put("alert.description", description);
         alert.put("rule.tags", tags);
         alert.put("rule.status", status);
+        alert.put("rule.version", version);
 
         for (String f : new String[]{"source.ip", "user.name", "host.name"}) {
             Object v = fields.get(f);

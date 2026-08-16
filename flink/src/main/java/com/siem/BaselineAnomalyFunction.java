@@ -113,6 +113,7 @@ public class BaselineAnomalyFunction extends ProcessWindowFunction<Event, String
         alert.put("alert.description", meta.description());
         alert.put("rule.tags", meta.tags());
         alert.put("rule.status", meta.status());
+        alert.put("rule.version", meta.version());
         alert.put("host.name", host);
         alert.put("event.action", "authentication_failure");
         alert.put("event_count", (int) count);

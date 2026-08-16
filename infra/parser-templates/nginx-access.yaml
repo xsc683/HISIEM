@@ -1,0 +1,41 @@
+# 解析模板:nginx combined 格式访问日志(Phase 4 用户接入层,story-09)
+# combined = remote_addr - remote_user [time_local] "request" status body_bytes
+id: nginx-access
+name: Nginx 访问日志
+description: nginx combined 格式 access log(web 访问;event.category=web,event.action=access)
+protocol: tcp
+ecs:
+  event.category: web
+patterns:
+  - '%{IPORHOST:client.ip} - %{DATA:user.name} \[%{HTTPDATE:timestamp}\] "%{WORD:http.request.method} %{URIPATHPARAM:http.request.url} HTTP/%{NUMBER:http.version}" %{NUMBER:http.response.status_code} %{NUMBER:http.response.body.bytes}'
+timestamp:
+  source: timestamp
+  formats: ["dd/MMM/yyyy:HH:mm:ss Z"]
+  timezone: Asia/Shanghai
+actions:
+  - match: "/GET|POST|PUT|DELETE|HEAD|OPTIONS|PATCH/"
+    fields:
+      event.action: access
+      event.category: web
+      event.outcome: success
+      event.type: allowed
+tests:
+  - sample: '127.0.0.1 - - [10/Oct/2000:13:55:36 -0700] "GET /index.html HTTP/1.1" 200 2326'
+    expect:
+      client.ip: 127.0.0.1
+      http.request.method: GET
+      http.response.status_code: "200"
+      http.response.body.bytes: "2326"
+      event.action: access
+      event.category: web
+  - sample: '203.0.113.7 - alice [11/Oct/2026:09:15:00 +0800] "POST /api/login HTTP/1.1" 401 128'
+    expect:
+      client.ip: 203.0.113.7
+      user.name: alice
+      http.request.method: POST
+      http.request.url: /api/login
+      http.response.status_code: "401"
+      event.action: access
+negative:
+  - "Aug 1 10:20:00 server03 sshd[9999]: Failed password for test from 172.16.1.20"
+status: stable

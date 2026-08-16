@@ -3,7 +3,7 @@
 > **元信息**
 > - 关联模块:08 产品设计 §5.2 解析规则库(预置模板扩充);对应 06 用户接入层 §4.1/§5.1 模板格式与 §7 路线图 4.2「模板库扩充 P1」
 > - 优先级:**P1**
-> - 状态:🟡 机制已建(7f23fc9:ssh-auth 模板 + `ParserTemplateService` 加载 + `GrokTestService` 校验),预置模板扩充(nginx-access / windows-security / firewall)待做
+> - 状态:✅ 已实现(2026-08-16:新增 nginx-access / windows-security / firewall 三模板,均含 ≥2 正样本 + 负样本,`TemplateGateTest` 门禁全过;windows 4625→authentication_failure 对齐 flink 规则)
 > - 依赖:解析模板机制(Story 02,模板 YAML 格式 + `ParserTemplateService` 加载 + `GrokTestService` 校验);接入向导(Story 01,step1 选模板 / step3 样例测试 / step4 生效)
 >
 > **填写完成度 checklist**(P1 深化判定,提交评审前逐项自检;参照 P0 既有结论深化,不重开已定决策)
