@@ -1,0 +1,10 @@
+---
+id: "ls-157ad51f"
+name: "ssh-web-04"
+protocol: "tcp"
+templateId: "ssh-auth"
+port: 5006
+status: "active"
+sourceId: "ls-157ad51f"
+createdAt: "2026-08-16T11:40:58.033680700Z"
+updatedAt: "2026-08-16T11:41:15.006994600Z"

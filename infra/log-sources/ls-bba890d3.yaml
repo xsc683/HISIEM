@@ -1,0 +1,10 @@
+---
+id: "ls-bba890d3"
+name: "ssh-web-03"
+protocol: "tcp"
+templateId: "ssh-auth"
+port: 5005
+status: "active"
+sourceId: "ls-bba890d3"
+createdAt: "2026-08-16T11:33:33.758981300Z"
+updatedAt: "2026-08-16T11:33:56.783806300Z"

@@ -6,3 +6,15 @@
 - pipeline.id: ls-6c047799
   path.config: "/usr/share/logstash/pipeline/log-sources/ls-6c047799.conf"
   pipeline.ecs_compatibility: v8
+- pipeline.id: ls-3455e43e
+  path.config: "/usr/share/logstash/pipeline/log-sources/ls-3455e43e.conf"
+  pipeline.ecs_compatibility: v8
+- pipeline.id: ls-b5888861
+  path.config: "/usr/share/logstash/pipeline/log-sources/ls-b5888861.conf"
+  pipeline.ecs_compatibility: v8
+- pipeline.id: ls-bba890d3
+  path.config: "/usr/share/logstash/pipeline/log-sources/ls-bba890d3.conf"
+  pipeline.ecs_compatibility: v8
+- pipeline.id: ls-157ad51f
+  path.config: "/usr/share/logstash/pipeline/log-sources/ls-157ad51f.conf"
+  pipeline.ecs_compatibility: v8

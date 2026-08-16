@@ -1,0 +1,10 @@
+---
+id: "ls-b5888861"
+name: "08161924"
+protocol: "tcp"
+templateId: "ssh-auth"
+port: 5004
+status: "active"
+sourceId: "ls-b5888861"
+createdAt: "2026-08-16T11:25:04.350196900Z"
+updatedAt: "2026-08-16T11:25:21.284380200Z"
