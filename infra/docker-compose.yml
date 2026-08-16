@@ -31,8 +31,10 @@ services:
       - LS_HEAP_SIZE=1g
     volumes:
       - ./logstash/pipeline:/usr/share/logstash/pipeline
-      - ./logstash/config/logstash.yml:/usr/share/logstash/config/logstash.yml
-      - ./logstash/config/pipelines.yml:/usr/share/logstash/config/pipelines.yml
+      # 目录级挂载 config(内含补齐的 jvm.options/log4j2 等默认文件)。
+      # 不要改回单文件挂载 logstash.yml/pipelines.yml:Docker Desktop 对"文件级 bind mount"在
+      # rsync 原地替换源文件后会缓存失效,导致容器 restart/up 报 mount: no such file or directory(exit 127)。
+      - ./logstash/config:/usr/share/logstash/config
       - logstash-data:/usr/share/logstash/data
 
   kafka:

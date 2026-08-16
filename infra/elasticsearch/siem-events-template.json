@@ -12,6 +12,12 @@
       "index.lifecycle.name": "siem-events-retention"
     },
     "mappings": {
+      "dynamic_templates": [
+        { "suffix_id": { "match": "*_id", "mapping": { "type": "keyword" } } },
+        { "log_path": { "path_match": "log.*", "mapping": { "type": "keyword" } } },
+        { "ip_fields": { "match_mapping_type": "string", "match": "*ip*", "mapping": { "type": "ip" } } },
+        { "default_string": { "match_mapping_type": "string", "mapping": { "type": "keyword" } } }
+      ],
       "properties": {
         "@timestamp": { "type": "date" },
         "event": {

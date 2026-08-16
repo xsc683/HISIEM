@@ -43,8 +43,11 @@ public class ProcessLogstashDeployer implements LogstashDeployer {
 
     @Override
     public boolean validateConfig(String containerConfigPath) {
+        // --path.data 重定向到临时目录:运行中的 Logstash 实例已持有 data/queue/*.lock,
+        // 直接校验会因队列锁冲突而失败(配置本身是合法的)。每次用唯一后缀避免并发校验互相干扰。
+        String tmpData = "/tmp/ls-validate-" + java.util.UUID.randomUUID().toString().substring(0, 8);
         return exitOk("docker", "exec", containerName, "logstash",
-                "--config.test_and_exit", "-f", containerConfigPath);
+                "--config.test_and_exit", "-f", containerConfigPath, "--path.data=" + tmpData);
     }
 
     @Override

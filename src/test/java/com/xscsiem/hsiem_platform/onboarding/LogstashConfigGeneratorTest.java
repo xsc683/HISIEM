@@ -21,7 +21,7 @@ class LogstashConfigGeneratorTest {
                 "%{SYSLOGTIMESTAMP:timestamp} %{HOSTNAME:host.name} sshd.*Failed password for %{USERNAME:user.name} from %{IP:source.ip}");
         ParserTemplate.Timestamp ts = new ParserTemplate.Timestamp();
         ts.source = "timestamp";
-        ts.formats = List.of("MMM dd HH:mm:ss");
+        ts.formats = List.of("MMM dd HH:mm:ss", "MMM  d HH:mm:ss");
         ts.timezone = "Asia/Shanghai";
         t.timestamp = ts;
         t.ecs = Map.of("event.category", "authentication");
@@ -49,5 +49,8 @@ class LogstashConfigGeneratorTest {
         assertTrue(c.contains("siem-events-%{+YYYY.MM.dd}"), "ES 输出");
         assertTrue(c.contains("topic_id => \"siem-events\""), "Kafka 输出");
         assertFalse(c.contains("ls-ls-"), "不应出现 ls-ls- 重复前缀");
+        // 回归:Logstash 8.14 数组不接受尾逗号(date match 曾在末尾留 ", ]" 导致校验 FATAL)
+        assertFalse(c.contains("\", ]"), "数组不应有尾逗号");
+        assertTrue(c.contains("\"MMM  d HH:mm:ss\" ]"), "date match 末项后应直接闭括号(无尾逗号)");
     }
 }

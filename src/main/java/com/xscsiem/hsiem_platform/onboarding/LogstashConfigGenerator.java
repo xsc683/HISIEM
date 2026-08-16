@@ -29,10 +29,11 @@ public class LogstashConfigGenerator {
         }
 
         if (t.timestamp != null) {
+            // 注意:数组项之间用 ", " 连接,末尾不留尾逗号(Logstash 8.14 解析数组不接受尾逗号,否则 --config.test_and_exit 报 FATAL)
             sb.append("# @timestamp = 日志时间\n");
-            sb.append("date {\n  match => [ \"").append(t.timestamp.source).append("\",");
+            sb.append("date {\n  match => [ \"").append(t.timestamp.source).append("\"");
             for (String f : t.timestamp.formats) {
-                sb.append(" \"").append(f).append("\",");
+                sb.append(", \"").append(f).append("\"");
             }
             sb.append(" ]\n  timezone => \"").append(t.timestamp.timezone).append("\"\n  target => \"@timestamp\"\n}\n");
         }
