@@ -3,3 +3,6 @@
 - pipeline.id: main
   path.config: "/usr/share/logstash/pipeline/*.conf"
   pipeline.ecs_compatibility: v8
+- pipeline.id: ls-6c047799
+  path.config: "/usr/share/logstash/pipeline/log-sources/ls-6c047799.conf"
+  pipeline.ecs_compatibility: v8

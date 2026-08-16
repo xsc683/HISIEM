@@ -22,14 +22,17 @@ public class ProcessLogstashDeployer implements LogstashDeployer {
     private final String wslRepoPath;
     private final String deployDir;
     private final String containerName;
+    private final String composeName;
 
     public ProcessLogstashDeployer(
             @Value("${app.logstash.wsl-repo-path:/mnt/d/Project/SIEM}") String wslRepoPath,
             @Value("${app.logstash.deploy-dir:~/projects/mini-siem}") String deployDir,
-            @Value("${app.logstash.container-name:siem-logstash}") String containerName) {
+            @Value("${app.logstash.container-name:siem-logstash}") String containerName,
+            @Value("${app.logstash.compose-name:docker-compose.yml}") String composeName) {
         this.wslRepoPath = wslRepoPath;
         this.deployDir = deployDir;
         this.containerName = containerName;
+        this.composeName = composeName;
     }
 
     @Override
@@ -38,6 +41,11 @@ public class ProcessLogstashDeployer implements LogstashDeployer {
         if (!exitOk("wsl", "bash", "-c",
                 "rsync -a --delete " + wslRepoPath + "/infra/logstash/ " + deployDir + "/logstash/")) {
             throw new IllegalStateException("同步 logstash 到 WSL 失败");
+        }
+        // 同步 docker-compose.yml(数据源端口映射:生效时 coordinator 已更新 repo 侧 compose)
+        if (!exitOk("wsl", "bash", "-c",
+                "cp " + wslRepoPath + "/infra/" + composeName + " " + deployDir + "/" + composeName)) {
+            throw new IllegalStateException("同步 docker-compose.yml 到 WSL 失败");
         }
     }
 
@@ -52,8 +60,14 @@ public class ProcessLogstashDeployer implements LogstashDeployer {
 
     @Override
     public void restartLogstash() {
-        if (!exitOk("docker", "restart", containerName)) {
-            throw new IllegalStateException("重启 Logstash 容器失败: " + containerName);
+        // 用 docker compose up -d 重建容器:生效时新增了数据源端口映射,需重建才生效。
+        // 部署目录里已有同步来的 compose(含最新 ports);compose 重建会保留命名卷与健康检查。
+        // 失败时回退 docker restart(至少让配置变更生效,端口映射缺失可后续 compose up 补)。
+        String composeFile = deployDir + "/" + composeName;
+        if (!exitOk("wsl", "bash", "-c",
+                "cd " + deployDir + " && docker compose -f " + composeName + " up -d logstash")) {
+            throw new IllegalStateException("重建 Logstash 容器失败: " + composeFile
+                    + "(配置已同步,可手动 docker compose up -d logstash)");
         }
     }
 

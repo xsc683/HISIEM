@@ -24,67 +24,111 @@ public class ActivationCoordinator {
     private final String pipelineDir;
     private final String configDir;
     private final String containerPipelineRoot;
+    private final String composeFile;
 
     public ActivationCoordinator(
             LogstashConfigGenerator generator,
             LogstashDeployer deployer,
             @Value("${app.logstash.pipeline-dir:infra/logstash/pipeline}") String pipelineDir,
             @Value("${app.logstash.config-dir:infra/logstash/config}") String configDir,
-            @Value("${app.logstash.container-pipeline-root:/usr/share/logstash/pipeline}") String containerPipelineRoot) {
+            @Value("${app.logstash.container-pipeline-root:/usr/share/logstash/pipeline}") String containerPipelineRoot,
+            @Value("${app.logstash.compose-file:infra/docker-compose.yml}") String composeFile) {
         this.generator = generator;
         this.deployer = deployer;
         this.pipelineDir = pipelineDir;
         this.configDir = configDir;
         this.containerPipelineRoot = containerPipelineRoot;
+        this.composeFile = composeFile;
     }
 
     /** 生效;失败已回滚文件并抛 {@link ActivationFailedException},由调用方置 failed 状态。 */
     public void activate(LogSource s, ParserTemplate t) {
         Path confFile = Path.of(pipelineDir, "log-sources", s.id + ".conf");
         Path pipelines = Path.of(configDir, "pipelines.yml");
+        Path compose = Path.of(composeFile);
         String containerPath = containerPipelineRoot + "/log-sources/" + s.id + ".conf";
-        String backup = null;
+        String pipelinesBackup = null;
+        String composeBackup = null;
         try {
             String conf = generator.generatePipeline(s, t);
             Files.createDirectories(confFile.getParent());
             Files.createDirectories(pipelines.getParent());
-            backup = Files.exists(pipelines) ? Files.readString(pipelines) : "";
 
+            pipelinesBackup = Files.exists(pipelines) ? Files.readString(pipelines) : "";
             Files.writeString(confFile, conf);
 
             String entry = "- pipeline.id: " + pipelineId(s) + "\n"
                     + "  path.config: \"" + containerPath + "\"\n"
                     + "  pipeline.ecs_compatibility: v8\n";
-            String base = (backup == null || backup.isEmpty()) ? "" : (backup.endsWith("\n") ? backup : backup + "\n");
+            String base = (pipelinesBackup == null || pipelinesBackup.isEmpty())
+                    ? "" : (pipelinesBackup.endsWith("\n") ? pipelinesBackup : pipelinesBackup + "\n");
             Files.writeString(pipelines, base + entry);
+
+            // 数据源端口映射到宿主机(路线B):把 "<port>:<port>" 加进 compose 的 logstash ports(幂等)。
+            // 同步/校验/重启任一步失败 → 还原 compose(见 rollback)。
+            composeBackup = addPortToCompose(compose, s.port);
 
             deployer.syncLogstash();
             if (!deployer.validateConfig(containerPath)) {
-                rollback(confFile, pipelines, backup);
+                rollback(confFile, pipelines, pipelinesBackup, compose, composeBackup);
                 throw new ActivationFailedException("Logstash 配置校验失败(" + s.id + "),已回滚");
             }
             deployer.restartLogstash();
         } catch (ActivationFailedException e) {
             throw e;
         } catch (IOException e) {
-            rollback(confFile, pipelines, backup);
+            rollback(confFile, pipelines, pipelinesBackup, compose, composeBackup);
             throw new ActivationFailedException("生效失败(写入/同步): " + e.getMessage(), e);
         } catch (RuntimeException e) {
-            rollback(confFile, pipelines, backup);
+            rollback(confFile, pipelines, pipelinesBackup, compose, composeBackup);
             throw new ActivationFailedException("生效失败(同步/重启): " + e.getMessage(), e);
         }
     }
 
-    /** 回滚:删除新 conf,还原 pipelines.yml 原内容。失败不掩盖原始错误。 */
-    private void rollback(Path confFile, Path pipelines, String backup) {
+    /**
+     * 把数据源端口映射加进 compose 的 logstash ports(幂等:已存在则不动)。
+     * 返回修改前的完整内容(供回滚);若未修改返回 null。
+     */
+    private String addPortToCompose(Path compose, Integer port) throws IOException {
+        if (port == null || port <= 0) {
+            return null;
+        }
+        if (!Files.exists(compose)) {
+            throw new IllegalStateException("docker-compose.yml 不存在: " + compose);
+        }
+        String original = Files.readString(compose);
+        String mapping = "\"" + port + ":" + port + "\"";
+        if (original.contains(mapping)) {
+            return null; // 已映射,无需改动
+        }
+        // 在 logstash 服务的 ports 区第一个端口项后插入(保持缩进与现有 "- " 一致)
+        String needle = "      - \"5000:5000\"\n";
+        if (!original.contains(needle)) {
+            throw new IllegalStateException("compose 找不到 logstash 基准端口 5000,无法插入映射");
+        }
+        String updated = original.replaceFirst(needle.replace("\\", "\\\\"),
+                needle + "      - " + mapping + "\n");
+        if (updated.equals(original)) {
+            throw new IllegalStateException("compose 端口插入失败: " + compose);
+        }
+        Files.writeString(compose, updated);
+        return original;
+    }
+
+    /** 回滚:删除新 conf,还原 pipelines.yml 与 compose 原内容。失败不掩盖原始错误。 */
+    private void rollback(Path confFile, Path pipelines, String pipelinesBackup,
+                          Path compose, String composeBackup) {
         try {
             Files.deleteIfExists(confFile);
-            if (backup != null) {
-                if (backup.isEmpty()) {
+            if (pipelinesBackup != null) {
+                if (pipelinesBackup.isEmpty()) {
                     Files.deleteIfExists(pipelines);
                 } else {
-                    Files.writeString(pipelines, backup);
+                    Files.writeString(pipelines, pipelinesBackup);
                 }
+            }
+            if (composeBackup != null) {
+                Files.writeString(compose, composeBackup);
             }
         } catch (IOException e) {
             System.err.println("[ActivationCoordinator] 回滚失败: " + e.getMessage());

@@ -202,6 +202,7 @@ createdAt: 2026-08-16T10:00:00Z
 | --- | --- | --- | --- | --- |
 | 数据源声明 | infra/log-sources/*.yaml | YAML schema(必填字段 / 枚举见 §4.3) | deploy.sh rsync → 后端加载(列表/详情/端口占用检查可见) | 校验失败→400 不落库;写失败→先临时文件再 rename 原子替换,不产生半写文件 |
 | 生成管道配置(input/filter/output) | infra/logstash/pipeline/conf.d/*.conf | `logstash --config.test_and_exit`(先校验后 reload) | deploy.sh rsync → reload/restart logstash | 校验/同步失败→保留旧 conf、数据源 status=failed 可重试 |
+| 数据源端口映射(路线B) | infra/docker-compose.yml(logstash ports) | YAML 解析(compose 合法) | ActivationCoordinator 幂等加 `"<port>:<port>"` → rsync compose 到 WSL → `docker compose up -d logstash`(重建应用端口) | 任一步失败→还原 compose、数据源 status=failed 可重试 |
 | 数据源停用/删除 | infra/logstash/pipeline/conf.d/*.conf(重新生成) | `logstash --config.test_and_exit` | deploy.sh rsync → reload/restart;停用释放端口 | 失败→保留旧 conf、状态不变,failed 可重试 |
 
 ## 6. 数据流实现

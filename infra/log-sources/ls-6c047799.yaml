@@ -1,0 +1,10 @@
+---
+id: "ls-6c047799"
+name: "test"
+protocol: "tcp"
+templateId: "firewall"
+port: 5001
+status: "active"
+sourceId: "ls-6c047799"
+createdAt: "2026-08-16T10:50:03.670332400Z"
+updatedAt: "2026-08-16T10:51:26.357933100Z"

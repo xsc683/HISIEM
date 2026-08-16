@@ -30,11 +30,16 @@ class ActivationCoordinatorTest {
     private ParserTemplate template;
 
     @BeforeEach
-    void setUp() {
+    void setUp() throws Exception {
         deployer = mock(LogstashDeployer.class);
         coordinator = new ActivationCoordinator(new LogstashConfigGenerator(), deployer,
                 temp.resolve("pipeline").toString(), temp.resolve("config").toString(),
-                "/usr/share/logstash/pipeline");
+                "/usr/share/logstash/pipeline",
+                temp.resolve("docker-compose.yml").toString());
+        // mock compose:含 logstash 基准端口 5000(端口映射插入锚点)
+        Files.createDirectories(temp.resolve("pipeline"));
+        Files.writeString(temp.resolve("docker-compose.yml"),
+                "services:\n  logstash:\n    ports:\n      - \"5000:5000\"\n");
         source = LogSource.creating("ssh-web-01", "tcp", "ssh-auth", 5001);
         source.id = "ls-abc12345";
         source.sourceId = "ls-abc12345";
@@ -61,6 +66,10 @@ class ActivationCoordinatorTest {
         assertTrue(yml.contains("pipeline.id: ls-abc12345"));
         assertTrue(yml.contains("/usr/share/logstash/pipeline/log-sources/ls-abc12345.conf"));
 
+        // 路线B:compose 端口映射应加入
+        String compose = Files.readString(temp.resolve("docker-compose.yml"));
+        assertTrue(compose.contains("\"5001:5001\""), "compose 应含数据源端口映射 5001:5001");
+
         verify(deployer).syncLogstash();
         verify(deployer).restartLogstash();
     }
@@ -78,6 +87,10 @@ class ActivationCoordinatorTest {
         String yml = Files.readString(temp.resolve("config/pipelines.yml"));
         assertFalse(yml.contains("ls-abc12345"), "pipeline 条目应回滚");
         assertTrue(yml.contains("pipeline.id: main"), "原 pipelines.yml 应还原");
+        // 路线B:compose 端口映射也应回滚(还原为仅 5000)
+        String compose = Files.readString(temp.resolve("docker-compose.yml"));
+        assertFalse(compose.contains("5001:5001"), "compose 端口映射应回滚");
+        assertTrue(compose.contains("5000:5000"), "原 compose 应还原");
         verify(deployer, never()).restartLogstash();
     }
 
