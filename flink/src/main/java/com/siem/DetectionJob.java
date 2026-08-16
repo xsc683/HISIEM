@@ -2,7 +2,11 @@ package com.siem;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
+import org.apache.flink.api.common.functions.FilterFunction;
 import org.apache.flink.api.common.serialization.SimpleStringSchema;
+import org.apache.flink.cep.CEP;
+import org.apache.flink.cep.pattern.Pattern;
+import org.apache.flink.cep.pattern.conditions.SimpleCondition;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.configuration.RestartStrategyOptions;
 import org.apache.flink.connector.elasticsearch.sink.Elasticsearch8AsyncSinkBuilder;
@@ -140,7 +144,35 @@ public class DetectionJob {
                         .uid("window-rule");
 
 
-        DataStream<String> alerts = singleAlerts.union(windowAlerts);
+        /*
+         * 3) CEP 攻击链规则(Phase 3.2):同一源 IP 10 分钟内 ≥5 次认证失败 → 随后 1 次成功登录
+         *    = 暴力破解成功。给分析师的不再是"又一条失败",而是"攻击得逞了"的完整叙事。
+         */
+        Pattern<Event, ?> bruteforceSuccess = Pattern.<Event>begin("failures")
+                .where(SimpleCondition.of((FilterFunction<Event>) EventConditions::isAuthenticationFailure))
+                .times(5, 100)
+                .next("success")
+                .where(SimpleCondition.of((FilterFunction<Event>) EventConditions::isAuthenticationSuccess))
+                .within(Duration.ofMinutes(10));
+
+        DataStream<String> cepAlerts = CEP.pattern(
+                        parsed
+                                .assignTimestampsAndWatermarks(
+                                        WatermarkStrategy.<Event>forBoundedOutOfOrderness(Duration.ofSeconds(10))
+                                                .withTimestampAssigner((e, ts) -> e.getTimestampMillis())
+                                                .withIdleness(Duration.ofSeconds(60)))
+                                .uid("cep-watermark")
+                                .keyBy(e -> String.valueOf(
+                                        e.getFields().getOrDefault("source.ip", "unknown"))),
+                        bruteforceSuccess)
+                .process(new BruteforceSuccessFunction(
+                        "rule-ssh-bruteforce-success-001", "SSH 暴力破解成功", "ssh_bruteforce_success",
+                        "critical", "同一源 IP 短时间多次认证失败后成功登录,疑似暴力破解得逞",
+                        90, List.of("attack.t1110.001", "attack.t1078.002"), "experimental"))
+                .uid("cep-attack-chain");
+
+
+        DataStream<String> alerts = singleAlerts.union(windowAlerts).union(cepAlerts);
 
         alerts.print();
         alerts.sinkTo(

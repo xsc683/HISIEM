@@ -65,6 +65,7 @@ public class WindowRuleFunction extends ProcessWindowFunction<Event, String, Str
         }
         alert.put("event_count", matched.size());
         alert.put("related_events", matched);
+        Ocsf.applyAuthView(alert, rule.getSeverity());
         return alert;
     }
 }

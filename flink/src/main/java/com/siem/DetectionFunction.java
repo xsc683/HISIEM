@@ -55,6 +55,7 @@ public class DetectionFunction implements FlatMapFunction<Event, String> {
         promote(alert, event, "event.category");
         alert.put("event.raw", rawJson);
         alert.put("event_count", 1);
+        Ocsf.applyAuthView(alert, rule.getSeverity());
         return alert;
     }
 

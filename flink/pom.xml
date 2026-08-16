@@ -30,6 +30,13 @@
             <artifactId>flink-connector-kafka</artifactId>
             <version>5.0.0-2.1</version>
         </dependency>
+
+        <!-- CEP 复杂事件处理:攻击链序列规则(Phase 3.2) -->
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-cep</artifactId>
+            <version>${flink.version}</version>
+        </dependency>
         
 	<dependency>
             <groupId>org.apache.flink</groupId>
