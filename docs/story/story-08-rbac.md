@@ -3,7 +3,7 @@
 > **元信息**
 > - 关联模块:08 产品设计 §5.6 系统设置(用户权限·远期)+ §7 权限与安全;对齐 [security-rbac.md](../design/security-rbac.md) 的 ES 侧 RBAC
 > - 优先级:P2
-> - 状态:草稿
+> - 状态:✅ 已实现(dd3e32f;登录/会话/用户角色 CRUD + 权限矩阵 + 审计)
 > - 依赖:console 前后端骨架(b2051fd);ES 侧 RBAC 文档已就绪(security-rbac.md,Phase 3.4);story-03(规则启停)/ story-04(告警处置)/ story-05(停采)提供写操作鉴权点
 >
 > **填写完成度 checklist**
@@ -31,8 +31,8 @@
 
 ### 2.1 背景(当前痛点)
 - console(Spring Boot + React 骨架)当前**无用户体系**:接口直接可调,任何能访问端口的人可读写(与 ES 9200 未开认证同源风险,见 security-rbac.md §1)。
-- 08 §7 已定 console 四角色 × 模块 × 动作矩阵,但未落地;ES 侧已有 `siem_ingest`/`siem_analyst` 角色(security-rbac.md §3),console 侧产品角色需与之对齐。
-- 敏感操作(数据源生效、规则启停、批量 close、verdict)目前无鉴权无审计。
+- 08 §7 已定 console 四角色 × 模块 × 动作矩阵,但未落地;ES 侧已有 `siem_ingest`/`siem_analyst` 角色(security-rbac.md §3),console 侧产品角色需与之对齐。(✅ **已由本 story 落地,dd3e32f**:四角色 × 模块 × 动作矩阵 + AuthInterceptor 鉴权 + 审计日志)
+- 敏感操作(数据源生效、规则启停、批量 close、verdict)目前无鉴权无审计。(✅ **已落地**:AuthInterceptor 保护写操作,operator 审计)
 
 ### 2.2 目标(可度量)
 - 登录鉴权 + 四角色授权:未登录访问任意 API → 401;角色无权限动作 → 403,拒绝率 100%。

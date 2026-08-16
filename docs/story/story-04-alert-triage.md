@@ -3,7 +3,7 @@
 > **元信息**
 > - 关联模块:08 产品设计 §5.4 告警中心
 > - 优先级:P1
-> - 状态:草稿
+> - 状态:✅ 已实现(e3db7bc;控制台告警台 三线/verdict/批量,替代 triage-alert.py)
 > - 依赖:告警生命周期字段已实现(alert.status/verdict);triage-alert.py 已实现
 >
 > **填写完成度 checklist**(P1 深化判定,提交评审前逐项自检;参照 P0 既有结论深化,不重开已定决策)
@@ -32,7 +32,7 @@
 ### 2.1 背景
 - siem-alerts 已带 `alert.status`(5 态:open/acknowledged/investigating/resolved/closed,与 triage-alert.py 状态集完全一致)、`alert.analyst_verdict`(true_positive/false_positive/duplicate)、`alert.status_updated_at`、`alert.risk_score`。
 - 已有 CLI 工具 `triage-alert.py` + Kibana 状态/结论视图——但交互式 UI 缺失。
-- **过渡口径(02-architecture §6 决策 Q,控制台主 + 分阶段)**:4.0 MVP 阶段告警三线在 Kibana(三线视图 + triage-alert.py,零新代码)完成;本 Story = 产品控制台告警台(P1,告警台归属=控制台主,决策 Q),落地后替代 CLI 过渡方案。
+- **过渡口径(02-architecture §6 决策 Q,控制台主 + 分阶段)**:4.0 MVP 阶段告警三线在 Kibana(三线视图 + triage-alert.py,零新代码)完成;本 Story = 产品控制台告警台(P1,告警台归属=控制台主,决策 Q)。✅ **已落地(e3db7bc)**:控制台告警台三线/verdict/批量处置,替代 triage-alert.py 交互版。
 
 ### 2.2 目标
 - 分析师在告警台完成五态流转 + 强制 verdict,按风险分排序,全在 UI 上。

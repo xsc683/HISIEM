@@ -3,7 +3,7 @@
 > **元信息**
 > - 关联模块:08 产品设计 §8 通知与告警路由([08](../design/08-product-design.md) §8)
 > - 优先级:P1(原 Could,承接被多处后置的告警通知真空)
-> - 状态:草稿
+> - 状态:✅ 已实现(f63bff0;控制台内横幅+通知中心,1h 频控;外部渠道投递 Won't)
 > - 依赖:告警台(Story 04,FP 率统计/verdict 回流)、数据健康(Story 05,健康指标/停采判定)
 >
 > **填写完成度 checklist**(P1 深化判定,提交评审前逐项自检;参照 P0 既有结论深化,不重开已定决策)
@@ -43,7 +43,7 @@
 
 - **MVP**:三类关键事件(高 FP 规则 / 接入失败 / 健康异常)在触发后 **≤10s** 以控制台横幅 + 通知中心呈现;同一对象同类型 **1h 内不重复**(频控防轰炸)。
 - 通知中心支持未读角标 / 标记已读 / 全部已读 / 清空;通知保留 **≥30d**。
-- **P1+**(可选,默认不做):邮件 / Webhook 渠道投递(subscribe),MVP **不投递外部**。
+- **外部渠道投递(邮件 / Webhook)**:**Won't**(2026-08-16 决策,单人项目不关注外部投递,控制台内横幅+通知中心已足够;见 §10 ADR)。
 
 ### 2.3 非目标
 
@@ -79,7 +79,7 @@
 | FR-6 | 删除单条 / 清空已读 | MVP | `DELETE /api/notifications/{id}`(单条)、`DELETE /api/notifications?read=true`(清空全部已读);未读默认保留(清空只清已读,防误删) |
 | FR-7 | 频控防轰炸 | MVP | 频控键=`type + subjectType + subjectId`(同一对象同类型);对齐 08 §8 频控:同一对象同类型 **1h 内最多 1 条**;频控状态落 console 自有存储,重启不失效 |
 | FR-8 | 顶部横幅 | MVP | 有未读通知时控制台任意页顶部显示最新一条横幅;可点击跳转(§5.2 `link`)、可关闭(关闭=标记已读);同对象频控命中则不重复弹出 |
-| FR-9 | (P1+)渠道订阅投递 | P1+ | `POST /api/notifications/subscribe`(邮件/Webhook);订阅后通知经渠道派发;**MVP 不实现该端点**;渠道配置/重试见 §9 |
+| FR-9 | 渠道订阅投递 | Won't | ~~`POST /api/notifications/subscribe`(邮件/Webhook)~~;2026-08-16 决策不做外部投递(控制台内横幅+中心已足够),端点不实现、设计保留见 §10 ADR |
 
 ### 4.2 非功能需求
 
@@ -101,7 +101,7 @@
 | `notification.type` | `fp_review` / `ingest_failed` / `health_anomaly` | 本 story 登记(§4.3) | 通知类型:fp_review=规则 FP 率>50% 需 review;ingest_failed=数据源接入/生效失败;health_anomaly=停采或失败率突升 |
 | `notification.status` | `unread` / `read` | 本 story 登记(§4.3) | 已读/未读;标记已读幂等;清空只清已读 |
 | `notification.priority` | `high` / `medium` / `low` | 本 story 登记(§4.3) | 通知优先级;MVP 三类信号均为运维关键事件默认 `high`,预留分级 |
-| `notification.channel` | `banner` / `email` / `webhook` | 已登记 §4.3(_template) | 投递渠道;MVP 仅 banner(横幅+中心),email/webhook 为 P1+ subscribe 用 |
+| `notification.channel` | `banner` | 本 story 登记(§4.3) | 投递渠道:仅控制台内 banner(横幅+通知中心)。email/webhook 已列入 **Won't**(§10 ADR),不入枚举 |
 | `alert.analyst_verdict` | `true_positive` / `false_positive` / `duplicate` | triage-alert.py `VERDICTS` | FP 率计算输入;`FP/(TP+FP)`,duplicate 不进分母(引用,不重定义) |
 | `log-source.status` | `creating` / `active` / `stopped` / `failed` | 本字典已登记,story-01 落地 | `ingest_failed` 通知触发值 = `failed` |
 | `rule.type` | `single_event` / `window` / `cep` / `baseline` | 检测引擎,对齐 story-03 | `fp_review` 通知对象类型 = `rule`(引用) |
@@ -114,7 +114,7 @@
         └→ RateLimiter(频控:type+subjectType+subjectId,1h 窗口,console 自有存储持久化)
              └→ NotificationService → console 自有 H2(file-backed)
                   └→ GET /api/notifications(前端每 10s 轮询未读)→ 顶部横幅 + 通知中心
-                  └→(P1+)ChannelDispatcher → 邮件/Webhook(不投递,MVP)
+                  (外部投递 ChannelDispatcher 不做——Won't,§10 ADR)
 ```
 
 ### 5.1 组件与职责
@@ -125,8 +125,8 @@
 | `NotificationScanner`(新) | 定时扫描(每 1min):FP 率聚合(siem-alerts)+ 健康异常聚合(siem-events-*),产出候选通知 |
 | `IngestFailedListener`(新) | 事件驱动:监听 `log-source.status=failed` 变更,即时触发 `ingest_failed` 通知(满足 ≤10s) |
 | `RateLimiter`(新) | 频控:按 `type+subjectType+subjectId` 的 1h 窗口去重;状态落 console 自有存储(重启恢复) |
-| `ChannelDispatcher`(新,P1+) | 邮件/Webhook 派发;渠道配置读写;失败该渠道禁用不影响其他渠道 |
-| 存储 H2(新,console 自有) | 通知 / 频控表 / 渠道订阅(§5.3,story-10 独立决定,与 story-08 `infra/auth` 存储相互独立) |
+| `ChannelDispatcher`(**Won't**) | 邮件/Webhook 派发——不做(§10 ADR,不实现、不预留接口) |
+| 存储 H2(新,console 自有) | 通知 / 频控表(§5.3,story-10 独立决定,与 story-08 `infra/auth` 存储相互独立);渠道订阅表不建 |
 
 ### 5.2 API 契约
 
@@ -136,7 +136,7 @@ POST   /api/notifications/{id}/read                                   → 200 {i
 POST   /api/notifications/read-all                                    → 200 {updated:N}
 DELETE /api/notifications/{id}                                        → 204
 DELETE /api/notifications?read=true                                   → 204(清空全部已读,未读保留)
-(P1+)  POST /api/notifications/subscribe {channel, config}            → 201 {id, channel, status:"active"}(MVP 不实现→404)
+(不做)  POST /api/notifications/subscribe {channel, config}           → Won't(§10 ADR,不实现)
 ```
 
 **请求/响应样例**:
@@ -173,20 +173,19 @@ POST /api/notifications/read-all → 200
 
 DELETE /api/notifications/notif-20260816-0001 → 204  // 已删除;再次删除 → 404
 
-(P1+) POST /api/notifications/subscribe
-// 请求
-{ "channel": "webhook", "config": { "url": "https://hooks.slack.com/services/xxx", "secret": "..." } }
-// 响应 201
-{ "id": "sub-001", "channel": "webhook", "status": "active" }
+// Won't(§10 ADR):subscribe 渠道订阅不实现。
+// 原设计(P1+)示例保留如下供参考,不落地:
+//   POST /api/notifications/subscribe { "channel": "webhook", "config": { "url": "https://hooks.slack.com/services/xxx", "secret": "..." } }
+//   → 201 { "id": "sub-001", "channel": "webhook", "status": "active" }
 ```
 
 **4xx 错误码约定**(统一,不另造):
 
 | 错误码 | 语义 | 典型触发 |
 | --- | --- | --- |
-| 400 | 参数非法 | `unread` 非布尔;`type` 不在 §4.3 枚举;subscribe 邮箱格式错 / webhook URL 非 http(s) |
-| 404 | 资源不存在 | 通知 id 查无;P1+ subscribe 端点 MVP 阶段未实现返回 404 |
-| 409 | 冲突 | subscribe 同渠道重复订阅(提示先更新);MVP 其他端点无并发冲突(已读/删除幂等) |
+| 400 | 参数非法 | `unread` 非布尔;`type` 不在 §4.3 枚举 |
+| 404 | 资源不存在 | 通知 id 查无 |
+| 409 | 冲突 | MVP 无并发冲突端点(已读/删除幂等);subscribe 端点 Won't 不实现 |
 | 401 / 403 | 未鉴权 / 无权限 | MVP 单用户可暂缓,须在 §4.2 说明 |
 
 ### 5.3 存储
@@ -197,7 +196,7 @@ DELETE /api/notifications/notif-20260816-0001 → 204  // 已删除;再次删除
 | --- | --- | --- | --- | --- |
 | 通知 | console 自有 H2(表 `notification`,story-10 独立建,与 story-08 `infra/auth` 无共用) | id(text PK) / type(keyword) / status(keyword) / subject_type+subject_id(keyword,频控键) / priority(keyword) / title/message(text) / link(text) / created_at(date) / read_at(date) | 无 ES 模板 | 本 story 建 |
 | 频控表 | console 自有 H2(表 `rate_limit`) | rate_key(text PK:type+subjectType+subjectId) / window_start(date) / window_end(date) | 无 | 本 story 建 |
-| 渠道订阅(P1+) | console 自有 H2(表 `channel_subscription`) | id(text PK) / channel(keyword:email/webhook) / config(json,secret 加密存储) / status(keyword:active/disabled) | 无 | 本 story 建(P1+) |
+| 渠道订阅(**Won't**) | console 自有 H2(表 `channel_subscription`) | ~~id / channel(email/webhook) / config(secret 加密) / status~~ | 无 | 不建(§10 ADR) |
 
 > 校验提示:通知存储**不新建 ES 索引**,避免与"检测数据在 ES、运维状态在 console"的分工冲突(08 §1.1);H2 由 console 进程 file-backed 落盘、重启持久;与 story-08 的 `infra/auth/*.yaml`(文件+Git)存储**相互独立**,不共用连接、无依赖。
 
@@ -209,7 +208,7 @@ DELETE /api/notifications/notif-20260816-0001 → 204  // 已删除;再次删除
 | 配置对象 | 写入位置 | 校验 | 生效动作 | 失败回滚 |
 | --- | --- | --- | --- | --- |
 | 触发阈值(FP/样本/停采/失败率) | console 配置(非 infra) | 配置项类型/范围校验 | 重启 console / 热重载(读取时刷新) | 校验失败拒绝加载,沿用旧阈值 |
-| 渠道订阅(P1+) | console 自有 H2(表 `channel_subscription`) | 邮箱格式 / webhook URL http(s) 校验 + 可选连通性测试 | `ChannelDispatcher` 读取生效 | 校验失败→400,订阅不写入;派发失败→该渠道 disabled,不影响其他渠道与主流程 |
+| 渠道订阅(**Won't**) | 不建(§10 ADR) | — | — | — |
 
 ## 6. 数据流实现
 
@@ -259,8 +258,8 @@ DELETE /api/notifications/notif-20260816-0001 → 204  // 已删除;再次删除
 
 ## 9. 开放问题
 
-- **邮件/Webhook 具体渠道配置与重试**(P1+):SMTP 服务器/发件人、Webhook 端点鉴权(secret)、TLS、投递退避重试与失败告警、渠道可达性测试,待 P1+ 实现时定(§5.2 subscribe)。
-- **通知与告警的边界已收敛为 ADR-3**(通知=控制台运维层,告警=检测层,不混存不互转);残留:未来是否开放"critical 告警 → 自动生成通知给 admin"的升级路径、通知是否支持按角色/接收人过滤(订阅粒度),列 P1+ 开放,不默认做。
+- ~~**邮件/Webhook 具体渠道配置与重试**(P1+)~~:**已关闭(2026-08-16,ADR-4)**——外部渠道投递整体 Won't,不做 SMTP/Webhook 设计,§5.2 subscribe 示例仅作参考保留。
+- **通知与告警的边界已收敛为 ADR-3**(通知=控制台运维层,告警=检测层,不混存不互转);残留:未来是否开放"critical 告警 → 自动生成通知给 admin"的升级路径、通知是否支持按角色/接收人过滤(订阅粒度),列 P1+ 开放,不默认做(外部投递本身已 Won't,此残留仅指控制台内升级路径)。
 - **与 story-08(RBAC)存储关系已明确**:本 story 通知存储 = console 自有 H2(file-backed),为 **story-10 独立决定**(U11,ADR-1),与 story-08 用户/角色存储(`infra/auth/*.yaml`,文件+Git)**相互独立**——两 story 不共用存储、不重复决策;表名与 schema 由本 story 落地实现时确定。
 
 ## 10. 设计决策(ADR 式)
@@ -281,4 +280,9 @@ DELETE /api/notifications/notif-20260816-0001 → 204  // 已删除;再次删除
 - **背景**:08 §8 通知信号之一"高 FP 规则"由告警 verdict 计算,容易与"告警中心"混淆;需明确二者职责,避免一个列表两种语义。
 - **选项**:A. 通知并入告警中心(同一列表展示)/ B. 通知=控制台运维层、告警=检测层,不混存、不互转 / C. 通知同时承接 critical 告警的推送
 - **取舍**:A 把"运维信号"(接入失败/健康异常/规则 review)与"安全告警"(检测到攻击)混在一个列表,语义混乱、筛选交叉; C 会模糊检测与运维边界,且告警推送本由告警台/Kibana 承接(08 §1 分工),重复实现; B 职责清晰:`siem-alerts` 只存检测告警(Story 04 管),通知中心只存运维/规则质量信号;`fp_review` 通知虽由 verdict 计算,但内容是"建议 review 规则"而非新告警,归通知。
-- **决定**:**B 通知=控制台运维层,告警=检测层**;二者不混存、不互转——通知不写 `siem-alerts`,告警不进通知中心。未来若需"critical 告警推送 admin",作为 P1+ 扩展经 subscribe 渠道投递,但不改变存储边界(ADR-1)。
+- **决定**:**B 通知=控制台运维层,告警=检测层**;二者不混存、不互转——通知不写 `siem-alerts`,告警不进通知中心。未来若需"critical 告警推送 admin",作为 P1+ 扩展经 subscribe 渠道投递,但不改变存储边界(ADR-1)。(**注**:2026-08-16 起 subscribe/外部投递已 Won't(ADR-4),此处的"扩展投递"路径同步关闭。)
+
+### ADR-4 外部通知渠道投递(Won't)
+- **背景**:设计曾把邮件 / Webhook(subscribe 渠道)列为 P1+ 扩展,预留 `channel_subscription` 表与 `ChannelDispatcher`。
+- **决定**:**不做外部投递(2026-08-16)**——单人项目,通知当前只显示在控制台内(顶部横幅 + 通知中心)已足够,不关注邮件/Webhook 派发。`subscribe` 端点不实现(404→删除),`channel_subscription` 表不建,`ChannelDispatcher` 不写。§5.2 示例保留为参考,不落地。
+- **影响**:通知渠道枚举收敛为 `banner` 单值;频控/存储/边界(ADR-1/2/3)不受影响。若未来引入外部投递,需重新设计渠道配置与重试,届时再开新 ADR。

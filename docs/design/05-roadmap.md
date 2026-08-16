@@ -1,6 +1,7 @@
 # Phase 3 设计 — 实施路线图
 
-> 状态:已实现基线见各阶段状态列 · 2026-08-16(Phase 3.0–3.5 已全部实现并验证;B1 排序清单/FP 率视图/cancel→restore 演练/规则 YAML 化/规则 lint 门禁/ES snapshot 恢复演练/TI 查表富化 均于 2026-08-16 落地;commit 7e86478 / b284fa3 / da1a0f6 / 6524fb6 / c6fb407)
+> 状态:已实现基线见各阶段状态列 · 2026-08-16(Phase 3.0–3.5 已全部实现并验证;B1 排序清单/FP 率视图/cancel→restore 演练/规则 YAML 化/规则 lint 门禁/ES snapshot 恢复演练/TI 查表富化 均于 2026-08-16 落地;commit 7e86478 / b284fa3 / da1a0f6 / 6524fb6 / c6fb407 / f1739e0 / 4c74f35 / 664f6a6)
+> 已明确不做:检测即代码的 **CI 门禁**(GitHub Actions 等)——个人项目无外部协作者合入,规则 lint 门禁(flink `RuleLintTest`)+ 正负夹具测试已在本地 `mvn test` 覆盖(2026-08-16 决策,单人项目不再引入 CI);外部通知渠道投递(邮件/Webhook,见 [story-10](../story/story-10-notification.md))
 > 分阶段落地顺序。每阶段独立可验收、可交付,依赖前置阶段。优先级符号:P0=立即 / P1=近期 / P2=计划 / P3=远期。
 
 ---
@@ -10,10 +11,10 @@
 | 阶段 | 主题 | 核心目标 | 主要依赖 | 状态 |
 | --- | --- | --- | --- | --- |
 | 3.0 | 可靠性基线 | 告警不重、状态不丢、留存生效 | 无 | ✅ 完成(.uid 全算子 + cancel→restore 演练,2026-08-16) |
-| 3.1 | 减噪 | 抑制 + 风险评分 | 3.0(幂等/schema) | 🟡 部分(抑制 ✅ b284fa3;risk_score 排序清单待做) |
-| 3.2 | 检测工程化 | 规则元数据 + 攻击链 CEP + 检测即代码 | 3.1 | 🟡 部分(CEP/OCSF/元数据 ✅ da1a0f6;规则 YAML/lint/CI 待做) |
+| 3.1 | 减噪 | 抑制 + 风险评分 | 3.0(幂等/schema) | ✅ 完成(抑制 ✅ b284fa3;risk_score 排序清单 ✅ 2026-08-16) |
+| 3.2 | 检测工程化 | 规则元数据 + 攻击链 CEP + 检测即代码 | 3.1 | ✅ 完成(CEP/OCSF/元数据 ✅ da1a0f6;规则 YAML 化 ✅ f1739e0;lint 门禁 ✅ 4c74f35;CI 明确不做) |
 | 3.3 | 告警闭环与富化 | 三线流转 + verdict 回流 + GeoIP | 3.2 | ✅ 完成(三线/verdict/GeoIP + 按规则 FP 率视图,2026-08-16) |
-| 3.4 | 合规与归档 | ILM 长留存 + snapshot | 3.0 | 🟡 部分(ILM/backup/RBAC ✅ 6524fb6,其余待做) |
+| 3.4 | 合规与归档 | ILM 长留存 + snapshot | 3.0 | ✅ 完成(ILM/backup/RBAC ✅ 6524fb6;snapshot 恢复演练 ✅ 2026-08-16) |
 | 3.5 | 智能化 | 基线异常 / 实体风险聚合 | 3.3 | ✅ 完成(基线/实体风险 ✅ c6fb407;威胁情报查表 ✅ 2026-08-16) |
 
 ---
@@ -65,8 +66,8 @@
 | --- | --- | --- | --- |
 | CEP 序列规则(失败→成功登录,rule-ssh-bruteforce-success-001) | 04-§1 / 03-F8 | P1 | ✅ 已实现(da1a0f6) |
 | OCSF 映射层 | 02-§5.3 | P1 | ✅ 已实现(da1a0f6) |
-| 规则 YAML(Sigma 风格)+ 转换器 | 04-§3 | P2 | ⏳ 待做(da1a0f6 只加 CEP+OCSF+EventConditionsTest;规则 YAML 声明/转换器待做) |
-| 正负夹具测试 + lint + CI | 04-§6 | P2 | ⏳ 待做(CEP/基线正负夹具测试 ✅;lint + CI 待做) |
+| 规则 YAML(Sigma 风格)+ 转换器 | 04-§3 | P2 | ✅ 已实现(f1739e0:infra/rules/*.yaml 单一来源,RuleConfigLoader/RuleBuilder 声明式 condition;enabled 启停) |
+| 正负夹具测试 + lint | 04-§6 | P2 | ✅ 已实现(CEP/基线正负夹具 ✅ da1a0f6/c6fb407;lint 门禁 ✅ 4c74f35 `RuleLintTest`:UUID 格式/枚举/MITRE tag/ECS 字段校验;**CI 明确不做**,单人项目本地 mvn test 覆盖) |
 | ATT&CK 覆盖矩阵/Navigator layer JSON | 04-§2 | P2 | ✅ 已实现(da1a0f6) |
 
 **验收口径(已满足)**:新增"暴力破解→成功登录"规则对攻击序列产生单条告警;`mvn test` 跑规则回归。

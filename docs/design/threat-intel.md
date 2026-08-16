@@ -12,10 +12,12 @@
 
 | 项 | 值 |
 | --- | --- |
-| 数据源 | AbuseIPDB / GreyNoise 导出的 IP 信誉 CSV(每日更新) |
+| 数据源 | AbuseIPDB / GreyNoise 导出的 IP 信誉 CSV(每日更新;**MVP 用手工 YAML 字典,外部 feed 拉取 P2+ 未做**) |
 | 落地 | Logstash `translate` filter(查 source.ip) |
 | 输出 | `threat.is_malicious`(bool)/`threat.confidence`(0-1) |
 | 优势 | 零基础设施、规则直接可用、与 at-ingest 富化(GeoIP)一致 |
+
+> **MVP 现状(2026-08-16,`664f6a6`)**:已落地本地字典版——`infra/logstash/config/ti-malicious.yml` / `ti-confidence.yml`(YAML 而非下述 CSV),`logstash.conf` 用两个 `translate` filter(与下述示例同构,refresh_interval 3600 + fallback);字典更新脚本 `infra/ti/update-ti.py`。下述 download.sh/build-csv.py + 外部 feed 为 **P2+ 升级路径,未实现**;YAML 与 CSV 可互相转换,字典格式不影响 filter 逻辑。
 
 ### 示例(Logstash translate,可运行)
 

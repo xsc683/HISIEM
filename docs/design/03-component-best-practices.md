@@ -181,7 +181,7 @@ output {
 | E1 | 模板 `number_of_replicas: 0` | 两个模板 | P0 | ✅ 已落地(7e86478;apply-templates.sh 对已存在索引补设) |
 | E2 | 建 ILM 策略 `siem-events-retention`(hot set_priority → delete **min_age 365d,无 warm 阶段**;不带 rollover);挂模板 + 已存在索引 `PUT /siem-events-*/_settings` | apply-templates.sh + 模板 | P0 | ✅ 已落地(7e86478 建策略,6524fb6 改为 365d;满足 PCI 12 个月留存) |
 | E3 | `refresh_interval: 5s`、`codec: best_compression`、`translog.durability: async + sync_interval: 30s` | 模板 | P0 | ✅ 已落地(7e86478) |
-| E4 | siem-events 模板加 dynamic templates(`*_id`→keyword、`*ip*`→ip、兜底 keyword);不改 message/event.original(match_only_text) | 模板 | P1 | ⏳ 待做(JSON 片段见下) |
+| E4 | siem-events 模板加 dynamic templates(`*_id`→keyword、`*ip*`→ip、兜底 keyword);不改 message/event.original(match_only_text) | 模板 | P1 | ✅ 已落地(2ecfa4b;JSON 见下,与实现一致) |
 | E5 | 安全最小门槛:basic auth + RBAC `siem_ingest` / `siem_analyst` 角色;9200 绑 127.0.0.1;决策文档化 | compose / setup-rbac.sh / 文档 | P2 | 部分(setup-rbac.sh + elasticsearch.yml + security-rbac.md 已落地,6524fb6;`xpack.security.enabled` 默认关,启用需维护窗口) |
 | E6 | snapshot repository(本地/MinIO)+ delete 前定时快照 | backup.sh | P2 | ✅ 已落地(backup.sh,6524fb6;仓库注册命令/保留策略见下) |
 | E7 | 运维基线:`_cluster/health`、`_cat/indices?v&s=store.size:desc`、`_ilm/explain` 入脚本 | 建议 `infra/elasticsearch/ops-health.sh` | P3 | ⏳ 待做(命令集/判读见下) |
@@ -223,7 +223,7 @@ output {
 | # | 落地 | 优先级 | 状态 |
 | --- | --- | --- | --- |
 | B1 | 告警清单按 `alert.risk_score` DESC 排序(数据落地后) | P0 | ✅ 已做(2026-08-16:vis-alerts-risk 表格,规则按 risk_score DESC) |
-| B2 | 告警三线视图(5 态:open/acknowledged/investigating/resolved/closed)+ verdict 回流 | P1 | 部分(状态/结论分布图已落地,6524fb6;5 态流转在 `infra/kibana/triage-alert.py`,verdict 枚举 `true_positive`/`false_positive`/`duplicate`) |
+| B2 | 告警三线视图(5 态:open/acknowledged/investigating/resolved/closed)+ verdict 回流 | P1 | ✅ 已落地(6524fb6 字段 + Kibana;2026-08-16 story-04 控制台告警台 e3db7bc 接管 5 态流转 + verdict + 批量处置,替代 triage-alert.py;verdict 枚举 `true_positive`/`false_positive`/`duplicate`,关闭前置 verdict) |
 | B3 | ATT&CK 覆盖矩阵(Detected/Logged/Blind)视图或 Navigator layer JSON | P2 | ✅ 已落地(文档层:`docs/design/mitre-coverage.md` §2 的 layer JSON 可直接导入 [ATT&CK Navigator](https://mitre-attack.github.io/attack-navigator/)) |
 | B4 | 按规则 FP 率统计视图(>50% 触发 review) | P1 | ✅ 已做(2026-08-16:vis-fp-rate 表格,FP/(TP+FP) 按规则;ES 查询思路见下) |
 

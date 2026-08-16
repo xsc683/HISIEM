@@ -1,11 +1,11 @@
 # docs/design — Phase 3 系统设计
 
-> 状态:设计稿 · 已实现基线:Phase 3.0-3.5 主体已落地(少量项待做,见 [05-roadmap.md](05-roadmap.md) 状态列;commit 7e86478~c6fb407 · 2026-08-16)
+> 状态:设计稿 · 已实现基线:Phase 3.0-3.5 全部落地(2026-08-16,commit 7e86478~664f6a6;详见 [05-roadmap.md](05-roadmap.md) 状态列)
 > 基于**成熟商业 SIEM 对标 + ES/Logstash/Kafka/Flink 组件最佳实践**(2025-2026 研究)产出的系统化设计,指导 Phase 3+ 演进。与现有文档的关系:现有 docs/ 记录**已实现**(Phase 1+2 + Phase 3.0-3.5),本目录记录**下一步设计**(Phase 3 收尾 + 4.x 产品层)。
 
 ## 当前已实现基线
 
-Phase 3.0-3.5 主体落地(commit 7e86478~c6fb407,2026-08-16):可靠性基线 → 减噪 → 检测工程化 → 告警闭环与富化 → 智能化,检测引擎 6 条规则(3 单事件 + 1 窗口 + 1 CEP + 1 基线)、ILM 365d 留存、告警抑制与 5 态闭环、verdict 回流均已实现并验证;B1 risk_score 排序清单、按规则 FP 率视图、cancel→restore 演练 于 2026-08-16 补齐,规则 YAML 化已落地;剩余待做:规则 lint/CI、ES snapshot 恢复演练、TI 富化。
+Phase 3.0-3.5 主体落地(commit 7e86478~c6fb407,2026-08-16):可靠性基线 → 减噪 → 检测工程化 → 告警闭环与富化 → 智能化,检测引擎 6 条规则(3 单事件 + 1 窗口 + 1 CEP + 1 基线)、ILM 365d 留存、告警抑制与 5 态闭环、verdict 回流均已实现并验证;2026-08-16 补齐:B1 risk_score 排序清单、按规则 FP 率视图、cancel→restore 演练、规则 YAML 化(f1739e0)、规则 lint 门禁(4c74f35)、ES snapshot 恢复演练、TI 查表富化(664f6a6)。**明确不做**:检测即代码 CI 门禁(单人项目,本地 mvn test 覆盖)、外部通知渠道投递(控制台内通知即可)。剩余少量远期项见 [05-roadmap.md](05-roadmap.md) 状态列。
 
 ## 文档地图
 
@@ -45,9 +45,9 @@ Phase 3.0-3.5 主体落地(commit 7e86478~c6fb407,2026-08-16):可靠性基线 �
 | 6 | Kafka 分区 1→3 + zstd + acks=all | 03-K1/K2 | ✅ 7e86478 |
 | 7 | 单事件规则 suppression(去重) | 03-F6 | ✅ b284fa3 |
 | 8 | 规则元数据(MITRE/risk_score/status) | 04-§2 | ✅ 7e86478 |
-| 9 | 告警 `alert.risk_score` + Kibana 排序 | 03-B1 | ⏳ 未落地(B1) |
+| 9 | 告警 `alert.risk_score` + Kibana 排序 | 03-B1 | ✅ 2026-08-16(vis-alerts-risk 表格) |
 | 10 | watermark idle 处理 | 03-F5 | ✅ b284fa3(P1 已实现) |
 
 ## 一句话给后续开发者
 
-Phase 3.0-3.5 检测引擎主体已实现(commit 7e86478~c6fb407,2026-08-16;少量辅助项待做,见 [05-roadmap.md](05-roadmap.md));后续开发者从 **4.x 产品层 story** 开始,按 `docs/story/` 的模块拆分推进产品化(接入/解析/规则管理/告警三线/数据健康等)。
+Phase 3.0-3.5 检测引擎全部实现(commit 7e86478~664f6a6,2026-08-16;见 [05-roadmap.md](05-roadmap.md));4.x 产品层 story 01-06/08/10 已实现、story-07 远期草稿、story-09 扩充待做,按 `docs/story/` 推进。

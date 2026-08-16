@@ -3,7 +3,7 @@
 > **元信息**
 > - 关联模块:08 产品设计 §5.2 解析规则库(预置模板扩充);对应 06 用户接入层 §4.1/§5.1 模板格式与 §7 路线图 4.2「模板库扩充 P1」
 > - 优先级:**P1**
-> - 状态:草稿
+> - 状态:🟡 机制已建(7f23fc9:ssh-auth 模板 + `ParserTemplateService` 加载 + `GrokTestService` 校验),预置模板扩充(nginx-access / windows-security / firewall)待做
 > - 依赖:解析模板机制(Story 02,模板 YAML 格式 + `ParserTemplateService` 加载 + `GrokTestService` 校验);接入向导(Story 01,step1 选模板 / step3 样例测试 / step4 生效)
 >
 > **填写完成度 checklist**(P1 深化判定,提交评审前逐项自检;参照 P0 既有结论深化,不重开已定决策)
@@ -255,7 +255,7 @@ status: stable
 
 ## 9. 开放问题
 
-- **模板是否进 GitHub Actions 自动校验(tests 驱动)**:方向是「新增/修改模板时 CI 用 `GrokTestService` 跑正负样本,不通过不能合入(类 Story 02 FR-4 门禁的 CI 化)」;是否纳入本期待定——若 P1 落地前仓库已有 CI 基建则一并做,否则先在本地脚本 + 手动门禁。
+- **模板是否进 GitHub Actions 自动校验(tests 驱动)**:**已关闭(2026-08-16)**——全局决策不做 CI(单人项目,见 [05-roadmap](..\design\05-roadmap.md) 顶部「明确不做」);模板校验保持在本地脚本 + Story 02 FR-4 正负样本门禁(`saveTemplate` 门禁),不引入 GitHub Actions。
 - **Windows Eventlog 真实采集需 agent/beats(非 tcp)**:本期 `windows-security` 只做「按 ECS 模板」——定义 `event.code`/`user.name`/`logon.type`/`event.action` 字段与 syslog 转发形态的 grok;字段语义与 winlogbeat→ECS 对齐,待 agent 接入(winlogbeat → Kafka/ES,不经 Logstash tcp)时复用同一字段、不改规则。**本期是否只做 ECS 模板、不做 agent 采集**,待 agent 接入 story 排期时定。
 
 ## 10. 设计决策(ADR 式)

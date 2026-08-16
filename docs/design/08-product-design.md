@@ -21,7 +21,7 @@
 | 存储 | Elasticsearch | 无直接界面(数据健康里看量/留存) |
 | 呈现 | Kibana + 控制台 | **Kibana**(分析师看告警/调查)+ **产品控制台**(管理员管接入/规则/运维) |
 
-**分工原则**:产品控制台管"接入/解析/检测规则/告警三线(产品化方向)";Kibana 管"事件检索(Discover)/检测看板/深度调查";4.0 MVP 阶段告警三线先用 Kibana 视图 + triage-alert.py 过渡,控制台告警台随 story-04(P1)落地。
+**分工原则**:产品控制台管"接入/解析/检测规则/告警三线(产品化方向)";Kibana 管"事件检索(Discover)/检测看板/深度调查"。告警三线 **已由控制台告警台承接(story-04,e3db7bc)**,替代 triage-alert.py 交互版;triage-alert.py 保留为 Kibana 侧过渡/备用工具。
 
 ### 1.1 控制台与 Kibana 边界(决策说明)
 
@@ -29,7 +29,7 @@
 | --- | --- | --- |
 | 接入向导 / 数据源管理 / 解析模板 | **控制台** | 配置管理型操作,面向管理员;Kibana 是分析工具,不承担"改配置" |
 | 检测规则展示 / 启停 / MITRE 覆盖 | **控制台** | 规则即代码(infra/rules/*.yaml),console 只读展示 + 启停,编辑走 Git/PR |
-| 告警三线(产品方向) | **控制台(分阶段)** | 4.0 MVP 用 Kibana 三线视图 + triage-alert.py 过渡(零新代码);控制台告警台随 story-04(P1)落地 |
+| 告警三线(产品方向) | **控制台** | ✅ 已落地(story-04,e3db7bc):控制台告警台三线/verdict/批量处置,替代 triage-alert.py 交互版 |
 | 事件检索(Discover) | **Kibana** | 原生全文检索/过滤/时间线,不重复造轮子 |
 | 检测看板 / 数据可视化 | **Kibana** | ES 原生态看板,检测态势可视化 |
 | 深度调查(单事件 → 关联 → 原文) | **Kibana(MVP)/ 调查台(远期 §5.7)** | 案件聚合远期归控制台;前期以 Kibana 深度调查视图承接 |
@@ -94,7 +94,7 @@
 └── 调查台(远期,§5.7)   ← 案件聚合、关联时间线
 ```
 
-> 注:告警中心 MVP(4.0)先用 Kibana 三线视图 + triage-alert.py 过渡(零新代码);控制台告警台随 story-04(P1)落地。
+> 注:告警中心已由控制台告警台承接(story-04,e3db7bc,三线/verdict/批量);triage-alert.py 保留为 Kibana 侧备用过渡工具。
 
 #### 5.0 阈值与规则可配置性(横切原则)
 
@@ -174,7 +174,7 @@
 #### 5.4 告警中心(与 Kibana 协作)
 - **职责**:告警三线、verdict、风险排序(复刻 Elastic/Splunk 的告警管理)
 - **核心交互**:open 列表(按风险分)→ ack → 结案强制 verdict;误报率统计回流
-- **MVP**:分阶段——4.0 先用 Kibana 三线视图 + triage-alert.py 过渡(零新代码);控制台告警台随 story-04(P1)落地
+- **MVP**:✅ 已落地(story-04,e3db7bc)——控制台告警台三线/verdict/批量处置,替代 triage-alert.py 交互版;triage-alert.py 保留为 Kibana 侧备用
 - **页面/路由**(主导航第 4 项「告警中心」):
 
   | 页面 | 路由 | 说明 |
@@ -332,15 +332,15 @@
 
 | 项 | 现状 | 说明 |
 | --- | --- | --- |
-| entity-risk.py | ✅ 已实现 | `infra/elasticsearch/entity-risk.py` + `asset-criticality.json` + `siem-entity-risk` 索引;定时聚合近 30 天告警 × 资产权重;**改进点**:查询不过滤 alert.status(closed 也计入,04-§4.2) |
-| triage-alert.py | ✅ 已实现 | `infra/kibana/triage-alert.py`;5 态 + verdict;4.0 过渡工具 |
-| 前后端骨架 | ✅ 已实现 | `src/`(Spring Boot:onboarding/GrokTestService/LogstashConfigGenerator)+ `web/`(React/Vite);向导/测试/配置预览可用,**数据源未落库未生效** |
+| entity-risk.py | ✅ 已实现 | `infra/elasticsearch/entity-risk.py` + `asset-criticality.json` + `siem-entity-risk` 索引;定时聚合近 30 天告警 × 资产权重;关键度已接控制台(Story 06,7feea08 触发重算);**改进点**:查询不过滤 alert.status(closed 也计入,04-§4.2) |
+| triage-alert.py | ✅ 已实现 | `infra/kibana/triage-alert.py`;5 态 + verdict;控制台告警台落地后为**过渡工具**(保留备用) |
+| 前后端骨架 | ✅ 已实现 | `src/`(Spring Boot)+ `web/`(React/Vite);Story 01-06/08/10 全部落地(接入闭环/解析/规则/告警/健康/关键度/RBAC/通知),10 区块控制台 |
 | 检测规则引擎 | ✅ 已实现 | 6 条规则 + AlertSuppressor + 窗口/CEP/基线(Phase 3.0-3.5) |
 | infra/parser-templates/ssh-auth.yaml | ✅ 已存在 | 预置解析模板(ssh-auth),接入向导可选 |
 | siem-events-raw(未知桶) | ⬜ 未落地(P2) | 解析失败路由 output + 索引模板;现状 tags=_parsefailure 在 siem-events-*(§5.5 FR-5) |
-| infra/log-sources/*.yaml | ⬜ 未落地 | Story 01 落地时创建(数据源声明,文件 + Git) |
-| infra/rules/*.yaml | ⬜ 未落地 | Story 03 落地时创建(6 条规则声明,含 enabled) |
-| 控制台告警台 | ⬜ 未落地(P1) | Story 04;MVP 用 Kibana 三线 + triage-alert.py 过渡 |
+| infra/log-sources/*.yaml | ✅ 已实现 | Story 01(7f23fc9):LogSourceStore 读写 `infra/log-sources/*.yaml`(数据源声明,文件 + Git),创建/生效闭环已接控制台 |
+| infra/rules/*.yaml | ✅ 已实现 | Story 03(f1739e0):6 条规则声明(含 enabled),Flink 启动按 enabled 注册;控制台只读 + 启停 + deploy(1671f51) |
+| 控制台告警台 | ✅ 已实现(P1) | Story 04(e3db7bc):三线/verdict/批量处置,替代 triage-alert.py 交互版 |
 
 ## 12. 开放问题
 

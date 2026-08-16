@@ -9,7 +9,7 @@
 
 1. **告警疲劳**:早期单事件规则是"1 事件 1 告警",告警会淹没分析师(业界数据:62% SOC 告警被直接无视);Phase 3 已通过告警抑制/风险评分/实体聚合减噪(见 §2.1),当前共 6 条规则。
 2. **可靠性边界**:Flink checkpoint 无持久化目录、ES sink 无确定性 `_id`(重启重放会重复告警)、窗口 watermark 无 idle 处理、无 ILM 留存策略 → 均已解决(见 §2.1)。
-3. **检测工程化缺失**:规则早期硬编码 Java 对象;Phase 3 已补 MITRE ATT&CK 标注(`rule.tags`/`attack.*` 全小写)、`rule.status` 与数值风险分(`alert.risk_score`),rule.version 在窗口/CEP/基线的覆盖 + references + 测试驱动与规则 YAML 声明化仍待落地,难以演进与度量覆盖。
+3. **检测工程化缺失**:规则早期硬编码 Java 对象;Phase 3 已补 MITRE ATT&CK 标注(`rule.tags`/`attack.*` 全小写)、`rule.status` 与数值风险分(`alert.risk_score`)、规则 YAML 声明化与 lint 门禁(f1739e0/4c74f35);剩余缺口:rule.version 在窗口/CEP/基线的覆盖 + references 待补。
 
 ## 2. 现状盘点(Phase 1+2 已实现)
 
@@ -114,7 +114,7 @@ Phase 3.0-3.5 检测引擎能力已全部实现并验证(commit `7e86478` / `b28
 
 - **是什么**:分析师从"看到告警"到"搞清来龙去脉"到"结案"的工作台。
 - **业界**:三线流转(open→acknowledged→investigating→resolved→closed)、事件时间线、相关事件聚合;结案强制打 **verdict**(true_positive/false_positive/duplicate)并**回流调优规则**——这是误报闭环的关键纪律。
-- **我们**:已实现(Phase 3.3 `6524fb6`)——`alert.status` 5 态 {open, acknowledged, investigating, resolved, closed} + `alert.status_updated_at` + `alert.analyst_verdict`(true_positive/false_positive/duplicate),`triage-alert.py` 支撑 Kibana 三线处置;`related_events`(窗口关联事件)已产出。产品归属:告警三线归于产品控制台告警中心(story-04,P1);4.0 MVP 先以 Kibana 三线视图 + `triage-alert.py` 过渡(零新代码)。
+- **我们**:已实现——`alert.status` 5 态 {open, acknowledged, investigating, resolved, closed} + `alert.status_updated_at` + `alert.analyst_verdict`(true_positive/false_positive/duplicate)(Phase 3.3 `6524fb6`);`related_events`(窗口关联事件)已产出;三线处置已由**控制台告警台**承接(story-04 `e3db7bc`,替代 triage-alert.py 交互版)。
 
 #### ⑨ SOAR / Playbook 自动化
 
@@ -178,7 +178,7 @@ Phase 3.0-3.5 检测引擎能力已全部实现并验证(commit `7e86478` / `b28
 | ILM 留存 | 无(按天裸索引) | delete 阶段 ILM(hot→delete 365d,无 warm) | ✅ 已实现(7e86478) |
 | GeoIP 富化 | 无 | Logstash geoip filter(at-ingest) | ✅ 已实现(6524fb6) |
 | 基线异常 | 无 | Flink 统计 job(滚动基线 24h) | ✅ 已实现(c6fb407) |
-| 检测即代码 | 硬编码规则 | 规则 YAML + 测试夹具 + CI | P1(infra/rules/*.yaml 方向已定,待落地) |
+| 检测即代码 | 硬编码规则 | 规则 YAML + 测试夹具 + lint(CI 明确不做) | ✅ 已实现(f1739e0 规则 YAML 化 + 1671f51 console 启停;4c74f35 lint 门禁) |
 
 ## 5. 功能需求(按能力域,MoSCoW)
 
@@ -188,7 +188,7 @@ Phase 3.0-3.5 检测引擎能力已全部实现并验证(commit `7e86478` / `b28
 - **F-R2 持久化状态**(✅ 已实现,`7e86478`):Flink checkpoint/savepoint 落到持久卷;显式 EXACTLY_ONCE、restart-strategy、timeout。
 - **F-R3 留存策略**(✅ 已实现,`7e86478`/`6524fb6`):`siem-events-*` 挂 ILM 生命周期(hot → delete `min_age 365d`,无 warm 阶段,单节点;满足 PCI 12 个月留存)。
 - **F-R4 单节点健康**(✅ 已实现,`7e86478`):replica=0(消除 yellow 与写放大)、refresh_interval/压缩/translog 调优。
-- **F-R5 规则元数据**(✅ 已实现,`7e86478`):Rule 增加 MITRE tags(`attack.*` 全小写)、risk_score、status;告警输出 `rule.tags`/`rule.status`/`alert.risk_score`(rule.version 在窗口/CEP/基线的覆盖 + references + YAML 声明化 待补)。
+- **F-R5 规则元数据**(✅ 已实现,`7e86478`):Rule 增加 MITRE tags(`attack.*` 全小写)、risk_score、status;告警输出 `rule.tags`/`rule.status`/`alert.risk_score`/`rule.version`。YAML 声明化已落地(f1739e0);已知缺口:`rule.version` 在窗口(WindowRule)/CEP(BruteforceSuccess)/基线(BaselineAnomaly)产出器暂未写入(仅单事件 DetectionFunction 写),references 待补。
 
 ### 5.2 Must(Phase 3.1 — 减噪)
 
@@ -199,7 +199,7 @@ Phase 3.0-3.5 检测引擎能力已全部实现并验证(commit `7e86478` / `b28
 
 - **F-R8 攻击链关联**(✅ 已实现,`da1a0f6`):CEP 序列规则 `rule-ssh-bruteforce-success-001`(同源"多次认证失败 → 随后成功登录"= `attack.t1110.001`/`attack.t1078.002`)。
 - **F-R9 OCSF 映射层**(◐ 部分实现,`da1a0f6`):输出侧已附加 OCSF 视图(`Ocsf.java`,`ocsf.class_uid`/`ocsf.severity_id`),完整字段映射见 `docs/design/ocsf-mapping.md`,待补全。
-- **F-R10 检测即代码**(待落地):规则 YAML(Sigma 风格)方向已定——`infra/rules/*.yaml` 声明 + enabled 启停;console 只读展示 + 写 enabled,编辑走 Git/PR;动态编辑 P2 开放;正负测试夹具 + lint + CI 待补。
+- **F-R10 检测即代码**(✅ 已实现,`f1739e0`/`1671f51`/`4c74f35`):规则 YAML(Sigma 风格)唯一来源 `infra/rules/*.yaml`(category=single_event/window/cep/baseline + 声明式 condition);Flink 启动按 `enabled` 注册;console 只读展示 + 启停(写 enabled),编辑走 Git/PR;动态编辑 P2 开放。正负夹具测试 + lint 门禁(`RuleLintTest`)已落地;**CI 明确不做**(2026-08-16 决策:个人项目无外部协作者,本地 mvn test 覆盖)。
 
 ### 5.4 Should(Phase 3.3 — 告警闭环与富化)
 
@@ -209,7 +209,7 @@ Phase 3.0-3.5 检测引擎能力已全部实现并验证(commit `7e86478` / `b28
 ### 5.5 Could(远期)
 
 - **F-R13 基线异常**(✅ 已实现,`c6fb407`):Flink 滚动基线 job(`BaselineAnomalyFunction`,滚动 24h,可配 `baselineHours`,最小样本 `minBaselineHours=3`)μ+3σ 告警,冷启动守卫,仅高频信号。
-- **F-R14 威胁情报**(待落地):TI feed(STIX/TAXII 或 AbuseIPDB CSV)查表富化;Phase 3.5 已出方案(`c6fb407`),实施待排期。
+- **F-R14 威胁情报**(✅ 已实现,`664f6a6`):TI 查表富化 MVP——Logstash `translate` filter 用本地字典(`infra/logstash/config/ti-malicious.yml`/`ti-confidence.yml`),写 `threat.is_malicious`/`threat.confidence`;字典更新脚本 `infra/ti/update-ti.py`。外部 feed(STIX/TAXII/AbuseIPDB)拉取为 P2+。
 - **F-R15 资产关键度权重**(✅ 已实现,`c6fb407`):asset-criticality 表(`asset-criticality.json`)加权风险分,由 entity-risk.py 使用。
 - **F-R16 相关事件反查/事件时间线**(待做):告警 → 触发事件的关联反查与事件时间线视图(可基于 `related_events` 扩展),支撑调查台(见 08 §5.7)。
 

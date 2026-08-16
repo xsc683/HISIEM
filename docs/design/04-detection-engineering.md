@@ -96,19 +96,19 @@ FP 率 = `fp.doc_count` ÷ `by_rule.doc_count`(**分母 = 该规则已打 verdic
 
 - **时机**:at-ingest(入库前)——上下文一致、规则直接用、历史永久保留;query-time 贵且源变更丢上下文。
 - **GeoIP(优先)**:Logstash `geoip` filter 内建、近零成本,产出 `source.geo.country_name/city/location`。
-- **威胁情报(后续)**:轻量本地缓存(AbuseIPDB 类 CSV 每日更新),Logstash `translate` filter 或 Flink AsyncFunction 查表,写 `threat.is_malicious`/`threat.confidence`;GreyNoise 可降互联网背景噪声误报。详见 `docs/design/threat-intel.md`(方案互链)。
+- **威胁情报(✅ 已实现 MVP,`664f6a6`)**:轻量本地字典(`infra/logstash/config/ti-malicious.yml`/`ti-confidence.yml`),Logstash `translate` filter 查表,写 `threat.is_malicious`/`threat.confidence`(字符串 fallback);字典更新脚本 `infra/ti/update-ti.py`。外部 feed(STIX/TAXII/AbuseIPDB CSV 拉取)与 GreyNoise 仍为 P2+ 未做。详见 `docs/design/threat-intel.md`(方案互链)。
 - **规则/告警字段一致**:富化在检测前完成,保证 `siem-alerts` 的 `source.geo.*` 等字段可用。
 
 ## 6. 检测质量(检测即代码,P2)
 
-1. **规则进 Git**:`infra/rules/*.yaml` 唯一来源,PR 评审 = 质量门禁 + 审计轨迹。
+1. **规则进 Git**(✅ 已落地,`f1739e0`):`infra/rules/*.yaml` 唯一来源,PR 评审 = 质量门禁 + 审计轨迹;Flink 启动按 `enabled` 注册(检测即代码,story-03)。
 2. **四层测试**:
-   - 语法/lint(校验器清单:UUID 唯一性与格式 `^[0-9a-f-]{36}$`;`status`/`level` 枚举(experimental/stable/deprecated;informational/low/medium/high/critical);MITRE tag 格式 `^attack\.t\d+\.?\d*$`;字段名存在于 ECS mapping / 已建索引模板)
-   - 正负夹具(positive 命中攻击样本 / negative 不误报良性流量)
-   - 历史回放(两种可执行方案:**Kafka 重放**——把近 30 天 `siem-events` 重发到 topic,观察新规则命中;或 **ES 历史 dry-run 脚本**(`infra/kibana/replay-dryrun.py`,规划中)对 `siem-events-*` 查询统计命中率)
-   - 攻击模拟(Atomic Red Team,远期)
-3. **渐进发布**:新规则默认 `status: experimental` 且只写 `siem-alerts-test` 索引观察,再提升级。**sink 分流方案**:Flink ES sink 的 elementConverter 按 `rule.status` 选 index(`experimental` → `siem-alerts-test`,`stable` → `siem-alerts`),无需两套 sink。
-4. **复用现有测试**:扩展 `RuleEngineTest`/`WindowRuleTest`(当前 9 用例)为规则 YAML 驱动的回归测试。
+   - 语法/lint(✅ 已落地,`4c74f35`):`RuleLintTest` 覆盖 UUID 唯一性与格式 `^[0-9a-f-]{36}$`;`status`/`level` 枚举;MITRE tag 格式 `^attack\.t\d+\.?\d*$`;字段名在 ECS mapping / 索引模板内。**CI 明确不做**(2026-08-16 决策:单人项目无外部协作者,本地 `mvn test` 即为门禁)。
+   - 正负夹具(✅ 已落地):`EventConditionsTest`(CEP 正负)/ `BaselineAnomalyTest`(基线正常/异常)已覆盖;窗口夹具见 `WindowRuleTest`。
+   - 历史回放(⏳ 待做):两种可执行方案——**Kafka 重放**(近 30 天 `siem-events` 重发到 topic 观察新规则命中);或 **ES 历史 dry-run 脚本**(`infra/kibana/replay-dryrun.py`,规划中)对 `siem-events-*` 查询统计命中率。
+   - 攻击模拟(Atomic Red Team,远期)。
+3. **渐进发布**(⏳ 待做):新规则默认 `status: experimental` 且只写 `siem-alerts-test` 索引观察,再提升级。**sink 分流方案**:Flink ES sink 的 elementConverter 按 `rule.status` 选 index(`experimental` → `siem-alerts-test`,`stable` → `siem-alerts`),无需两套 sink。
+4. **复用现有测试**(✅ 部分):`RuleEngineTest`/`WindowRuleTest`/`EventConditionsTest`/`BaselineAnomalyTest` 已作为规则驱动回归(Flink 27 用例);单事件规则经 RuleBuilder 由 YAML condition 驱动。
 
 ## 7. 合规与留存(远期,P3)
 

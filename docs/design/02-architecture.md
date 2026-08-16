@@ -18,14 +18,14 @@
 ┌──────────────────────────────────────────────────────────────────────┐
 │ 呈现层  Kibana + 产品控制台                                            │
 │   - SIEM 总览(现有)                                                    │
-│   - 产品控制台:接入/解析/检测规则/告警三线(故事 04,主导)  [P1]         │
-│   - 告警三线(5 态:含 investigating/resolved)+ verdict 回流  [已实现]   │
-│   - ATT&CK 覆盖度视图  [P2]                                            │
+│   - 产品控制台:接入/解析/检测规则/告警三线/健康/设置/RBAC/通知  [已实现,story 01-06/08/10]│
+│   - 告警三线(5 态:含 investigating/resolved)+ verdict 回流  [已实现,控制台告警台] │
+│   - ATT&CK 覆盖度视图  [P2,文档层 mitre-coverage.md 已落地]             │
 ├──────────────────────────────────────────────────────────────────────┤
 │ 存储层  Elasticsearch 8.14                                             │
 │   - siem-events-*  按天索引 + ILM(hot → delete 365d,无 warm)  [已实现] │
-│   - siem-alerts  单索引,status/verdict/risk_score 字段已实现  [P1 三线]│
-│   - snapshot 归档(本地/MinIO)   [P2]                                   │
+│   - siem-alerts  单索引,status/verdict/risk_score 字段已实现  [已实现] │
+│   - snapshot 归档(本地/MinIO)   [已实现,backup.sh + siem-drill 演练]   │
 ├──────────────────────────────────────────────────────────────────────┤
 │ 计算层  Flink 2.1  DetectionJob                                        │
 │   - 规则引擎(6 条:3 单事件 + 窗口 + CEP + 基线)  [已实现]              │
@@ -34,14 +34,14 @@
 │   - 基线异常 BaselineAnomalyFunction(24h μ+3σ)  [已实现]               │
 │   - 告警抑制 AlertSuppressor:keyBy(rule_id+实体)+处理时间 60min 对齐桶  [已实现] │
 │   - 告警写入:确定性 _id(幂等) + 持久化 checkpoint  [已实现]            │
-│   - 富化(异步查 GeoIP/TI)   [P2]                                       │
+│   - 富化:GeoIP at-ingest(6524fb6)+ TI 查表(664f6a6)  [已实现;告警侧异步富化 P2 未做]│
 │   - 实体风险聚合(siem-entity-risk + entity-risk.py)  [已实现]          │
 │   - 窗口演进:sliding / early trigger  [P2]                             │
 │   (后续:alert-service(Spring Boot 占位工程)→ 实体风险聚合/案件迁移目标)│
 ├──────────────────────────────────────────────────────────────────────┤
 │ 缓冲层  Kafka 3.8                                                      │
 │   - siem-events  3 分区 + zstd + acks=all  [已实现,7e86478];retention 3d 待设 │
-│   - consumer lag 监控脚本  [P1]                                        │
+│   - consumer lag 监控脚本  [已实现,check-lag.sh]                       │
 ├──────────────────────────────────────────────────────────────────────┤
 │ 采集层  Logstash 8.14                                                  │
 │   - tcp :5000 → grok(+invalid user 分支)+ ECS + date  [P0]             │
@@ -184,7 +184,7 @@ SSH 日志
 | 决策 N | OCSF 为可移植视图,ECS 为存储 schema | 存储稳定 + 生态兼容,可移植性留后路 |
 | 决策 O | siem-alerts 留存:建议 ILM delete 180d,或按天索引 + 别名 | 当前单索引无 ILM,持续增长会失控;180d 覆盖常见合规回看,按天索引+别名便于精确裁剪/归档 |
 | 决策 P | 告警通知/路由:MVP=产品控制台内横幅 + 日志,不投递外部(邮件/Webhook) | 通知渠道依赖接收方编排,先做控制台内闭环,外部投递后置 |
-| 决策 Q | 控制台与 Kibana 分工:控制台为主(接入/解析/检测规则/告警三线)+ 分阶段 | 用户拍板「控制台为主 + 分阶段」:4.0 MVP 先用 Kibana 三线视图 + `triage-alert.py` 过渡(零新代码) |
+| 决策 Q | 控制台与 Kibana 分工:控制台为主(接入/解析/检测规则/告警三线) | 用户拍板「控制台为主」:告警三线已由控制台告警台承接(story-04,e3db7bc);triage-alert.py 保留为 Kibana 侧备用过渡工具 |
 
 ### 6.1 编号决策引用索引
 

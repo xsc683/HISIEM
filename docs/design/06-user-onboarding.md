@@ -1,6 +1,6 @@
 # Phase 4 设计 — 用户接入层(日志接入 + 解析规则管理)
 
-> 状态:设计稿 · P2 已刷新(2026-08-16;对齐 b2051fd 已实现的接入层骨架与既有决策)
+> 状态:设计稿 · Story 01/02 已实现(2026-08-16,7f23fc9:数据源落库 + pipeline 生成/生效 + 模板保存门禁);本文档为设计与演进依据
 > 后端检测逻辑(Phase 3)已落地;本文档设计"**用户怎么把日志接进来、怎么选/自定义解析规则**"的业务层。
 > 参考业界成熟设计:QRadar DSM、Splunk sourcetype、Elastic Integration/ingest pipeline、Cribl Stream Pack、Sentinel DCR。
 
