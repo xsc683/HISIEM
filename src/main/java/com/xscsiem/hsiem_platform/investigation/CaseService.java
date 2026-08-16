@@ -1,0 +1,569 @@
+package com.xscsiem.hsiem_platform.investigation;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.xscsiem.hsiem_platform.alert.AlertService;
+import com.xscsiem.hsiem_platform.onboarding.ConflictException;
+import com.xscsiem.hsiem_platform.onboarding.NotFoundException;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
+
+/**
+ * 调查台·案件聚合(story-07):
+ * - 案件 CRUD(建/查/删),状态机 open→investigating→resolved
+ * - 手动聚合(≥2 条 open 告警)、追加/移出
+ * - 结案联动:resolved → 案内告警批量 closed + verdict(逐条乐观锁)
+ * - 乐观锁(_seq_no/_primary_term,并发 409)+ operator 审计
+ * - 实体提取(source.ip 优先,退 user.name)
+ */
+@Service
+public class CaseService {
+
+    public static final List<String> STATUSES = List.of("open", "investigating", "resolved");
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+    private static final HttpClient CLIENT = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(3)).build();
+
+    private final String esUrl;
+    private final AlertService alerts;
+
+    public CaseService(@Value("${app.elasticsearch.url:http://localhost:9200}") String esUrl,
+                       AlertService alerts) {
+        this.esUrl = esUrl;
+        this.alerts = alerts;
+    }
+
+    /** 案件列表(按 updated_at 倒序;可按 status/entity 过滤)。 */
+    public List<Map<String, Object>> list(String status, String entity, int size) {
+        StringBuilder q = new StringBuilder();
+        List<String> must = new ArrayList<>();
+        if (status != null && !status.isBlank()) {
+            must.add("{\"term\":{\"case.status\":\"%s\"}}".formatted(status));
+        }
+        if (entity != null && !entity.isBlank()) {
+            String[] parts = entity.split(":", 2);
+            String type = parts.length > 1 ? parts[0] : "ip";
+            String value = parts.length > 1 ? parts[1] : parts[0];
+            must.add("{\"nested\":{\"path\":\"entities\",\"query\":{\"bool\":{\"must\":["
+                    + "{\"term\":{\"entities.type\":\"%s\"}},{\"term\":{\"entities.value\":\"%s\"}}]}}}}"
+                    .formatted(type, value));
+        }
+        String query = must.isEmpty() ? "" : "\"query\":{\"bool\":{\"must\":[%s]}},".formatted(String.join(",", must));
+        String body = "{\"size\":%d,%s\"sort\":[{\"case.updated_at\":{\"order\":\"desc\"}}]}"
+                .formatted(Math.min(size, 200), query);
+        Map<String, Object> resp = esCallLenient("POST", "/siem-cases/_search", body);
+        return extractHits(resp);
+    }
+
+    /** 案件详情(含 alert_ids/entities/状态)。 */
+    public Map<String, Object> detail(String id) {
+        Map<String, Object> doc = esGet("/siem-cases/_doc/" + id);
+        if (doc == null) {
+            throw new NotFoundException("案件不存在: " + id);
+        }
+        return doc;
+    }
+
+    /** 手动聚合(≥2 条 open 告警)。 */
+    public Map<String, Object> create(List<String> alertIds, String title, String operator) {
+        return create(alertIds, title, operator, "manual");
+    }
+
+    /** 建案(aggregation=manual 手动 / auto 自动聚合)。 */
+    public Map<String, Object> create(List<String> alertIds, String title, String operator, String aggregation) {
+        if (alertIds == null || alertIds.size() < 2) {
+            throw new IllegalArgumentException("手动聚合至少需要 2 条告警");
+        }
+        // 校验:所有告警 open 且未入他案
+        List<Map<String, Object>> alertsDoc = new ArrayList<>();
+        for (String id : new LinkedHashSet<>(alertIds)) {
+            Map<String, Object> a = alerts.detail(id);
+            if (a == null) {
+                throw new IllegalArgumentException("告警不存在: " + id);
+            }
+            String st = str(a.get("alert.status"));
+            if (!"open".equals(st)) {
+                throw new IllegalArgumentException("告警非 open 状态(已处置或已结案): " + id);
+            }
+            alertsDoc.add(a);
+        }
+        Set<Map<String, Object>> entities = extractEntities(alertsDoc);
+        String caseId = "case-" + LocalDate.now().format(DateTimeFormatter.BASIC_ISO_DATE) + "-"
+                + Integer.toHexString(UUID.randomUUID().hashCode() & 0xffff);
+        String now = Instant.now().toString();
+        Map<String, Object> doc = new LinkedHashMap<>();
+        doc.put("@timestamp", now);
+        doc.put("case.id", caseId);
+        doc.put("case.title", title != null && !title.isBlank() ? title : autoTitle(entities, now));
+        doc.put("case.status", "open");
+        doc.put("case.aggregation", aggregation == null ? "manual" : aggregation);
+        doc.put("case.operator", operator == null ? "anonymous" : operator);
+        doc.put("case.created_at", now);
+        doc.put("case.updated_at", now);
+        doc.put("alert_ids", alertIds.stream().distinct().toList());
+        doc.put("entities", new ArrayList<>(entities));
+        try {
+            esCall("POST", "/siem-cases/_doc/" + caseId + "?refresh=wait_for",
+                    MAPPER.writeValueAsString(doc));
+        } catch (Exception e) {
+            throw new IllegalStateException("案件序列化失败", e);
+        }
+        // 给案内告警写 alert.case_id 标记(聚合幂等根基:同批告警只入一案)
+        markAlertsInCase(alertIds.stream().distinct().toList(), caseId);
+        return detail(caseId);
+    }
+
+    /** 给告警写归属案件标记(并发竞态根治:聚合只取 case_id 为空的告警)。 */
+    private void markAlertsInCase(List<String> alertIds, String caseId) {
+        for (String id : alertIds) {
+            try {
+                String body = "{\"doc\":{\"alert.case_id\":\"" + caseId + "\"}}";
+                esCallCode("POST", "/siem-alerts/_update/" + id + "?refresh=false", body);
+            } catch (Exception e) {
+                // 单条标记失败不阻塞建案(下次聚合会因 case_id 缺失重新关联,属可接受边界)
+                System.out.println("[CaseService] 告警标记案件失败 " + id + ": " + e.getMessage());
+            }
+        }
+    }
+
+    /** 手动追加告警(须 open 且未入他案)。 */
+    public Map<String, Object> addAlerts(String caseId, List<String> alertIds, String operator) {
+        Map<String, Object> cur = detail(caseId);
+        if ("resolved".equals(cur.get("case.status"))) {
+            throw new IllegalArgumentException("案件已结案,不能追加告警");
+        }
+        List<String> currentIds = strList(cur.get("alert_ids"));
+        List<String> added = new ArrayList<>();
+        List<String> rejected = new ArrayList<>();
+        for (String id : new LinkedHashSet<>(alertIds)) {
+            Map<String, Object> a = alerts.detail(id);
+            if (a == null || !"open".equals(str(a.get("alert.status")))) {
+                rejected.add(id);
+                continue;
+            }
+            if (a.get("alert.case_id") != null && !caseId.equals(str(a.get("alert.case_id")))) {
+                rejected.add(id); // 已属他案
+                continue;
+            }
+            if (currentIds.contains(id)) {
+                continue; // 已在案内,幂等跳过
+            }
+            currentIds.add(id);
+            added.add(id);
+        }
+        if (!rejected.isEmpty()) {
+            throw new IllegalArgumentException("以下告警非 open 或已属他案,追加被拒: " + rejected);
+        }
+        optimisticUpdate(caseId, currentIds, null, operator);
+        markAlertsInCase(added, caseId);
+        return Map.of("added", added);
+    }
+
+    /** 手动移出告警(最后一条移出后提示可删空案)。 */
+    public void removeAlert(String caseId, String alertId) {
+        Map<String, Object> cur = detail(caseId);
+        List<String> currentIds = strList(cur.get("alert_ids"));
+        if (!currentIds.remove(alertId)) {
+            throw new NotFoundException("告警不在案件内: " + alertId);
+        }
+        optimisticUpdate(caseId, currentIds, null, "anonymous");
+        clearAlertCase(alertId);
+    }
+
+    /** 清除告警的 case_id(移出案件时;告警回到 open 待聚合池)。 */
+    private void clearAlertCase(String alertId) {
+        try {
+            esCallCode("POST", "/siem-alerts/_update/" + alertId + "?refresh=false",
+                    "{\"doc\":{\"alert.case_id\":null}}");
+        } catch (Exception e) {
+            System.out.println("[CaseService] 清除告警案件标记失败 " + alertId + ": " + e.getMessage());
+        }
+    }
+
+    /** 状态流转(open→investigating→resolved);resolved 触发结案联动。 */
+    public Map<String, Object> updateStatus(String caseId, String status, String verdict, String operator) {
+        if (status == null || !STATUSES.contains(status)) {
+            throw new IllegalArgumentException("案件状态非法(open/investigating/resolved): " + status);
+        }
+        if ("resolved".equals(status)
+                && (verdict == null || !AlertService.VERDICTS.contains(verdict))) {
+            throw new IllegalArgumentException("结案必选 verdict(true_positive/false_positive/duplicate)");
+        }
+        Map<String, Object> cur = detail(caseId);
+        String now = Instant.now().toString();
+        if ("resolved".equals(status)) {
+            // 结案联动:案内告警批量 closed + verdict(逐条乐观锁,复用 Story 04 update)
+            List<String> alertIds = strList(cur.get("alert_ids"));
+            List<String> failed = new ArrayList<>();
+            int succeeded = 0;
+            for (String id : alertIds) {
+                try {
+                    alerts.update(id, "closed", verdict, operator);
+                    succeeded++;
+                } catch (Exception e) {
+                    failed.add(id);
+                }
+            }
+            if (!failed.isEmpty()) {
+                throw new IllegalStateException("部分告警结案失败(已成功的保留): " + failed);
+            }
+            Map<String, Object> doc = new LinkedHashMap<>();
+            doc.put("case.status", "resolved");
+            doc.put("case.verdict", verdict);
+            doc.put("case.closed_at", now);
+            doc.put("case.updated_at", now);
+            doc.put("case.operator", operator == null ? "anonymous" : operator);
+            doc.put("case.batch_succeeded", succeeded);
+            doc.put("case.batch_failed", failed);
+            return optimisticUpdate(caseId, null, doc, operator);
+        }
+        Map<String, Object> doc = new LinkedHashMap<>();
+        doc.put("case.status", status);
+        doc.put("case.updated_at", now);
+        doc.put("case.operator", operator == null ? "anonymous" : operator);
+        return optimisticUpdate(caseId, null, doc, operator);
+    }
+
+    /** 删除案件(移出全部告警后可删空案)。 */
+    public void delete(String caseId) {
+        detail(caseId);
+        int code = esCallCode("DELETE", "/siem-cases/_doc/" + caseId, null);
+        if (code / 100 != 2) {
+            throw new IllegalStateException("案件删除失败 " + code);
+        }
+    }
+
+    /** 自动聚合(供 CaseAggregateJob 调用):近 30min open 告警按实体聚类,组 ≥2 建案。幂等可重跑。 */
+    public int aggregateAuto(int lookbackMinutes) {
+        String body = """
+                {"size":200,"query":{"bool":{"must":[
+                  {"term":{"alert.status":"open"}},
+                  {"range":{"alert.created_at":{"gte":"now-%dm"}}},
+                  {"bool":{"must_not":[{"exists":{"field":"alert.case_id"}}]}}]}},"_source":["alert.id","alert.rule_id","source.ip","user.name","alert.risk_score"]}
+                """.formatted(lookbackMinutes);
+        Map<String, Object> resp = esCall("POST", "/siem-alerts/_search", body);
+        List<Map<String, Object>> hits = new ArrayList<>();
+        Object hh = resp.get("hits");
+        if (hh instanceof Map<?, ?> hm && hm.get("hits") instanceof List<?> list) {
+            for (Object o : list) {
+                if (o instanceof Map<?, ?> m && m.get("_source") instanceof Map<?, ?> src) {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> s = (Map<String, Object>) src;
+                    s.put("_id", m.get("_id"));
+                    hits.add(s);
+                }
+            }
+        }
+        // 按实体分组
+        Map<String, List<Map<String, Object>>> groups = new LinkedHashMap<>();
+        for (Map<String, Object> a : hits) {
+            String entityKey = entityKey(a);
+            if (entityKey != null) {
+                groups.computeIfAbsent(entityKey, k -> new ArrayList<>()).add(a);
+            }
+        }
+        AtomicInteger created = new AtomicInteger();
+        for (Map.Entry<String, List<Map<String, Object>>> e : groups.entrySet()) {
+            if (e.getValue().size() < 2) {
+                continue;
+            }
+            List<String> ids = e.getValue().stream()
+                    .map(a -> str(a.get("_id"))).distinct().toList();
+            // 防重复:查已有案件是否已含这些告警(实体已有 open 案 或 任一告警已入他案 → 跳过)
+            if (entityHasOpenCase(e.getKey()) || anyAlertInCase(ids)) {
+                continue;
+            }
+            String title = "自动聚合 " + e.getKey();
+            try {
+                create(ids, title, "system", "auto");
+                created.incrementAndGet();
+            } catch (Exception ex) {
+                // 单组失败不阻塞整轮(job 幂等,下次重试)
+                System.out.println("[CaseAggregateJob] 建案失败 " + e.getKey() + ": " + ex.getMessage());
+            }
+        }
+        return created.get();
+    }
+
+    /** 时间线:按实体 + 案件时间窗实时查 siem-events-*(MVP 实时关联,不物化存储)。 */
+    public List<Map<String, Object>> timeline(String caseId, int size) {
+        Map<String, Object> cur = detail(caseId);
+        List<Map<String, Object>> entities = nestedList(cur.get("entities"));
+        List<Map<String, Object>> out = new ArrayList<>();
+        if (entities.isEmpty()) {
+            return out;
+        }
+        // 用第一个实体做时间窗查询(实体类型 ip/user 映射到对应事件字段)
+        Map<String, Object> first = entities.get(0);
+        String type = str(first.get("type"));
+        String value = str(first.get("value"));
+        String field = "ip".equals(type) ? "source.ip" : "user.name";
+        String body = """
+                {"size":%d,"query":{"bool":{"must":[
+                  {"term":{"%s":"%s"}},
+                  {"range":{"@timestamp":{"gte":"now-24h"}}}]}},"sort":[{"@timestamp":"desc"}],
+                  "_source":["@timestamp","message","event.action","source.ip","user.name","host.name","log.source_name"]}
+                """.formatted(Math.min(size, 50), field, value);
+        Map<String, Object> resp = esCall("POST", "/siem-events-*/_search", body);
+        List<Map<String, Object>> hits = list(resp, "hits", "hits");
+        for (Map<String, Object> h : hits) {
+            Map<String, Object> src = map(h, "_source");
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("@timestamp", src.get("@timestamp"));
+            row.put("message", src.get("message"));
+            row.put("event.action", src.get("event.action"));
+            row.put("source.ip", src.get("source.ip"));
+            row.put("user.name", src.get("user.name"));
+            out.add(row);
+        }
+        return out;
+    }
+
+    // ---- 内部工具 ----
+
+    /** 任一告警已存在于某案件(无论案件状态)→ 防重复聚合。 */
+    private boolean anyAlertInCase(List<String> ids) {
+        String terms = ids.stream().map(i -> "\"" + i + "\"").reduce((a, b) -> a + "," + b).orElse("");
+        String body = """
+                {"size":1,"query":{"terms":{"alert_ids":[%s]}}}
+                """.formatted(terms);
+        Map<String, Object> resp = esCallLenient("POST", "/siem-cases/_search", body);
+        Object total = map(resp, "hits").get("total");
+        return total instanceof Number n && n.longValue() > 0;
+    }
+
+    private boolean entityHasOpenCase(String entityKey) {
+        String[] parts = entityKey.split(":", 2);
+        String type = parts[0];
+        String value = parts[1];
+        String body = """
+                {"size":1,"query":{"bool":{"must":[
+                  {"term":{"case.status":"open"}},
+                  {"nested":{"path":"entities","query":{"bool":{"must":[
+                    {"term":{"entities.type":"%s"}},{"term":{"entities.value":"%s"}}]}}}}]}}}
+                """.formatted(type, value);
+        Map<String, Object> resp = esCallLenient("POST", "/siem-cases/_search", body);
+        Object total = map(resp, "hits").get("total");
+        return total instanceof Number n && n.longValue() > 0;
+    }
+
+    /** 实体键:source.ip 优先,无 IP 退 user.name。 */
+    private static String entityKey(Map<String, Object> a) {
+        Object ip = a.get("source.ip");
+        if (ip != null && !str(ip).isBlank()) {
+            return "ip:" + ip;
+        }
+        Object user = a.get("user.name");
+        if (user != null && !str(user).isBlank()) {
+            return "user:" + user;
+        }
+        return null;
+    }
+
+    /** 从一组告警提取去重实体(ip 优先)。 */
+    private static Set<Map<String, Object>> extractEntities(List<Map<String, Object>> alertsDoc) {
+        Set<Map<String, Object>> entities = new LinkedHashSet<>();
+        for (Map<String, Object> a : alertsDoc) {
+            Object ip = a.get("source.ip");
+            if (ip != null && !str(ip).isBlank()) {
+                Map<String, Object> e = new LinkedHashMap<>();
+                e.put("type", "ip");
+                e.put("value", str(ip));
+                entities.add(e);
+            } else {
+                Object user = a.get("user.name");
+                if (user != null && !str(user).isBlank()) {
+                    Map<String, Object> e = new LinkedHashMap<>();
+                    e.put("type", "user");
+                    e.put("value", str(user));
+                    entities.add(e);
+                }
+            }
+        }
+        return entities;
+    }
+
+    private static String autoTitle(Set<Map<String, Object>> entities, String now) {
+        String entity = entities.isEmpty() ? "unknown"
+                : entities.iterator().next().get("value") + " (" + entities.iterator().next().get("type") + ")";
+        return "案件 " + entity + " " + now.substring(0, 10);
+    }
+
+    /** 乐观锁更新:alert_ids 或自定义字段,带 _seq_no/_primary_term,冲突 409。 */
+    private Map<String, Object> optimisticUpdate(String caseId, List<String> alertIds,
+                                                 Map<String, Object> extra, String operator) {
+        Map<String, Object> cur = esGet("/siem-cases/_doc/" + caseId);
+        if (cur == null) {
+            throw new NotFoundException("案件不存在: " + caseId);
+        }
+        Object seq = cur.get("_seq_no");
+        Object pt = cur.get("_primary_term");
+        if (seq == null || pt == null) {
+            throw new IllegalStateException("案件缺 _seq_no/_primary_term: " + caseId);
+        }
+        Map<String, Object> doc = new LinkedHashMap<>();
+        if (alertIds != null) {
+            doc.put("alert_ids", alertIds);
+        }
+        if (extra != null) {
+            doc.putAll(extra);
+        }
+        if (!doc.containsKey("case.updated_at")) {
+            doc.put("case.updated_at", Instant.now().toString());
+        }
+        String body;
+        try {
+            body = "{\"doc\":" + MAPPER.writeValueAsString(doc) + "}";
+        } catch (Exception e) {
+            throw new IllegalStateException("序列化失败", e);
+        }
+        int code = esCallCode("POST",
+                "/siem-cases/_update/" + caseId + "?if_seq_no=" + seq + "&if_primary_term=" + pt, body);
+        if (code == 409) {
+            throw new ConflictException("案件 " + caseId + " 已被其他分析师更新,请刷新后重试");
+        }
+        if (code / 100 != 2) {
+            throw new IllegalStateException("案件更新失败 " + code + ": " + caseId);
+        }
+        return detail(caseId);
+    }
+
+    private List<Map<String, Object>> extractHits(Map<String, Object> resp) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map<String, Object> h : list(resp, "hits", "hits")) {
+            Map<String, Object> src = map(h, "_source");
+            Map<String, Object> row = new LinkedHashMap<>(src);
+            row.put("_id", h.get("_id"));
+            out.add(row);
+        }
+        return out;
+    }
+
+    // ---- ES 底层(与 AlertService 同款) ----
+
+    private record EsResponse(int code, Map<String, Object> body) {
+    }
+
+    private EsResponse esRequest(String method, String path, String body) {
+        try {
+            HttpRequest.Builder builder = HttpRequest.newBuilder().uri(URI.create(esUrl + path));
+            if (body != null) {
+                builder.header("Content-Type", "application/json")
+                        .method(method, HttpRequest.BodyPublishers.ofString(body));
+            } else {
+                builder.method(method, HttpRequest.BodyPublishers.noBody());
+            }
+            HttpResponse<String> resp = CLIENT.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+            Map<String, Object> parsed = resp.body().isBlank()
+                    ? Map.of() : MAPPER.readValue(resp.body(), Map.class);
+            return new EsResponse(resp.statusCode(), parsed);
+        } catch (Exception e) {
+            throw new IllegalStateException("ES 不可达: " + e.getMessage(), e);
+        }
+    }
+
+    private Map<String, Object> esCall(String method, String path, String body) {
+        EsResponse r = esRequest(method, path, body);
+        if (r.code() / 100 != 2) {
+            throw new IllegalStateException("ES 请求失败 " + r.code() + ": " + path);
+        }
+        return r.body();
+    }
+
+    /** 容错版 ES 调用:索引尚不存在(404,如首启无案件)时返回空 map,不抛错。 */
+    private Map<String, Object> esCallLenient(String method, String path, String body) {
+        EsResponse r = esRequest(method, path, body);
+        if (r.code() == 404) {
+            return Map.of("hits", Map.of("hits", List.of()));
+        }
+        if (r.code() / 100 != 2) {
+            throw new IllegalStateException("ES 请求失败 " + r.code() + ": " + path);
+        }
+        return r.body();
+    }
+
+    private int esCallCode(String method, String path, String body) {
+        return esRequest(method, path, body).code();
+    }
+
+    private Map<String, Object> esGet(String path) {
+        Map<String, Object> resp = esCall("GET", path, null);
+        if (resp.containsKey("found") && Boolean.FALSE.equals(resp.get("found"))) {
+            return null;
+        }
+        Object source = resp.get("_source");
+        if (source instanceof Map<?, ?> m) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> src = new LinkedHashMap<>((Map<String, Object>) m);
+            src.put("_id", resp.get("_id"));
+            src.put("_seq_no", resp.get("_seq_no"));
+            src.put("_primary_term", resp.get("_primary_term"));
+            return src;
+        }
+        return null;
+    }
+
+    private static String str(Object v) {
+        return v == null ? null : String.valueOf(v);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<String> strList(Object v) {
+        if (v instanceof List<?> list) {
+            List<String> out = new ArrayList<>();
+            for (Object o : list) {
+                out.add(str(o));
+            }
+            return out;
+        }
+        return new ArrayList<>();
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<Map<String, Object>> nestedList(Object v) {
+        if (v instanceof List<?> list) {
+            List<Map<String, Object>> out = new ArrayList<>();
+            for (Object o : list) {
+                if (o instanceof Map) {
+                    out.add((Map<String, Object>) o);
+                }
+            }
+            return out;
+        }
+        return new ArrayList<>();
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> map(Object root, String key) {
+        if (root instanceof Map<?, ?> m) {
+            Object v = m.get(key);
+            return v instanceof Map ? (Map<String, Object>) v : Map.of();
+        }
+        return Map.of();
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<Map<String, Object>> list(Map<String, Object> root, String key, String sub) {
+        Object v = root.get(key);
+        if (v instanceof Map<?, ?> m && m.get(sub) instanceof List<?> l) {
+            return (List<Map<String, Object>>) l;
+        }
+        return List.of();
+    }
+}

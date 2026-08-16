@@ -35,12 +35,16 @@ public class RuleDecl implements Serializable {
     /** experimental / stable / deprecated。 */
     public String status;
     public String version;
+    /** 参考链接/文档(Sigma 风格 references;供覆盖度与审计,不写入告警)。 */
+    public List<String> references;
 
     // ---- single_event / window:判定条件 ----
     public ConditionSpec condition;
     // ---- window:分组字段 + 窗口参数 ----
     public String keyField;
     public Long windowMinutes;
+    /** 滑动步长(分钟);缺省 = tumbling 固定窗口;>0 = 滑动窗口(修边界盲区,F7)。 */
+    public Long slidingMinutes;
     public Integer threshold;
     // ---- cep:序列参数 ----
     public CepDecl cep;

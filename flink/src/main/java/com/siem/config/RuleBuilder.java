@@ -38,7 +38,8 @@ public class RuleBuilder {
                 intValue(d.riskScore, 0),
                 d.tags == null ? List.of() : d.tags,
                 d.status == null ? "experimental" : d.status,
-                d.version == null ? "1.0" : d.version);
+                d.version == null ? "1.0" : d.version,
+                d.slidingMinutes);
     }
 
     public RuleMeta toMeta(RuleDecl d) {

@@ -9,6 +9,8 @@ import {
   listNotifications, readNotification, readAllNotifications, deleteNotification,
   listAlerts, getAlert, updateAlertStatus, updateAlertVerdict,
   batchAlertStatus, batchAlertVerdict, fpRate,
+  listCases, getCase, createCase, addCaseAlerts, removeCaseAlert,
+  updateCaseStatus, caseTimeline, deleteCase, aggregateCases,
 } from './api.js'
 
 const styles = {
@@ -79,14 +81,95 @@ export default function App() {
   const [detailAlert, setDetailAlert] = useState(null)
   const [fpRates, setFpRates] = useState([])
 
+  // 调查台·案件聚合(Story 07)
+  const [cases, setCases] = useState([])
+  const [caseFilter, setCaseFilter] = useState('')
+  const [selCaseAlerts, setSelCaseAlerts] = useState(new Set())
+  const [detailCase, setDetailCase] = useState(null)
+  const [caseTitle, setCaseTitle] = useState('')
+  const [caseTimeline_, setCaseTimeline_] = useState([])
+
   useEffect(() => {
     listAlerts(alertFilter).then(setAlerts).catch(() => {})
     fpRate().then(setFpRates).catch(() => {})
+    listCases(caseFilter).then(setCases).catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   async function reloadAlerts() {
     setAlerts(await listAlerts(alertFilter).catch(() => []))
+  }
+
+  async function reloadCases() {
+    setCases(await listCases(caseFilter).catch(() => []))
+  }
+
+  async function handleCreateCase() {
+    const ids = [...selAlerts]
+    if (ids.length < 2) { alert('至少勾选 2 条 open 告警'); return }
+    try {
+      const c = await createCase(ids, caseTitle || `案件 ${new Date().toISOString().slice(0, 10)}`)
+      setSelAlerts(new Set())
+      await reloadCases()
+      openCaseDetail(c['case.id'])
+    } catch (e) { alert(e.message) }
+  }
+
+  async function openCaseDetail(id) {
+    const c = await getCase(id).catch(() => null)
+    setDetailCase(c)
+    if (c) setCaseTimeline_(await caseTimeline(id, 30).catch(() => []))
+  }
+
+  async function handleResolveCase(id, verdict) {
+    if (!verdict) { alert('结案必选 verdict'); return }
+    try {
+      await updateCaseStatus(id, 'resolved', verdict)
+      await reloadCases()
+      openCaseDetail(id)
+    } catch (e) { alert(e.message) }
+  }
+
+  async function handleInvestigateCase(id) {
+    try {
+      await updateCaseStatus(id, 'investigating', null)
+      await reloadCases()
+      openCaseDetail(id)
+    } catch (e) { alert(e.message) }
+  }
+
+  async function handleAddToCase(id) {
+    const ids = [...selAlerts]
+    if (!ids.length) { alert('先勾选 open 告警'); return }
+    try {
+      await addCaseAlerts(id, ids)
+      setSelAlerts(new Set())
+      openCaseDetail(id)
+    } catch (e) { alert(e.message) }
+  }
+
+  async function handleRemoveFromCase(id, alertId) {
+    try {
+      await removeCaseAlert(id, alertId)
+      openCaseDetail(id)
+    } catch (e) { alert(e.message) }
+  }
+
+  async function handleDeleteCase(id) {
+    if (!confirm('删除案件?')) return
+    try {
+      await deleteCase(id)
+      setDetailCase(null)
+      await reloadCases()
+    } catch (e) { alert(e.message) }
+  }
+
+  async function handleAggregate() {
+    try {
+      const r = await aggregateCases()
+      await reloadCases()
+      alert(`自动聚合完成,新建 ${r.created} 个案件`)
+    } catch (e) { alert(e.message) }
   }
 
   function toggleSel(id) {
@@ -650,7 +733,104 @@ export default function App() {
       </section>
 
       <section style={styles.section}>
-        <h2 style={styles.h2}>⑩ 告警台(三线 + verdict + 批量,替代 triage-alert.py)</h2>
+        <h2 style={styles.h2}>
+          ⑩ 调查台·案件聚合
+          <span style={{ fontSize: 12, color: '#888', marginLeft: 8 }}>
+            (同实体 30min ≥2 条 open 告警自动成案;告警台勾选可手动聚合)
+          </span>
+        </h2>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 10, alignItems: 'center' }}>
+          <select style={styles.input} value={caseFilter} onChange={(e) => { setCaseFilter(e.target.value); listCases(e.target.value).then(setCases).catch(() => {}) }}>
+            <option value="">全部状态</option><option value="open">open</option>
+            <option value="investigating">investigating</option><option value="resolved">resolved</option>
+          </select>
+          <button style={styles.button} onClick={handleAggregate}>触发一轮自动聚合</button>
+          <button style={styles.button} onClick={() => setSelAlerts(new Set())}>清空告警勾选</button>
+          <span style={{ fontSize: 12, color: '#888' }}>已勾选 open 告警 {selAlerts.size} 条,可「手动聚合」或「追加到案件」</span>
+        </div>
+        <button style={styles.button} onClick={handleCreateCase}>手动聚合勾选告警为案件</button>
+        <div style={{ marginTop: 8 }}>
+          {cases.length === 0 && <p style={{ color: '#888' }}>暂无案件(同实体 ≥2 条 open 告警会自动聚合;或从告警台勾选手动建案)</p>}
+          {cases.map((c) => (
+            <div key={c['case.id']} style={{ padding: '8px 10px', marginBottom: 6, border: '1px solid #eee', borderRadius: 6, fontSize: 13 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <b>{c['case.title']}</b>
+                  <code style={{ color: '#888', marginLeft: 8, fontSize: 11 }}>{c['case.id']}</code>
+                  <span style={{ marginLeft: 8, color: c['case.status'] === 'resolved' ? 'green' : c['case.status'] === 'investigating' ? '#b8860b' : '#c00' }}>
+                    [{c['case.status']}]
+                  </span>
+                  <span style={{ marginLeft: 8, fontSize: 11, color: '#999' }}>
+                    {c['case.aggregation'] === 'auto' ? '自动' : '手动'} · {c['alert_ids']?.length} 告警 · 操作者 {c['case.operator'] || '-'}
+                  </span>
+                </div>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button style={styles.button} onClick={() => openCaseDetail(c['case.id'])}>详情</button>
+                  {c['case.status'] === 'open' && (
+                    <button style={styles.button} onClick={() => handleInvestigateCase(c['case.id'])}>接手</button>
+                  )}
+                  <button style={{ ...styles.button, color: '#c00' }} onClick={() => handleDeleteCase(c['case.id'])}>删</button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {detailCase && (
+          <div style={{ marginTop: 12, border: '1px solid #ccc', borderRadius: 8, padding: 12 }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+              <b>{detailCase['case.title']}</b>
+              <code style={{ fontSize: 11, color: '#888' }}>{detailCase['case.id']}</code>
+              <span>[{detailCase['case.status']}]</span>
+              {detailCase['case.status'] === 'investigating' && (
+                <>
+                  <select style={styles.input} onChange={(e) => e.target.value && handleResolveCase(detailCase['case.id'], e.target.value)} defaultValue="">
+                    <option value="">结案选 verdict…</option>
+                    <option value="true_positive">true_positive</option><option value="false_positive">false_positive</option>
+                    <option value="duplicate">duplicate</option>
+                  </select>
+                </>
+              )}
+              <button style={styles.button} onClick={() => handleAddToCase(detailCase['case.id'])}>追加勾选告警</button>
+              <button style={styles.button} onClick={() => setDetailCase(null)}>关</button>
+            </div>
+            <div style={{ fontSize: 12, marginBottom: 6, color: '#555' }}>
+              实体:{detailCase['entities']?.map((e) => `${e.type}:${e.value}`).join(', ') || '-'}
+              {detailCase['case.verdict'] && <span> · verdict: {detailCase['case.verdict']}</span>}
+              {detailCase['case.closed_at'] && <span> · 结案: {detailCase['case.closed_at']}</span>}
+            </div>
+            <div style={{ fontSize: 12, marginBottom: 6 }}>
+              <b>案内告警:</b>{' '}
+              {detailCase['alert_ids']?.map((id) => (
+                <span key={id} style={{ marginRight: 6 }}>
+                  <code style={{ fontSize: 10 }}>{id.slice(0, 10)}</code>
+                  <button style={{ ...styles.button, fontSize: 10, padding: '1px 6px', marginLeft: 3, color: '#c00' }}
+                    onClick={() => handleRemoveFromCase(detailCase['case.id'], id)}>移出</button>
+                </span>
+              ))}
+            </div>
+            <details>
+              <summary style={{ fontSize: 12 }}>关联事件时间线(实时查 siem-events,近 24h)</summary>
+              <table style={{ ...styles.table, marginTop: 6 }} border={1} cellPadding={4}>
+                <thead><tr><th>时间</th><th>action</th><th>message</th></tr></thead>
+                <tbody>
+                  {caseTimeline_.map((t, i) => (
+                    <tr key={i}>
+                      <td style={{ fontSize: 11 }}>{t['@timestamp']}</td>
+                      <td><code>{t['event.action']}</code></td>
+                      <td style={{ fontSize: 11 }}>{(t.message || '').slice(0, 60)}</td>
+                    </tr>
+                  ))}
+                  {caseTimeline_.length === 0 && <tr><td colSpan={3} style={{ color: '#888' }}>近 24h 无关联事件(历史案件的事件可能已过期)</td></tr>}
+                </tbody>
+              </table>
+            </details>
+          </div>
+        )}
+      </section>
+
+      <section style={styles.section}>
+        <h2 style={styles.h2}>⑪ 告警台(三线 + verdict + 批量,替代 triage-alert.py)</h2>
         <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
           <select style={styles.input} value={alertFilter} onChange={(e) => { setAlertFilter(e.target.value); listAlerts(e.target.value).then(setAlerts) }}>
             <option value="open">open</option><option value="acknowledged">acknowledged</option>

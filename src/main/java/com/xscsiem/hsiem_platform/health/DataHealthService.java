@@ -29,30 +29,42 @@ public class DataHealthService {
         this.esUrl = esUrl;
     }
 
-    /** 每数据源健康指标(ES terms 聚合 log.source_id)。 */
+    /**
+     * 每数据源健康指标(L9 raw 分流后,失败数据从 siem-events-raw-* 取,总事件从 siem-events-* 取):
+     * 失败率 = raw 桶失败事件 / 事件桶总事件(U1 口径不变)。
+     */
     public List<Map<String, Object>> sources() {
-        String body = """
+        // 总事件数(事件桶,不含解析失败)
+        Map<String, Object> respEvents = esPost("/siem-events-*/_search", """
                 {"size":0,"aggs":{"sources":{"terms":{"field":"log.source_id","size":100},
                   "aggs":{
                     "source_name":{"terms":{"field":"log.source_name","size":1}},
                     "events24h":{"filter":{"range":{"@timestamp":{"gte":"now-24h"}}}},
                     "events1h":{"filter":{"range":{"@timestamp":{"gte":"now-1h"}}}},
-                    "failures1h":{"filter":{"bool":{"must":[{"term":{"tags":"_parsefailure"}},{"range":{"@timestamp":{"gte":"now-1h"}}}]}}},
                     "events_prev1h":{"filter":{"range":{"@timestamp":{"gte":"now-2h","lt":"now-1h"}}}},
-                    "failures_prev1h":{"filter":{"bool":{"must":[{"term":{"tags":"_parsefailure"}},{"range":{"@timestamp":{"gte":"now-2h","lt":"now-1h"}}}]}}},
                     "last_seen":{"max":{"field":"@timestamp"}}
                   }}}}
-                """;
-        Map<String, Object> resp = esPost("/siem-events-*/_search", body);
+                """);
+        // 解析失败数(raw 桶,L9:失败事件路由到 siem-events-raw-*)
+        Map<String, Object> respRaw = esPost("/siem-events-raw-*/_search", """
+                {"size":0,"aggs":{"sources":{"terms":{"field":"log.source_id","size":100},
+                  "aggs":{
+                    "failures1h":{"filter":{"range":{"@timestamp":{"gte":"now-1h"}}}},
+                    "failures_prev1h":{"filter":{"range":{"@timestamp":{"gte":"now-2h","lt":"now-1h"}}}}
+                  }}}}
+                """);
+        Map<String, Object> rawBySource = new LinkedHashMap<>();
+        for (Map<String, Object> b : list(map(respRaw, "aggregations"), "sources", "buckets")) {
+            rawBySource.put(String.valueOf(b.get("key")), b);
+        }
         List<Map<String, Object>> out = new ArrayList<>();
-        Map<String, Object> aggs = map(resp, "aggregations");
-        List<Map<String, Object>> buckets = list(aggs, "sources", "buckets");
-        for (Map<String, Object> b : buckets) {
+        for (Map<String, Object> b : list(map(respEvents, "aggregations"), "sources", "buckets")) {
+            Map<String, Object> raw = (Map<String, Object>) rawBySource.get(String.valueOf(b.get("key")));
             long events1h = docCount(b, "events1h");
             long events24h = docCount(b, "events24h");
-            long failures1h = docCount(b, "failures1h");
             long eventsPrev = docCount(b, "events_prev1h");
-            long failuresPrev = docCount(b, "failures_prev1h");
+            long failures1h = raw == null ? 0 : docCount(raw, "failures1h");
+            long failuresPrev = raw == null ? 0 : docCount(raw, "failures_prev1h");
             double failRate = events1h > 0 ? (double) failures1h / events1h : 0.0;
             double prevRate = eventsPrev > 0 ? (double) failuresPrev / eventsPrev : 0.0;
             boolean spike = prevRate > 0 && failRate >= 2 * prevRate && failures1h >= 20;
@@ -72,33 +84,41 @@ public class DataHealthService {
         return out;
     }
 
-    /** 某源最近 24h 逐小时事件/失败趋势。 */
+    /** 某源最近 24h 逐小时事件/失败趋势(L9:事件从 siem-events-*,失败从 siem-events-raw-*)。 */
     public List<Map<String, Object>> trend(String sourceId) {
-        String body = """
+        Map<String, Object> respEvents = esPost("/siem-events-*/_search", """
                 {"size":0,"query":{"term":{"log.source_id":"%s"}},
-                  "aggs":{"hours":{"date_histogram":{"field":"@timestamp","fixed_interval":"1h","min_doc_count":0},
-                    "aggs":{"failures":{"filter":{"term":{"tags":"_parsefailure"}}}}}}}
-                """.formatted(sourceId);
-        Map<String, Object> resp = esPost("/siem-events-*/_search", body);
+                  "aggs":{"hours":{"date_histogram":{"field":"@timestamp","fixed_interval":"1h","min_doc_count":0}}}}
+                """.formatted(sourceId));
+        Map<String, Object> respRaw = esPost("/siem-events-raw-*/_search", """
+                {"size":0,"query":{"term":{"log.source_id":"%s"}},
+                  "aggs":{"hours":{"date_histogram":{"field":"@timestamp","fixed_interval":"1h","min_doc_count":0}}}}
+                """.formatted(sourceId));
+        // raw 桶失败按小时归集
+        Map<String, Object> rawFailByHour = new LinkedHashMap<>();
+        for (Map<String, Object> b : list(map(respRaw, "aggregations"), "hours", "buckets")) {
+            rawFailByHour.put(String.valueOf(b.get("key_as_string")), b.get("doc_count"));
+        }
         List<Map<String, Object>> out = new ArrayList<>();
-        List<Map<String, Object>> buckets = list(map(resp, "aggregations"), "hours", "buckets");
+        List<Map<String, Object>> buckets = list(map(respEvents, "aggregations"), "hours", "buckets");
         for (Map<String, Object> b : buckets) {
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("bucket", b.get("key_as_string"));
             row.put("events", b.get("doc_count"));
-            row.put("failures", docCount(b, "failures"));
+            Object rawCount = rawFailByHour.get(String.valueOf(b.get("key_as_string")));
+            row.put("failures", rawCount instanceof Number n ? n.longValue() : 0L);
             out.add(row);
         }
         return out;
     }
 
-    /** 某源最近解析失败日志(原文下钻)。 */
+    /** 某源最近解析失败日志(原文下钻,查 siem-events-raw-*)。 */
     public List<Map<String, Object>> failures(String sourceId, int size) {
         String body = """
-                {"size":%d,"query":{"bool":{"must":[{"term":{"log.source_id":"%s"}},{"term":{"tags":"_parsefailure"}}]}},
+                {"size":%d,"query":{"term":{"log.source_id":"%s"}},
                   "sort":[{"@timestamp":"desc"}],"_source":["@timestamp","message","log.source_name","host.name"]}
                 """.formatted(Math.min(size, 100), sourceId);
-        Map<String, Object> resp = esPost("/siem-events-*/_search", body);
+        Map<String, Object> resp = esPost("/siem-events-raw-*/_search", body);
         List<Map<String, Object>> out = new ArrayList<>();
         List<Map<String, Object>> hits = list(resp, "hits", "hits");
         for (Map<String, Object> h : hits) {

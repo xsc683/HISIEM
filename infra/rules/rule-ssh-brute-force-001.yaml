@@ -11,8 +11,13 @@ riskScore: 73
 tags: ["attack.t1110.001"]
 status: experimental
 version: "1.0"
+references:
+  - "MITRE:https://attack.mitre.org/techniques/T1110/"
+  - "https://attack.mitre.org/techniques/T1110/001/"
 keyField: source.ip
 windowMinutes: 5
+# 滑动步长(分钟):>0 = 滑动窗口,修「4次在4:59+1次在5:01 不触发」的 tumbling 边界盲区(F7)
+slidingMinutes: 1
 threshold: 5
 condition:
   type: field_equals

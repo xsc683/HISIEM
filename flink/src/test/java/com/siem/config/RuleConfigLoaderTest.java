@@ -140,6 +140,7 @@ class RuleConfigLoaderTest {
                 tags: [attack.t1110.001]
                 keyField: source.ip
                 windowMinutes: 5
+                slidingMinutes: 1
                 threshold: 5
                 condition: {type: field_equals, field: event.action, value: authentication_failure}
                 """);
@@ -152,6 +153,26 @@ class RuleConfigLoaderTest {
         assertEquals(5, wr.getWindowMinutes());
         assertEquals(5, wr.getThreshold());
         assertEquals(73, wr.getRiskScore());
+        // F7:slidingMinutes 声明 → WindowRule 传递
+        assertEquals(Long.valueOf(1), wr.getSlidingMinutes());
+        assertTrue(wr.getSlidingMinutes() > 0, "滑动规则 slidingMinutes 应 > 0");
+    }
+
+    @Test
+    void toWindowRule_slidingNull_byDefault() throws IOException {
+        // 未声明 slidingMinutes → null(tumbling 固定窗口)
+        write("rule-win2.yaml", """
+                id: rule-win2
+                category: window
+                type: t
+                keyField: source.ip
+                windowMinutes: 5
+                threshold: 5
+                condition: {type: field_equals, field: event.action, value: authentication_failure}
+                """);
+        RuleDecl d = new RuleConfigLoader().loadDir(temp.toString()).get(0);
+        WindowRule wr = new RuleBuilder().toWindowRule(d);
+        assertEquals(null, wr.getSlidingMinutes(), "缺省 slidingMinutes 应为 null(tumbling)");
     }
 
     @Test

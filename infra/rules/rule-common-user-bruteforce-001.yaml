@@ -10,6 +10,9 @@ riskScore: 47
 tags: ["attack.t1078.002"]
 status: experimental
 version: "1.0"
+references:
+  - "MITRE:https://attack.mitre.org/techniques/T1078/"
+  - "https://attack.mitre.org/techniques/T1078/002/"
 condition:
   type: all
   conditions:

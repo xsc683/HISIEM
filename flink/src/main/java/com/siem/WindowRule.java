@@ -21,6 +21,8 @@ public class WindowRule implements Serializable {
     private final String keyField;
     private final Condition condition;
     private final long windowMinutes;
+    /** 滑动步长(分钟);null/0 = tumbling 固定窗口;>0 = 滑动窗口(修边界盲区,F7)。 */
+    private final Long slidingMinutes;
     private final int threshold;
     /** 数值风险分(0-100)。 */
     private final int riskScore;
@@ -34,19 +36,26 @@ public class WindowRule implements Serializable {
     public WindowRule(String id, String name, String type, String severity, String description,
                       String keyField, Condition condition, long windowMinutes, int threshold) {
         this(id, name, type, severity, description, keyField, condition, windowMinutes, threshold,
-                0, List.of(), "experimental", "1.0");
+                0, List.of(), "experimental", "1.0", null);
     }
 
     public WindowRule(String id, String name, String type, String severity, String description,
                       String keyField, Condition condition, long windowMinutes, int threshold,
                       int riskScore, List<String> tags, String status) {
         this(id, name, type, severity, description, keyField, condition, windowMinutes, threshold,
-                riskScore, tags, status, "1.0");
+                riskScore, tags, status, "1.0", null);
     }
 
     public WindowRule(String id, String name, String type, String severity, String description,
                       String keyField, Condition condition, long windowMinutes, int threshold,
                       int riskScore, List<String> tags, String status, String version) {
+        this(id, name, type, severity, description, keyField, condition, windowMinutes, threshold,
+                riskScore, tags, status, version, null);
+    }
+
+    public WindowRule(String id, String name, String type, String severity, String description,
+                      String keyField, Condition condition, long windowMinutes, int threshold,
+                      int riskScore, List<String> tags, String status, String version, Long slidingMinutes) {
         this.id = id;
         this.name = name;
         this.type = type;
@@ -55,6 +64,7 @@ public class WindowRule implements Serializable {
         this.keyField = keyField;
         this.condition = condition;
         this.windowMinutes = windowMinutes;
+        this.slidingMinutes = slidingMinutes;
         this.threshold = threshold;
         this.riskScore = riskScore;
         this.tags = tags;
@@ -92,6 +102,11 @@ public class WindowRule implements Serializable {
 
     public long getWindowMinutes() {
         return windowMinutes;
+    }
+
+    /** 滑动步长(分钟);null = tumbling 固定窗口。 */
+    public Long getSlidingMinutes() {
+        return slidingMinutes;
     }
 
     public int getThreshold() {

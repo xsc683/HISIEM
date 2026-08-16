@@ -11,6 +11,9 @@ riskScore: 90
 tags: ["attack.t1110.001", "attack.t1078.002"]
 status: experimental
 version: "1.0"
+references:
+  - "MITRE:https://attack.mitre.org/techniques/T1110/"
+  - "MITRE:https://attack.mitre.org/techniques/T1078/"
 keyField: source.ip
 cep:
   withinMinutes: 10

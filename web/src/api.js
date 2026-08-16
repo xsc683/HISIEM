@@ -249,3 +249,54 @@ export function batchAlertVerdict(ids, verdict) {
 export function fpRate() {
   return request('/alerts/fp-rate')
 }
+
+// ---- 调查台·案件聚合(Story 07) ----
+
+export function listCases(status, entity) {
+  const q = new URLSearchParams()
+  if (status) q.set('status', status)
+  if (entity) q.set('entity', entity)
+  const s = q.toString()
+  return request(`/cases${s ? `?${s}` : ''}`)
+}
+
+export function getCase(id) {
+  return request(`/cases/${id}`)
+}
+
+export function createCase(alertIds, title) {
+  return request('/cases', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ alertIds, title }),
+  })
+}
+
+export function addCaseAlerts(id, alertIds) {
+  return request(`/cases/${id}/alerts`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ alertIds }),
+  })
+}
+
+export function removeCaseAlert(id, alertId) {
+  return request(`/cases/${id}/alerts/${alertId}`, { method: 'DELETE' })
+}
+
+export function updateCaseStatus(id, status, verdict) {
+  return request(`/cases/${id}/status`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status, verdict }),
+  })
+}
+
+export function caseTimeline(id, size) {
+  return request(`/cases/${id}/timeline?size=${size || 50}`)
+}
+
+export function deleteCase(id) {
+  return request(`/cases/${id}`, { method: 'DELETE' })
+}
+
+export function aggregateCases() {
+  return request('/cases/aggregate', { method: 'POST' })
+}

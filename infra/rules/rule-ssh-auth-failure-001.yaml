@@ -11,6 +11,8 @@ riskScore: 40
 tags: ["attack.t1110.001"]
 status: experimental
 version: "1.0"
+references:
+  - "MITRE:https://attack.mitre.org/techniques/T1110/"
 condition:
   type: field_equals
   field: event.action

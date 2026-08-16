@@ -11,6 +11,9 @@ riskScore: 60
 tags: ["attack.t1110.001"]
 status: experimental
 version: "1.0"
+references:
+  - "MITRE:https://attack.mitre.org/techniques/T1110/"
+  - "https://attack.mitre.org/techniques/T1110/001/"
 baseline:
   keyField: host.name
   windowHours: 1

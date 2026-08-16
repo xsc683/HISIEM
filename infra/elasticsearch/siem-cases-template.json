@@ -1,0 +1,41 @@
+{
+  "index_patterns": ["siem-cases"],
+  "priority": 100,
+  "template": {
+    "settings": {
+      "number_of_shards": 1,
+      "number_of_replicas": 0,
+      "index.refresh_interval": "5s",
+      "index.codec": "best_compression",
+      "index.translog.durability": "async",
+      "index.translog.sync_interval": "30s",
+      "index.lifecycle.name": "siem-cases-retention"
+    },
+    "mappings": {
+      "properties": {
+        "@timestamp": { "type": "date" },
+        "case.id": { "type": "keyword" },
+        "case.title": { "type": "keyword" },
+        "case.status": { "type": "keyword" },
+        "case.aggregation": { "type": "keyword" },
+        "case.operator": { "type": "keyword" },
+        "case.verdict": { "type": "keyword" },
+        "case.created_at": { "type": "date" },
+        "case.updated_at": { "type": "date" },
+        "case.closed_at": { "type": "date" },
+        "alert_ids": { "type": "keyword" },
+        "entities": {
+          "type": "nested",
+          "properties": {
+            "type": { "type": "keyword" },
+            "value": { "type": "keyword" }
+          }
+        },
+        "timeline": {
+          "type": "nested",
+          "dynamic": true
+        }
+      }
+    }
+  }
+}

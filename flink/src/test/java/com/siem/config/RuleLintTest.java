@@ -58,6 +58,14 @@ class RuleLintTest {
             if (d.status != null) {
                 assertTrue(STATUSES.contains(d.status), d.id + " status 非法: " + d.status);
             }
+            if (d.references != null) {
+                // 每条 references 应为 URL 或 "framework:id" 形式(如 "MITRE:https://attack.mitre.org/techniques/T1110/")
+                for (String ref : d.references) {
+                    assertTrue(ref != null && !ref.isBlank(), d.id + " references 含空项");
+                    assertTrue(ref.matches("(?i)^https?://.*") || ref.matches("^[A-Za-z0-9._-]+:.*"),
+                            d.id + " references 格式非法: " + ref);
+                }
+            }
             switch (d.category) {
                 case "single_event" -> assertNotNull(d.condition, d.id + " single_event 缺 condition");
                 case "window" -> {
@@ -65,6 +73,11 @@ class RuleLintTest {
                     assertNotNull(d.keyField, d.id + " window 缺 keyField");
                     assertNotNull(d.windowMinutes, d.id + " window 缺 windowMinutes");
                     assertNotNull(d.threshold, d.id + " window 缺 threshold");
+                    if (d.slidingMinutes != null) {
+                        assertTrue(d.slidingMinutes > 0, d.id + " slidingMinutes 应 > 0");
+                        assertTrue(d.slidingMinutes <= d.windowMinutes,
+                                d.id + " slidingMinutes 不应大于 windowMinutes");
+                    }
                 }
                 case "cep" -> {
                     assertNotNull(d.keyField, d.id + " cep 缺 keyField");

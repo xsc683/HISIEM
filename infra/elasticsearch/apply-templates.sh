@@ -40,6 +40,44 @@ curl -s -X PUT "http://localhost:9200/_ilm/policy/siem-alerts-retention" \
   }'
 echo
 
+echo "==> 创建 ILM 策略 siem-events-raw-retention(hot → 30d 后 delete;raw 桶=排查窗口,非长期存储)"
+curl -s -X PUT "http://localhost:9200/_ilm/policy/siem-events-raw-retention" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "policy": {
+      "phases": {
+        "hot": { "actions": { "set_priority": { "priority": 100 } } },
+        "delete": { "min_age": "30d", "actions": { "delete": {} } }
+      }
+    }
+  }'
+echo
+
+echo "==> 应用 siem-events-raw 索引模板(priority 200 > 事件模板 100,解析失败原文桶)"
+curl -s -X PUT "http://localhost:9200/_index_template/siem-events-raw" \
+  -H 'Content-Type: application/json' \
+  --data-binary @"$REPO/siem-events-raw-template.json"
+echo
+
+echo "==> 创建 ILM 策略 siem-cases-retention(hot → 180d 后 delete;案件与告警同留存窗口)"
+curl -s -X PUT "http://localhost:9200/_ilm/policy/siem-cases-retention" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "policy": {
+      "phases": {
+        "hot": { "actions": { "set_priority": { "priority": 100 } } },
+        "delete": { "min_age": "180d", "actions": { "delete": {} } }
+      }
+    }
+  }'
+echo
+
+echo "==> 应用 siem-cases 索引模板(调查台案件,story-07)"
+curl -s -X PUT "http://localhost:9200/_index_template/siem-cases" \
+  -H 'Content-Type: application/json' \
+  --data-binary @"$REPO/siem-cases-template.json"
+echo
+
 echo "==> 应用 siem-events 索引模板"
 curl -s -X PUT "http://localhost:9200/_index_template/siem-events" \
   -H 'Content-Type: application/json' \

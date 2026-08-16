@@ -19,9 +19,9 @@
 
 `infra/logstash/pipeline/logstash.conf`:单 pipeline,`tcp:5000` → grok → date → mutate → **ES output + Kafka output**(stdout rubydebug 已注释,调试时临时开);grok 支持 `Failed password for` / `invalid user` / `Accepted password` 三变体并 `tag_on_failure => ["_parsefailure"]`;geoip 已接入(Phase 3.3)。`config/logstash.yml`:已开 PQ + DLQ + 监控 API(9600,healthcheck 用);`config/pipelines.yml`:已声明 main pipeline;compose:已设 `LS_HEAP_SIZE=1g` + 9600 healthcheck(L8,2026-08-16 已做)。
 
-### 1.2.1 siem-events-raw 未知桶(设计未落地,P2)
+### 1.2.1 siem-events-raw 未知桶(✅ 已落地,2026-08-16)
 
-**背景**:`06-user-onboarding.md` §4.5 与 `story-05-data-health.md` §6 定义未知数据兜底:解析失败(`tags._parsefailure`)的日志路由到 `siem-events-raw` 原始桶(保留可查),**不计入规则检测**(不进 Kafka / 不进 Flink,即不产生检测告警)。当前未落地:`logstash.conf` 的 grok 已打 `_parsefailure` 标签,但 output 仍是 ES + Kafka **全量转发**,失败事件依然进 `siem-events-*` 并进检测——raw 路由是 P2 落地项。
+**背景**:`06-user-onboarding.md` §4.5 与 `story-05-data-health.md` §6 定义未知数据兜底:解析失败(`tags._parsefailure`)的日志路由到 `siem-events-raw` 原始桶(保留可查),**不计入规则检测**(不进 Kafka / 不进 Flink,即不产生检测告警)。✅ **已落地**:`logstash.conf` output 条件分流(`_parsefailure` → siem-events-raw-*,否则 → siem-events-* + Kafka),`siem-events-raw-template.json`(priority 200)+ ILM 30d,数据健康失败统计切到 raw 索引(DataHealthService)。验证:垃圾日志进 raw、不进 Kafka、不产生告警。
 
 **输出条件路由(落地形态)**:
 
@@ -65,7 +65,7 @@ output {
 | L6 | 建 `pipelines.yml` 显式声明 pipeline.id + `ecs_compatibility: v8` | 新增 | P1 | ✅ 已落地(b284fa3;`config/pipelines.yml`) |
 | L7 | geoip filter → `source.geo.country_name/city/location` | logstash.conf | P2 | ✅ 已落地(6524fb6;at-ingest,比 P2 车道提前) |
 | L8 | compose 加 9600 healthcheck + 暴露端口 | compose | P1 | ✅ 已做(2026-08-16:ES/Kafka/Logstash 均配 healthcheck,容器 healthy;**踩坑**——`api.http.host: 0.0.0.0` 会触发 API 空响应 bug,保持默认回环绑定即可,见 logstash.yml 注释) |
-| L9 | siem-events-raw 未知桶:output `if "_parsefailure" in [tags]` → 写 `siem-events-raw-%{+YYYY.MM.dd}` 不进 Kafka(不进检测);建 raw 索引模板 + 短留存 ILM;`logstash --config.test_and_exit` 校验后 reload | logstash.conf + 新增 `siem-events-raw-template.json` | P2 | ⏳ 待做(设计见 §1.2.1) |
+| L9 | siem-events-raw 未知桶:output `if "_parsefailure" in [tags]` → 写 `siem-events-raw-%{+YYYY.MM.dd}` 不进 Kafka(不进检测);建 raw 索引模板 + 短留存 ILM;`logstash --config.test_and_exit` 校验后 reload | logstash.conf + 新增 `siem-events-raw-template.json` | P2 | ✅ 已做(2026-08-16:output 分流 + raw 模板(priority 200)+ ILM 30d + DataHealthService 切 raw;验证垃圾日志进 raw 不进 Kafka) |
 
 ---
 
@@ -132,12 +132,12 @@ output {
 | F4 | 全算子 `.uid("...")` + 一次 cancel→restore 演练 | DetectionJob | P0 | ✅ 已落地(.uid 全算子,7e86478;演练 2026-08-16:savepoint 恢复 RUNNING 且检测正常) |
 | F5 | 窗口分支 `.withIdleness(60s)`;评估 `allowedLateness`/迟到侧输出 | DetectionJob | P1 | ✅ 已落地(withIdleness 60s,b284fa3);`allowedLateness`/迟到侧输出 ⏳ 评估 |
 | F6 | 单事件规则后接 suppression:keyBy(rule_id + 实体)+ 处理时间对齐 60min 桶 + `registerProcessingTimeTimer` + `onTimer` 产最终 count(边界见下方注) | DetectionFunction→`AlertSuppressor` | P0 | ✅ 已落地(b284fa3;首个命中即发 count=1,窗口内累加 `alert.deduplicated_count` 不新建) |
-| F7 | 暴力破解 tumbling→sliding(5min/1min)或加 early trigger(修边界盲区) | DetectionJob/WindowRule | P2 | ⏳ 待做(保留为优化,参数建议见下方注) |
+| F7 | 暴力破解 tumbling→sliding(5min/1min)或加 early trigger(修边界盲区) | DetectionJob/WindowRule | P2 | ✅ 已实现(2026-08-16:rule-ssh-brute-force 加 `slidingMinutes: 1`,DetectionJob 按 slidingMinutes 分支选 SlidingEventTimeWindows(5min/1min);单测锁定) |
 | F8 | 引入 `flink-cep`(锁定 2.1.0 坐标 + 单测),攻击链 Pattern 规则 | 新增 | P1 | ✅ 已落地(da1a0f6;`rule-ssh-bruteforce-success-001` + 单测) |
 
 > **F6 抑制实现边界(已实现,权衡取舍)**:`AlertSuppressor` 用处理时间对齐 60min 桶(`(now/60min)*60min`),已知边界:恰在整点前后跨桶的事件(如 11:59:59 与 12:00:01)会被计入不同窗口、各发一条告警。这是「实现简单 + 处理时间不依赖事件时间、与事件时间窗口解耦」的取舍。若需「自首次命中时间起算的滑动抑制(TTL)」,列为 P1 备选(`ValueState` + `StateTtlConfig`),上线前需评估跨桶语义对分析师的影响。
 >
-> **F7 参数建议(待做)**:sliding 窗口 5min、滑动步长 1min(对应原 tumbling 5min≥5),状态约 tumbling 的 ×5。取舍:sliding 修复「4 次在 4:59 + 1 次在 5:01 不触发」的边界盲区,代价是状态/输出量上升。验收:模拟「同一 IP 在相邻两个 tumbling 边界各发 3 次失败」应产出 1 条告警;且告警总量不因 sliding 明显上升(仍由抑制层收敛)。
+> **F7 参数建议(✅ 已落地,2026-08-16)**:sliding 窗口 5min、滑动步长 1min(对应原 tumbling 5min≥5),状态约 tumbling 的 ×5。取舍:sliding 修复「4 次在 4:59 + 1 次在 5:01 不触发」的边界盲区,代价是状态/输出量上升。验收口径:模拟「同一 IP 在相邻两个 tumbling 边界各发 3 次失败」应产出 1 条告警;且告警总量不因 sliding 明显上升(仍由抑制层收敛)。**注意**:sliding 窗口滑动时,同一批命中可能落入相邻滑动窗口各触发一次 → 告警量上升,由 60min 抑制(`AlertSuppressor`)按实体收敛。
 
 > 状态观测:盯 Web UI 的 checkpoint 大小/时延与 state 增长;状态 >~1GB 或 GC 明显才切 RocksDB(统一 savepoint 格式支持平滑切换)。
 

@@ -188,7 +188,7 @@ Phase 3.0-3.5 检测引擎能力已全部实现并验证(commit `7e86478` / `b28
 - **F-R2 持久化状态**(✅ 已实现,`7e86478`):Flink checkpoint/savepoint 落到持久卷;显式 EXACTLY_ONCE、restart-strategy、timeout。
 - **F-R3 留存策略**(✅ 已实现,`7e86478`/`6524fb6`):`siem-events-*` 挂 ILM 生命周期(hot → delete `min_age 365d`,无 warm 阶段,单节点;满足 PCI 12 个月留存)。
 - **F-R4 单节点健康**(✅ 已实现,`7e86478`):replica=0(消除 yellow 与写放大)、refresh_interval/压缩/translog 调优。
-- **F-R5 规则元数据**(✅ 已实现,`7e86478`):Rule 增加 MITRE tags(`attack.*` 全小写)、risk_score、status;告警输出 `rule.tags`/`rule.status`/`alert.risk_score`/`rule.version`。YAML 声明化已落地(f1739e0);`rule.version` 四类产出器(单事件/窗口/CEP/基线)均已写入(2026-08-16 补齐);references 待补。
+- **F-R5 规则元数据**(✅ 已实现,`7e86478`):Rule 增加 MITRE tags(`attack.*` 全小写)、risk_score、status;告警输出 `rule.tags`/`rule.status`/`alert.risk_score`/`rule.version`。YAML 声明化已落地(f1739e0);`rule.version` 四类产出器(单事件/窗口/CEP/基线)均已写入;references 已补(2026-08-16:6 条规则 YAML 均带 ATT&CK 参考链接,RuleLintTest 校验格式)。references 保留在规则元数据(供覆盖度/审计),不写入每条告警(避免存储膨胀)。
 
 ### 5.2 Must(Phase 3.1 — 减噪)
 
@@ -211,7 +211,7 @@ Phase 3.0-3.5 检测引擎能力已全部实现并验证(commit `7e86478` / `b28
 - **F-R13 基线异常**(✅ 已实现,`c6fb407`):Flink 滚动基线 job(`BaselineAnomalyFunction`,滚动 24h,可配 `baselineHours`,最小样本 `minBaselineHours=3`)μ+3σ 告警,冷启动守卫,仅高频信号。
 - **F-R14 威胁情报**(✅ 已实现,`664f6a6`):TI 查表富化 MVP——Logstash `translate` filter 用本地字典(`infra/logstash/config/ti-malicious.yml`/`ti-confidence.yml`),写 `threat.is_malicious`/`threat.confidence`;字典更新脚本 `infra/ti/update-ti.py`。外部 feed(STIX/TAXII/AbuseIPDB)拉取为 P2+。
 - **F-R15 资产关键度权重**(✅ 已实现,`c6fb407`):asset-criticality 表(`asset-criticality.json`)加权风险分,由 entity-risk.py 使用。
-- **F-R16 相关事件反查/事件时间线**(待做):告警 → 触发事件的关联反查与事件时间线视图(可基于 `related_events` 扩展),支撑调查台(见 08 §5.7)。
+- **F-R16 相关事件反查/事件时间线**(✅ 已实现,2026-08-16):调查台案件详情实时关联 `siem-events` 生成时间线(`CaseService.timeline`,按实体+近 24h),`related_events` 快照提供告警关联跳转(见 08 §5.7 / story-07)。
 
 ## 6. 非功能需求
 

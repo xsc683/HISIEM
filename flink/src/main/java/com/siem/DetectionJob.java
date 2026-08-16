@@ -17,7 +17,10 @@ import org.apache.flink.connector.kafka.source.KafkaSource;
 import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsInitializer;
 import org.apache.flink.streaming.api.CheckpointingMode;
 import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.datastream.KeyedStream;
+import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.streaming.api.windowing.assigners.SlidingEventTimeWindows;
 import org.apache.flink.streaming.api.windowing.assigners.TumblingEventTimeWindows;
 import org.apache.kafka.clients.consumer.OffsetResetStrategy;
 
@@ -153,13 +156,20 @@ public class DetectionJob {
         List<DataStream<String>> windowStreams = new ArrayList<>();
         for (RuleDecl d : enabled.stream().filter(x -> "window".equals(x.category)).toList()) {
             WindowRule wr = builder.toWindowRule(d);
-            windowStreams.add(parsedTimed
-                    .keyBy(e -> String.valueOf(
-                            e.getFields().getOrDefault(wr.getKeyField(), "unknown")))
-                    .window(TumblingEventTimeWindows.of(
-                            Duration.ofMinutes(wr.getWindowMinutes())))
-                    .process(new WindowRuleFunction(wr))
-                    .uid("window-" + wr.getId()));
+            // F7:slidingMinutes > 0 → 滑动窗口(5min/步长1min 修边界盲区);否则 tumbling 固定窗口
+            KeyedStream<Event, String> keyed = parsedTimed.keyBy(e -> String.valueOf(
+                    e.getFields().getOrDefault(wr.getKeyField(), "unknown")));
+            SingleOutputStreamOperator<String> windowed;
+            if (wr.getSlidingMinutes() != null && wr.getSlidingMinutes() > 0) {
+                windowed = keyed.window(SlidingEventTimeWindows.of(
+                                Duration.ofMinutes(wr.getWindowMinutes()),
+                                Duration.ofMinutes(wr.getSlidingMinutes())))
+                        .process(new WindowRuleFunction(wr));
+            } else {
+                windowed = keyed.window(TumblingEventTimeWindows.of(Duration.ofMinutes(wr.getWindowMinutes())))
+                        .process(new WindowRuleFunction(wr));
+            }
+            windowStreams.add(windowed.uid("window-" + wr.getId()));
         }
         DataStream<String> windowAlerts = windowStreams.isEmpty()
                 ? null : windowStreams.stream().reduce((a, b) -> a.union(b)).get();

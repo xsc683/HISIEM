@@ -3,7 +3,7 @@
 > **元信息**
 > - 关联模块:08 产品设计 §5.7 调查台(远期)([08](../design/08-product-design.md) §5.7)
 > - 优先级:远期(4.0 MVP 之前以 Kibana 深度调查视图承接)
-> - 状态:草稿(P1 深化,骨架补全)
+> - 状态:✅ 已实现(2026-08-16:siem-cases 索引 + CaseService/Controller/Job + 控制台⑩调查台;自动/手动聚合、追加移出、结案联动、时间线均验证)
 > - 依赖:告警三线(Story 04,`AlertService`/siem-alerts status+verdict);关联数据(`related_events` 快照 / `siem-entity-risk` 实体风险);`alert-service`(Spring Boot)为未来迁移目标
 
 ---
