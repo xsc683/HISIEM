@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ConfigProvider, Layout, Menu, Button, Input, Select, Table, Card, Tag, Steps, Space, Descriptions, Badge, Tabs, Alert, Typography, Divider, Empty, message, theme } from 'antd'
+import { ConfigProvider, Layout, Menu, Button, Input, Select, Table, Card, Tag, Steps, Space, Descriptions, Badge, Tabs, Alert, Typography, Divider, Empty, Modal, message, theme } from 'antd'
 import {
   LoginOutlined, LogoutOutlined, BellOutlined, SafetyCertificateOutlined,
   AlertOutlined, DeploymentUnitOutlined, BarChartOutlined, TagOutlined, TeamOutlined,
@@ -646,7 +646,7 @@ export default function App() {
               <CasesView
                 cases={cases} setCases={setCases} caseFilter={caseFilter} setCaseFilter={setCaseFilter}
                 selAlerts={selAlerts} setSelAlerts={setSelAlerts} caseTitle={caseTitle} setCaseTitle={setCaseTitle}
-                detailCase={detailCase} caseTimeline_={caseTimeline_} openCaseDetail={openCaseDetail}
+                detailCase={detailCase} setDetailCase={setDetailCase} caseTimeline_={caseTimeline_} openCaseDetail={openCaseDetail}
                 handleCreateCase={handleCreateCase} handleAggregate={handleAggregate}
                 handleInvestigateCase={handleInvestigateCase} handleResolveCase={handleResolveCase}
                 handleAddToCase={handleAddToCase} handleRemoveFromCase={handleRemoveFromCase}
@@ -963,7 +963,7 @@ function WizardView({ step, setStep, templates, selectedId, setSelectedId, selec
 
 // ================= 子组件:调查台 =================
 function CasesView({ cases, setCases, caseFilter, setCaseFilter, selAlerts, setSelAlerts, caseTitle, setCaseTitle,
-  detailCase, caseTimeline_, openCaseDetail, handleCreateCase, handleAggregate,
+  detailCase, setDetailCase, caseTimeline_, openCaseDetail, handleCreateCase, handleAggregate,
   handleInvestigateCase, handleResolveCase, handleAddToCase, handleRemoveFromCase, handleDeleteCase }) {
 
   return (
@@ -1011,52 +1011,61 @@ function CasesView({ cases, setCases, caseFilter, setCaseFilter, selAlerts, setS
         </Space>
       </Card>
 
-      {detailCase && (
-        <Card title={
+      {/* 案件详情:Modal 弹窗(点击「详情」即弹出,无需滚动) */}
+      <Modal
+        open={!!detailCase}
+        title={
           <Space>
-            <strong>{detailCase['case.title']}</strong>
-            <Tag color={detailCase['case.status'] === 'resolved' ? 'blue' : detailCase['case.status'] === 'investigating' ? 'gold' : 'red'}>{detailCase['case.status']}</Tag>
-            {detailCase['case.verdict'] && <Tag color="green">{detailCase['case.verdict']}</Tag>}
+            <strong>{detailCase?.['case.title']}</strong>
+            <Tag color={detailCase?.['case.status'] === 'resolved' ? 'blue' : detailCase?.['case.status'] === 'investigating' ? 'gold' : 'red'}>{detailCase?.['case.status']}</Tag>
+            {detailCase?.['case.verdict'] && <Tag color="green">{detailCase['case.verdict']}</Tag>}
           </Space>
-        } style={{ marginTop: 16 }}>
-          <Descriptions size="small" column={3} bordered style={{ marginBottom: 12 }}>
-            <Descriptions.Item label="案件 ID"><code>{detailCase['case.id']}</code></Descriptions.Item>
-            <Descriptions.Item label="聚合来源">{detailCase['case.aggregation']}</Descriptions.Item>
-            <Descriptions.Item label="操作者">{detailCase['case.operator']}</Descriptions.Item>
-            <Descriptions.Item label="实体">{(detailCase['entities'] || []).map((e) => <Tag key={e.type + e.value}>{e.type}:{e.value}</Tag>)}</Descriptions.Item>
-            <Descriptions.Item label="创建时间">{detailCase['case.created_at']}</Descriptions.Item>
-            <Descriptions.Item label="结案时间">{detailCase['case.closed_at'] || '—'}</Descriptions.Item>
-          </Descriptions>
+        }
+        onCancel={() => setDetailCase(null)}
+        footer={null}
+        width={860}
+      >
+        {detailCase && (
+          <>
+            <Descriptions size="small" column={3} bordered style={{ marginBottom: 12 }}>
+              <Descriptions.Item label="案件 ID"><code>{detailCase['case.id']}</code></Descriptions.Item>
+              <Descriptions.Item label="聚合来源">{detailCase['case.aggregation']}</Descriptions.Item>
+              <Descriptions.Item label="操作者">{detailCase['case.operator']}</Descriptions.Item>
+              <Descriptions.Item label="实体">{(detailCase['entities'] || []).map((e) => <Tag key={e.type + e.value}>{e.type}:{e.value}</Tag>)}</Descriptions.Item>
+              <Descriptions.Item label="创建时间">{detailCase['case.created_at']}</Descriptions.Item>
+              <Descriptions.Item label="结案时间">{detailCase['case.closed_at'] || '—'}</Descriptions.Item>
+            </Descriptions>
 
-          <Space wrap style={{ marginBottom: 12 }}>
-            {detailCase['case.status'] === 'open' && <Button type="primary" onClick={() => handleInvestigateCase(detailCase['case.id'])}>接手调查</Button>}
-            {detailCase['case.status'] === 'investigating' && (
-              <Select placeholder="结案选 verdict…" style={{ width: 200 }} onChange={(v) => handleResolveCase(detailCase['case.id'], v)}
-                options={['true_positive', 'false_positive', 'duplicate'].map((v) => ({ value: v, label: v }))} />
-            )}
-            <Button onClick={() => handleAddToCase(detailCase['case.id'])}>追加勾选告警</Button>
-          </Space>
+            <Space wrap style={{ marginBottom: 12 }}>
+              {detailCase['case.status'] === 'open' && <Button type="primary" onClick={() => handleInvestigateCase(detailCase['case.id'])}>接手调查</Button>}
+              {detailCase['case.status'] === 'investigating' && (
+                <Select placeholder="结案选 verdict…" style={{ width: 200 }} onChange={(v) => handleResolveCase(detailCase['case.id'], v)}
+                  options={['true_positive', 'false_positive', 'duplicate'].map((v) => ({ value: v, label: v }))} />
+              )}
+              <Button onClick={() => handleAddToCase(detailCase['case.id'])}>追加勾选告警</Button>
+            </Space>
 
-          <Divider style={{ margin: '12px 0' }}>案内告警({(detailCase['alert_ids'] || []).length})</Divider>
-          <Space wrap>
-            {(detailCase['alert_ids'] || []).map((id) => (
-              <Tag key={id} closable onClose={() => handleRemoveFromCase(detailCase['case.id'], id)} color="blue">
-                <code>{id.slice(0, 12)}</code>
-              </Tag>
-            ))}
-          </Space>
+            <Divider style={{ margin: '12px 0' }}>案内告警({(detailCase['alert_ids'] || []).length})</Divider>
+            <Space wrap>
+              {(detailCase['alert_ids'] || []).map((id) => (
+                <Tag key={id} closable onClose={() => handleRemoveFromCase(detailCase['case.id'], id)} color="blue">
+                  <code>{id.slice(0, 12)}</code>
+                </Tag>
+              ))}
+            </Space>
 
-          <Divider style={{ margin: '16px 0' }}>关联事件时间线(实时查 siem-events,近 24h)</Divider>
-          {caseTimeline_.length === 0
-            ? <Empty description="近 24h 无关联事件(历史案件的事件可能已过期)" image={Empty.PRESENTED_IMAGE_SIMPLE} />
-            : <Table rowKey={(_, i) => i} size="small" pagination={{ pageSize: 10 }} dataSource={caseTimeline_}
-                columns={[
-                  { title: '时间', dataIndex: '@timestamp', width: 200 },
-                  { title: 'action', dataIndex: 'event.action', render: (v) => <Tag color="blue">{v}</Tag> },
-                  { title: 'message', dataIndex: 'message', ellipsis: true },
-                ]} />}
-        </Card>
-      )}
+            <Divider style={{ margin: '16px 0' }}>关联事件时间线(实时查 siem-events,近 24h)</Divider>
+            {caseTimeline_.length === 0
+              ? <Empty description="近 24h 无关联事件(历史案件的事件可能已过期)" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+              : <Table rowKey={(_, i) => i} size="small" pagination={{ pageSize: 10 }} dataSource={caseTimeline_}
+                  columns={[
+                    { title: '时间', dataIndex: '@timestamp', width: 200 },
+                    { title: 'action', dataIndex: 'event.action', render: (v) => <Tag color="blue">{v}</Tag> },
+                    { title: 'message', dataIndex: 'message', ellipsis: true },
+                  ]} />}
+          </>
+        )}
+      </Modal>
     </div>
   )
 }

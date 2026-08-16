@@ -117,6 +117,7 @@
 | 问题 | 现象 | 根因 | 处置 | 待办 |
 | --- | --- | --- | --- | --- |
 | Flink checkpoint 偶发卡滞 → 告警批量吐出 | Kafka LAG 持续不降;告警在恢复后突然批量新增;日志 `Checkpoint expired before completing` | 瞬时负载(Logstash 重启时 ES 压力、大批日志)使 ES sink 缓冲积压,checkpoint barrier 阻塞超时(5min) | `flink cancel` + 重新 `flink run -d`,重启后 checkpoint 恢复正常(9-16ms) | 评估 ES sink `maxInFlightRequests(5)/maxBufferedRequests(1000)` 与 checkpoint timeout/间隔,真实负载下调优 |
+| 手动聚合案件跨页签割裂(前端体验) | 告警台与调查台是独立页签,手动聚合需在告警台勾选告警、切到调查台执行"聚合为案件",操作割裂 | 设计如此:勾选态在告警台(Story 04),执行入口在调查台(Story 07);跨页签状态未合并 | 已在告警台勾选后切调查台执行,可用但体验差 | 方案:①告警台直接提供"聚合为案件"按钮(需跳转/弹窗);②或案件入口合并进告警台展开行;待评估 |
 
 ## 明确不做(维持 01-§7 范围)
 
