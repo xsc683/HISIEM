@@ -63,8 +63,9 @@ bash /mnt/d/Project/SIEM/infra/simulator/brute-force-test.sh
 6. **Logstash `--config.test_and_exit -f <conf>` 会引导新实例并争抢持久化队列锁**(`data/queue/main/.lock`,运行中实例持有)→ 误报校验失败。**需加 `--path.data=/tmp/<唯一>` 重定向**(ProcessLogstashDeployer 已处理)。
 7. **Logstash 数组不接受尾逗号**:grok/date 的 match 数组末尾留 `,` 会让 `--config.test_and_exit` 报 `Expected one of ...` FATAL。生成器已避免(LogstashConfigGenerator)。
 8. **Flink checkpoint 默认在 cancel 时删除**(cleanup-mode=DELETE_ON_CANCELLATION),cancel 后无法从 checkpoint 恢复。**cancel→restore 演练用 savepoint**:`flink cancel -s file:///opt/flink/savepoints <jobid>`(Flink 2.x 推荐 `flink stop -p <dir> <jobid>`);savepoint 目录需 `chown flink:flink`(docker exec 以 root 创建会使 Flink 进程写失败,报 `Failed to create savepoint directory`)。已演练通过(2026-08-16)。
-5. **Kibana dashboard** 对象必须带 `kibanaSavedObjectMeta.searchSourceJSON`。
-6. **Kafka topic 必须手动建**:`apache/kafka:3.8` 默认 `auto.create.topics.enable=false`,Flink KafkaSource 的元数据订阅不会触发建主题(只有生产者写入才建)。提交 Flink job 前先跑 `infra/kafka/create-topics.sh`(deploy.sh 只同步脚本,不执行)。
+9. **Kibana dashboard** 对象必须带 `kibanaSavedObjectMeta.searchSourceJSON`。
+10. **Kafka topic 必须手动建**:`apache/kafka:3.8` 默认 `auto.create.topics.enable=false`,Flink KafkaSource 的元数据订阅不会触发建主题(只有生产者写入才建)。提交 Flink job 前先跑 `infra/kafka/create-topics.sh`(deploy.sh 只同步脚本,不执行)。
+11. **Flink checkpoint 偶发卡滞 → 告警批量吐出(2026-08-16 观察到)**:现象 = Kafka consumer group `siem-detection` LAG 持续不降,告警在恢复后突然批量新增;日志报 `Checkpoint expired before completing`(checkpoint 5min 超时到期)。**根因**:瞬时负载(如 Logstash 重启时 ES 写入压力、大批日志涌入)使 ES sink 的 `maxInFlightRequests(5)/maxBufferedRequests(1000)` 缓冲积压,checkpoint barrier 被阻塞超时。**处置**:`flink cancel <jobid>` + 重新 `flink run -d`,重启后 checkpoint 恢复正常(60s 间隔 / 9-16ms 完成)。**待调优**:ES sink 缓冲参数、checkpoint timeout 或间隔需在真实负载下评估(记录为已知问题,05-roadmap 待办)。
 
 ## 告警/事件快速查询
 

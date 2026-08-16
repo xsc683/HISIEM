@@ -112,6 +112,12 @@
 
 ---
 
+## 已知问题(2026-08-16 观察,待处理)
+
+| 问题 | 现象 | 根因 | 处置 | 待办 |
+| --- | --- | --- | --- | --- |
+| Flink checkpoint 偶发卡滞 → 告警批量吐出 | Kafka LAG 持续不降;告警在恢复后突然批量新增;日志 `Checkpoint expired before completing` | 瞬时负载(Logstash 重启时 ES 压力、大批日志)使 ES sink 缓冲积压,checkpoint barrier 阻塞超时(5min) | `flink cancel` + 重新 `flink run -d`,重启后 checkpoint 恢复正常(9-16ms) | 评估 ES sink `maxInFlightRequests(5)/maxBufferedRequests(1000)` 与 checkpoint timeout/间隔,真实负载下调优 |
+
 ## 明确不做(维持 01-§7 范围)
 
 UEBA/ML 平台、网络流分析、SOAR 编排引擎、合规报表包、独立威胁情报平台、Schema Registry。
