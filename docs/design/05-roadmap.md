@@ -1,6 +1,6 @@
 # Phase 3 设计 — 实施路线图
 
-> 状态:已实现基线见各阶段状态列 · 2026-08-16(Phase 3.0–3.3 已全部实现;B1 排序清单/FP 率视图/cancel→restore 演练 于 2026-08-16 补齐;规则 YAML 化 + 规则 lint 门禁(RuleLintTest)+ ES snapshot 恢复演练 于 2026-08-16 落地;剩余待做:TI 富化;3.4/3.5 部分落地;commit 7e86478 / b284fa3 / da1a0f6 / 6524fb6 / c6fb407)
+> 状态:已实现基线见各阶段状态列 · 2026-08-16(Phase 3.0–3.5 已全部实现并验证;B1 排序清单/FP 率视图/cancel→restore 演练/规则 YAML 化/规则 lint 门禁/ES snapshot 恢复演练/TI 查表富化 均于 2026-08-16 落地;commit 7e86478 / b284fa3 / da1a0f6 / 6524fb6 / c6fb407)
 > 分阶段落地顺序。每阶段独立可验收、可交付,依赖前置阶段。优先级符号:P0=立即 / P1=近期 / P2=计划 / P3=远期。
 
 ---
@@ -14,7 +14,7 @@
 | 3.2 | 检测工程化 | 规则元数据 + 攻击链 CEP + 检测即代码 | 3.1 | 🟡 部分(CEP/OCSF/元数据 ✅ da1a0f6;规则 YAML/lint/CI 待做) |
 | 3.3 | 告警闭环与富化 | 三线流转 + verdict 回流 + GeoIP | 3.2 | ✅ 完成(三线/verdict/GeoIP + 按规则 FP 率视图,2026-08-16) |
 | 3.4 | 合规与归档 | ILM 长留存 + snapshot | 3.0 | 🟡 部分(ILM/backup/RBAC ✅ 6524fb6,其余待做) |
-| 3.5 | 智能化 | 基线异常 / 实体风险聚合 | 3.3 | 🟡 部分(基线/实体风险 ✅ c6fb407,威胁情报待做) |
+| 3.5 | 智能化 | 基线异常 / 实体风险聚合 | 3.3 | ✅ 完成(基线/实体风险 ✅ c6fb407;威胁情报查表 ✅ 2026-08-16) |
 
 ---
 
@@ -107,7 +107,7 @@
 | --- | --- | --- | --- | --- |
 | 基线异常 Flink 统计 job(滚动 24h,可配 baselineHours;μ+3σ,BaselineAnomalyFunction) | 01-F-R13 | P2 | 基线偏离 μ+3σ 触发 rule-auth-rate-anomaly-001 | ✅ 已实现(c6fb407) |
 | 实体风险聚合(entity-risk.py,资产权重加权;alert-service 为未来迁移目标) | 04-§4.2 | P2 | siem-entity-risk 索引产出实体风险分 | ✅ 已实现(c6fb407) |
-| 威胁情报查表富化 | 01-F-R14 | P2 | — | ⏳ 待做 |
+| 威胁情报查表富化 | 01-F-R14 | P2 | — | ✅ 已做(2026-08-16:Logstash translate 本地字典,threat.is_malicious/confidence;更新脚本 infra/ti/update-ti.py) |
 
 ---
 

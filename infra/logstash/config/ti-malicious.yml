@@ -1,0 +1,5 @@
+# 威胁情报字典:恶意 IP 标记(值为字符串 "true"/"false",Logstash translate 字典值始终为字符串)。
+# 由 infra/ti/update-ti.py 从 AbuseIPDB CSV 每日更新;样例含测试 IP(8.8.8.8/1.1.1.1 为示例)。
+"8.8.8.8": "true"
+"1.1.1.1": "false"
+"203.0.113.7": "true"

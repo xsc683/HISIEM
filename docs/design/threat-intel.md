@@ -1,6 +1,6 @@
 # 威胁情报(TI)富化方案
 
-> 状态:Phase 3.5 · 2026-08-16
+> 状态:Phase 3.5 · MVP 已落地(2026-08-16:Logstash translate 本地字典,见 infra/logstash/config/ti-*.yml 与 infra/ti/update-ti.py)
 > 轻量 TI 查表富化(不做独立 TI 平台)。原则:先用本地查表,需要更实时时再升级,避免过早引入重型 feed 基建。
 
 ## 1. 定位
