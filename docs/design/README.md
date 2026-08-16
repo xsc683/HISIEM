@@ -1,7 +1,11 @@
 # docs/design — Phase 3 系统设计
 
-> 状态:设计稿 · 2026-08-11
-> 基于**成熟商业 SIEM 对标 + ES/Logstash/Kafka/Flink 组件最佳实践**(2025-2026 研究)产出的系统化设计,指导 Phase 3+ 演进。与现有文档的关系:现有 docs/ 记录**已实现**(Phase 1+2),本目录记录**下一步设计**(Phase 3)。
+> 状态:设计稿 · 已实现基线:Phase 3.0-3.5 主体已落地(少量项待做,见 [05-roadmap.md](05-roadmap.md) 状态列;commit 7e86478~c6fb407 · 2026-08-16)
+> 基于**成熟商业 SIEM 对标 + ES/Logstash/Kafka/Flink 组件最佳实践**(2025-2026 研究)产出的系统化设计,指导 Phase 3+ 演进。与现有文档的关系:现有 docs/ 记录**已实现**(Phase 1+2 + Phase 3.0-3.5),本目录记录**下一步设计**(Phase 3 收尾 + 4.x 产品层)。
+
+## 当前已实现基线
+
+Phase 3.0-3.5 主体落地(commit 7e86478~c6fb407,2026-08-16):可靠性基线 → 减噪 → 检测工程化 → 告警闭环与富化 → 智能化,检测引擎 6 条规则(3 单事件 + 1 窗口 + 1 CEP + 1 基线)、ILM 365d 留存、告警抑制与 5 态闭环、verdict 回流均已实现并验证;少量辅助项待做(B1 risk_score 排序清单、cancel→restore 演练、规则 YAML/转换器/lint/CI、按规则 FP 率视图)。
 
 ## 文档地图
 
@@ -19,6 +23,7 @@
 | [ocsf-mapping.md](ocsf-mapping.md) | OCSF 可移植层映射(ECS → OCSF 字段) |
 | [security-rbac.md](security-rbac.md) | ES 安全与最小权限 RBAC 启用步骤 |
 | [threat-intel.md](threat-intel.md) | 威胁情报(TI)富化方案(轻量查表) |
+| [story/](../story/) | **需求拆解 Story**:按 08 产品设计模块拆分的用户故事(10 份 Story 设计文档) |
 
 ## 核心结论(Design North Star)
 
@@ -30,19 +35,19 @@
 
 ## 最优先落地的 10 项(P0)
 
-| # | 落地项 | 详见 |
-| --- | --- | --- |
-| 1 | ES sink 确定性 `_id`(告警幂等) | 03-F2 |
-| 2 | Flink checkpoint 持久卷 + 显式可靠性配置 | 03-F1/F3 |
-| 3 | 全算子 `.uid()` + savepoint 演练 | 03-F4 |
-| 4 | ES 模板 replica=0 + ILM delete | 03-E1/E2 |
-| 5 | Logstash PQ + 去 stdout + invalid-user grok | 03-L1/L3/L4 |
-| 6 | Kafka 分区 1→3 + zstd + acks=all | 03-K1/K2 |
-| 7 | 单事件规则 suppression(去重) | 03-F6 |
-| 8 | 规则元数据(MITRE/risk_score/status) | 04-§2 |
-| 9 | 告警 `alert.risk_score` + Kibana 排序 | 03-B1 |
-| 10 | watermark idle 处理 | 03-F5 |
+| # | 落地项 | 详见 | 状态 |
+| --- | --- | --- | --- |
+| 1 | ES sink 确定性 `_id`(告警幂等) | 03-F2 | ✅ 7e86478 |
+| 2 | Flink checkpoint 持久卷 + 显式可靠性配置 | 03-F1/F3 | ✅ 7e86478 |
+| 3 | 全算子 `.uid()` + savepoint 演练 | 03-F4 | .uid ✅ 7e86478;演练 ⏳ |
+| 4 | ES 模板 replica=0 + ILM delete | 03-E1/E2 | ✅ 7e86478 |
+| 5 | Logstash PQ + 去 stdout + invalid-user grok | 03-L1/L3/L4 | ✅ 7e86478 |
+| 6 | Kafka 分区 1→3 + zstd + acks=all | 03-K1/K2 | ✅ 7e86478 |
+| 7 | 单事件规则 suppression(去重) | 03-F6 | ✅ b284fa3 |
+| 8 | 规则元数据(MITRE/risk_score/status) | 04-§2 | ✅ 7e86478 |
+| 9 | 告警 `alert.risk_score` + Kibana 排序 | 03-B1 | ⏳ 未落地(B1) |
+| 10 | watermark idle 处理 | 03-F5 | ✅ b284fa3(P1 已实现) |
 
 ## 一句话给后续开发者
 
-先把 **03-component-best-practices.md** 的 P0 项按 `05-roadmap.md` 的 3.0 阶段顺序实现,再做 3.1 减噪——不要跳过可靠性直接加规则。
+Phase 3.0-3.5 检测引擎主体已实现(commit 7e86478~c6fb407,2026-08-16;少量辅助项待做,见 [05-roadmap.md](05-roadmap.md));后续开发者从 **4.x 产品层 story** 开始,按 `docs/story/` 的模块拆分推进产品化(接入/解析/规则管理/告警三线/数据健康等)。

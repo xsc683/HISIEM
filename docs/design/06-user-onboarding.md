@@ -1,6 +1,6 @@
 # Phase 4 设计 — 用户接入层(日志接入 + 解析规则管理)
 
-> 状态:设计稿 · 2026-08-16
+> 状态:设计稿 · P2 已刷新(2026-08-16;对齐 b2051fd 已实现的接入层骨架与既有决策)
 > 后端检测逻辑(Phase 3)已落地;本文档设计"**用户怎么把日志接进来、怎么选/自定义解析规则**"的业务层。
 > 参考业界成熟设计:QRadar DSM、Splunk sourcetype、Elastic Integration/ingest pipeline、Cribl Stream Pack、Sentinel DCR。
 
@@ -51,6 +51,8 @@
 | `tests` | 正负样本(样例 + 期望字段)——模板质量门槛 |
 | `status` | experimental / stable |
 
+> **当前能力边界**:预览/生成器(`LogstashConfigGenerator` + `/api/log-sources/preview`)仅支持 **tcp** input;`tcp`/`syslog`/`file` 多协议为 **P1**(story-01 范围),届时按协议生成不同 input 片段。
+
 ### 3.2 数据源(Log Source)
 
 用户创建的一个"接入实例" = 输入协议 + 选定的解析模板 + 参数(端口/路径/IP/日志源标识)。系统据此生成 Logstash 的 input/filter 片段。
@@ -74,6 +76,8 @@
 - Logstash input(按协议)
 - Logstash filter(grok + date + mutate,由模板生成)
 
+> **当前能力边界**:现有 preview/生成器仅实现 **tcp** input(`"tcp { port => ... }"`);`syslog`/`file` 多协议为 **P1**(story-01 范围),届时按协议生成对应 input 片段。
+
 ### 4.3 自定义 / 筛选解析规则
 
 - **筛选**:从模板库按源类型选(90% 场景)。
@@ -85,16 +89,65 @@
 - 每个模板带正负样本;接入时用真实样例跑一遍,预览提取字段与 `_parsefailure`。
 - 对应 Logstash 的测试可用 `logstash -t`(配置校验)+ 样例输入验证。
 
-### 4.5 未知数据兜底
+### 4.5 未知数据兜底(siem-events-raw 落地设计)
 
-- 解析失败(`_parsefailure`)的日志路由到 `siem-events-raw`(原始桶,保留可查),不计入规则检测。
-- 事后可对 raw 桶统计失败率,按需补模板(类 Cribl unknown bucket 思路)。
-- 设计基线:解析失败率可观测(阈值/看板),避免"静默丢日志"。
+- 解析失败(`_parsefailure`)的日志路由到 `siem-events-raw`(原始桶,保留可查),**不进 Kafka、不进检测引擎**,避免污染检测与告警(类 Cribl unknown bucket 思路)。
+- 事后可对 raw 桶统计失败率,按需补模板;失败事件仍保留完整原文,可回溯原始日志。
+
+**落地设计(logstash.conf output 条件路由)**——给 output 加 `tags` 分支,`_parsefailure` 走 raw 桶,其余维持现有双写(ES 事件索引 + Kafka):
+
+```ruby
+output {
+  if "_parsefailure" in [tags] {
+    elasticsearch { hosts => ["http://elasticsearch:9200"]
+      index => "siem-events-raw" }              # 原始桶,不进 Kafka/不进检测
+  } else {
+    elasticsearch { hosts => ["http://elasticsearch:9200"]
+      index => "siem-events-%{+YYYY.MM.dd}" }
+    kafka { bootstrap_servers => "kafka:9092" topic_id => "siem-events" }
+  }
+}
+```
+
+**siem-events-raw 索引模板设计**(`message` 用 `match_only_text`,保留原文可查、省磁盘/写入成本):
+
+```json
+{
+  "index_patterns": ["siem-events-raw"], "priority": 200,
+  "template": { "settings": { "number_of_shards": 1, "number_of_replicas": 0,
+      "index.codec": "best_compression", "index.lifecycle.name": "siem-events-raw-retention" },
+    "mappings": { "properties": {
+      "@timestamp": { "type": "date" },
+      "message": { "type": "match_only_text" },
+      "tags": { "type": "keyword" } } } }
+}
+```
+
+> 该索引模板当前**未落地**于 `infra/elasticsearch/`(现只有 `siem-events-template.json` / `siem-alerts-template.json` / `siem-entity-risk-template.json`),为 **P2 落地项**。**模板优先级**:`siem-events-*` 模板(`infra/elasticsearch/siem-events-template.json`,`priority: 100`)的 index_patterns **实际匹配 `siem-events-raw`**(通配符覆盖,「已排除」不成立),故上例 raw 模板 `priority` 必须 **> 100**(如 **200**),或给 `siem-events-*` 模板 index_patterns 加 `-siem-events-raw` 负模式,否则 `siem-events-raw` 会命中 `siem-events-*` 模板、match_only_text mapping 被覆盖。**留存(U2)**:`siem-events-raw` 用独立**短留存 30d**(未知日志不进检测,无需 365d 合规留存),走独立 ILM 策略(如 `siem-events-raw-retention`:hot → delete 30d),不沿用 `siem-events-retention`(365d)。
+
+**失败率监控阈值**(统一口径 **U1**,与 story-05 FR-4 一致):
+- **本 1h 失败率 > 5%**(失败事件数 / 事件总数),**或** 本 1h / 前一 1h 失败率 **环比 ≥ 2×**,且 **本 1h 失败事件数 ≥ 20** → 高亮/告警;
+- 度量口径:`tags=_parsefailure` 事件数 / 事件总数,按 `log.source_id` 聚合;看板见 story-05,避免"静默丢日志"。
+
+> **当前状态**:`infra/logstash/pipeline/logstash.conf` 仍是 **kafka output 全量转发**(含解析失败事件)。上述条件路由为 **P2 落地项**;改前必须 `logstash --config.test_and_exit` 校验 + 保留旧配置回滚,禁止未校验直接 reload(避免配置非法导致全线采集中断)。
 
 ### 4.6 归一化与字段约定
 
 - 所有模板输出 **ECS 字段**(现有标准),保证跨源规则/看板可复用(业界 CIM/ECS 原则)。
 - 新增模板必须声明其产出的 ECS 字段;`event.action` 等规则依赖字段要有明确枚举约定。
+
+**event.action 枚举清单**(模板 `actions` **只允许取下列值,超出则模板校验不通过**):
+
+| 取值 | 含义 | 现有产出 |
+| --- | --- | --- |
+| `authentication_failure` | 认证失败 | ssh-auth 模板(规则依赖 `event.action`) |
+| `authentication_success` | 认证成功 | ssh-auth 模板(CEP 攻击链规则依赖) |
+| `user_member_added` | 用户加入组成员 | windows-security 模板(story-09 引入,EventID 4732) |
+| `allowed` | 访问/流量放行 | firewall 模板(story-09 引入,ACTION=ACCEPT) |
+| `denied` | 访问/流量拒绝 | firewall 模板(story-09 引入,ACTION=DENY) |
+| `access` | 访问日志(web) | nginx-access 模板(story-09 引入) |
+
+> **校验规则**:模板 `actions` 只允许清单内值;新增值需先在枚举字典([story-02 §4.3(枚举字典)](story-02-parser.md))登记,再在模板中使用。`user_member_added` / `allowed` / `denied` / `access` 由 [story-09 §4.3](story-09-parser-templates.md) 引入并登记(story-02 §4.3 枚举字典的扩展)。现有模板 `actions` 取值与 `infra/parser-templates/ssh-auth.yaml` 完全一致(`authentication_failure` / `authentication_success`),无矛盾。
 
 ## 5. 架构落地(与现有系统结合)
 
@@ -126,23 +179,37 @@ tests:
 status: stable
 ```
 
+> **与仓库一致性**:上例字段(`id`/`ecs`/`patterns`/`timestamp`/`actions`/`tests`/`status`)与 `infra/parser-templates/ssh-auth.yaml` **完全一致**(description 为简写;`tests` 仅列首条展示,完整 3 条正负样本及 expect 见仓库文件),无矛盾。
+
 ### 5.2 模板 → Logstash 生成器
 
-`infra/parser-templates/generate-logstash.py`:读模板 YAML,输出 Logstash filter 片段(grok + date + mutate + actions),校验 grok 语法与测试样本。新增数据源 = 加一个模板 YAML + 声明数据源,而非手改 grok。
+**已实现**:`LogstashConfigGenerator.java`(Spring Boot,`src/main/java/com/xscsiem/hsiem_platform/onboarding/`,见 b2051fd)读模板 YAML,输出 Logstash filter 片段(grok + date + mutate + actions);前端预览入口在 `web/src/App.jsx`「③ 数据源配置预览」,由 `/api/log-sources/preview` 返回 input + filter 片段。新增数据源 = 加一个模板 YAML + 声明数据源,而非手改 grok。
+
+- **生成片段 = 生产 pipeline 子集**:生成器只产出 grok/date/mutate/actions;`remove_field [timestamp]`、`add_field pipeline/event.schema_version`、`related.ip`、`geoip` 富化等由主 pipeline(`infra/logstash/pipeline/logstash.conf`)兜底,避免生成片段与主 pipeline 重复/冲突。
+- `generate-logstash.py` 为**可选 CLI 方案**,当前**未实现**;生产路径走 REST API + React 接入页(b2051fd)。
 
 ### 5.3 配置存储与分发
 
 - 模板:Git(`infra/parser-templates/*.yaml`)——版本化、review、CI 测试。
-- 数据源声明:`infra/log-sources/*.yaml`(或 ES index `siem-log-sources`,二选一;起步用文件 + Git)。
-- 分发:生成器产出 Logstash 配置 → deploy.sh 同步 → 重启/热加载。
+- 数据源声明:**`infra/log-sources/*.yaml`(文件 + Git,已决策,与 story-01 一致)**;ES index `siem-log-sources` 仅为未来选项,**不做二选一**。
+- **数据源标识**:生成 input 片段 `add_field` 注入 `log.source_id`(数据源 uuid)与 `log.source_name`,供 story-05 按 `log.source_id` 聚合(字段名须与 story-05 一致)。
+- 分发:生成器产出 Logstash 配置 → `deploy.sh` rsync(禁 rm -rf bind mount)→ `logstash --config.test_and_exit` 校验 → reload/重启;**失败保留旧配置 + 状态=failed 可重试**(对齐 [_template §5.4 配置同步与生效链路](story/_template.md)的 repo→deploy 同步链路决策,踩坑见 [design-decisions.md 坑 1](design-decisions.md))。
 
 ### 5.4 API / 界面(分阶段)
 
 | 阶段 | 交互 | 说明 |
 | --- | --- | --- |
-| 起步 | CLI/脚本 | `add-log-source.py`、`parse-test.py`(粘贴日志 + 模板 → 看字段) |
-| 中期 | REST API | 模板/数据源 CRUD,返回生成的配置 |
-| 后期 | UI | 接入向导 + 解析编辑器 + 字段预览(参考 QRadar DSM Editor / Kibana) |
+| **当前(已实现 b2051fd)** | REST API + React 接入页 | `/api/parser-templates`(模板列表)、`/api/parser-templates/test`(grok 测试,返回提取字段)、`/api/log-sources/preview`(配置预览);前端 `web/src/App.jsx` 三区:选模板 / 解析测试(字段预览)/ 配置预览 |
+| P1+ | 接入向导 + 落库 + 生效 | 数据源 CRUD 落库 `infra/log-sources/*.yaml` + 202 异步同步到 Logstash(见 story-01) |
+| 远期 | 解析编辑器 + 字段可视化 | 基于样例的解析编辑器(参考 QRadar DSM Editor / Kibana) |
+
+> **CLI(`parse-test.py`/`add-log-source.py`)为可选补充**:不参与当前实现,生产路径走 REST API;如本地离线调试需要再补,不再作为起步依赖。
+
+**异常契约 / 校验(补,当前部分未实现)**:
+- **模板不存在 → 404**:当前 `OnboardingController`/`ParserTemplateService` 对未知名抛 `IllegalArgumentException`(Spring 默认返回 500),**需改为 404**(统一异常处理),为已知待改项。
+- **端口校验**:`/api/log-sources/preview` 的 `port` 必须为整数 **1-65535**,越界返回 400(当前后端未校验,待补;前端已用 `type="number"` 输入)。
+- **样例大小**:UI 粘贴框单条 ≤ **8KB**(产品约束,对齐 [07-product-design.md §4.1](07-product-design.md));API 层 `sample` 单条硬上限 ≤ **1MB**(防御性,允许脚本/批量导入);超限返回 400(参数非法,当前未校验,待补)。
+- **鉴权**:console API 需认证;角色 × 模块 × 动作矩阵见 [08-product-design.md §7(权限与安全)](08-product-design.md)(admin/analyst/ops/audit 四角色),角色定义与权限边界见 [07-product-design.md §2](07-product-design.md) 与 [07-product-design.md §5.3(权限与审计)](07-product-design.md);ES 侧最小权限见 [security-rbac.md](security-rbac.md)(`siem_ingest`/`siem_analyst`);console 侧角色与 ES 角色映射待定,单机 MVP 可先单 admin 直连(08 产品设计 §7)。
 
 ### 5.5 与现有数据流的关系
 
@@ -156,9 +223,9 @@ status: stable
 ## 6. 示例:新增一个数据源(端到端)
 
 1. 用户想接 `nginx-access` 日志 → 模板库检索,若有模板直接用,否则:
-2. `parse-test.py` 粘贴一条 nginx 样例 → 调 grok → 预览 `client.ip`/`http.request.method` 等字段 → 生成模板 YAML。
+2. 接入页粘贴一条 nginx 样例 → 调 `/api/parser-templates/test`(java-grok)→ 预览 `client.ip`/`http.request.method` 等字段 → 生成模板 YAML。
 3. 声明数据源:`nginx-web-01`,协议 tcp,模板 `nginx-access`,端口 5001。
-4. 生成器产出 Logstash 片段 → deploy.sh 同步 → Logstash 新 input 监听 5001。
+4. 生成器(`LogstashConfigGenerator`)产出 Logstash 片段 → deploy.sh 同步 → Logstash 新 input 监听 5001。
 5. 发真实日志验证:字段正确、无 `_parsefailure` → 上线。
 6. Kibana 数据源监控:nginx 事件量/解析失败率可见。
 
@@ -166,10 +233,10 @@ status: stable
 
 | 阶段 | 内容 | 优先级 |
 | --- | --- | --- |
-| 4.0 模板化基线 | SSH 模板重构 + `generate-logstash.py` + `parse-test.py` + 未知桶(siem-events-raw) | P0 |
-| 4.1 数据源声明 | `log-sources.yaml` + 多协议 input(tcp/syslog/file) | P1 |
+| 4.0 模板化基线 | SSH 模板重构 + **REST API + 接入页(已实现 b2051fd)** + 未知桶(siem-events-raw) | P0 |
+| 4.1 数据源声明 | `infra/log-sources/*.yaml` 落库 + 多协议 input(tcp/syslog/file) | P1 |
 | 4.2 模板库扩充 | 预置 nginx/windows-security/firewall 模板(按数据源优先级) | P1 |
-| 4.3 API/UI | REST API → 接入向导 + 解析编辑器 | P2 |
+| 4.3 API/UI | 接入向导完善(数据源落库 + 生效)+ 解析编辑器(UI) | P2 |
 
 ## 8. 参考来源
 

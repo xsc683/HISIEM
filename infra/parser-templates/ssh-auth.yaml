@@ -1,5 +1,5 @@
 # 解析模板:OpenSSH 认证日志(Phase 4 用户接入层)
-# 由 generate-logstash.py 生成 Logstash filter;后端 API 加载用于解析测试。
+# 模板由后端 LogstashConfigGenerator(src/,b2051fd)读取生成 Logstash filter;接入向导/解析测试复用。
 id: ssh-auth
 name: SSH 认证日志
 description: OpenSSH 认证失败/成功(认证类,规则依赖 event.action)
