@@ -1,0 +1,5 @@
+# ES 主配置(Phase 3.4):在镜像默认配置基础上补充快照仓库路径。
+# 必须保留 cluster.name / network.host(0.0.0.0 供跨容器访问),其余走 compose 环境变量。
+cluster.name: "docker-cluster"
+network.host: 0.0.0.0
+path.repo: ["/usr/share/elasticsearch/backups"]

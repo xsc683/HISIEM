@@ -14,14 +14,14 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$SCRIPT_DIR"
 
-echo "==> 创建 ILM 策略 siem-events-retention(hot → 90d 后 delete)"
+echo "==> 创建 ILM 策略 siem-events-retention(hot → 365d 后 delete,满足 PCI 12 个月留存)"
 curl -s -X PUT "http://localhost:9200/_ilm/policy/siem-events-retention" \
   -H 'Content-Type: application/json' \
   -d '{
     "policy": {
       "phases": {
         "hot": { "actions": { "set_priority": { "priority": 100 } } },
-        "delete": { "min_age": "90d", "actions": { "delete": {} } }
+        "delete": { "min_age": "365d", "actions": { "delete": {} } }
       }
     }
   }'

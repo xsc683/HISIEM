@@ -38,6 +38,8 @@ public class DetectionFunction implements FlatMapFunction<Event, String> {
         Map<String, Object> alert = new LinkedHashMap<>();
         alert.put("@timestamp", event.getOrDefault("@timestamp", Instant.now().toString()));
         alert.put("alert.created_at", Instant.now().toString());
+        alert.put("alert.status", "open");
+        alert.put("alert.status_updated_at", Instant.now().toString());
         alert.put("alert.id", UUID.randomUUID().toString());
         alert.put("alert.rule_id", rule.getId());
         alert.put("alert.rule_name", rule.getName());

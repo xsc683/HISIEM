@@ -53,6 +53,8 @@ public class BruteforceSuccessFunction extends PatternProcessFunction<Event, Str
         Map<String, Object> alert = new LinkedHashMap<>();
         alert.put("@timestamp", Instant.ofEpochMilli(success.getTimestampMillis()).toString());
         alert.put("alert.created_at", Instant.now().toString());
+        alert.put("alert.status", "open");
+        alert.put("alert.status_updated_at", Instant.now().toString());
         alert.put("alert.id", UUID.randomUUID().toString());
         alert.put("alert.rule_id", ruleId);
         alert.put("alert.rule_name", ruleName);

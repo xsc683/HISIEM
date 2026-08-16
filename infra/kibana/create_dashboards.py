@@ -113,6 +113,32 @@ def vis_top_rules():
                    {"size": 10, "order": "desc", "orderBy": "1"})
 
 
+def _pie(title, field):
+    # 通用的按 keyword 字段分布的饼图
+    return {
+        "title": title, "type": "pie",
+        "params": {"type": "pie", "addTooltip": True, "addLegend": True, "legendPosition": "right",
+                   "isDonut": True, "labels": {"show": False, "values": False, "last_level": False,
+                                               "truncate": 100}},
+        "aggs": [
+            {"id": "1", "enabled": True, "type": "count", "schema": "metric", "params": {}},
+            {"id": "2", "enabled": True, "type": "terms", "schema": "segment",
+             "params": {"field": field, "size": 10, "order": "desc", "orderBy": "1"}},
+        ],
+        "listeners": {},
+    }
+
+
+def vis_alerts_status():
+    # Phase 3.3:三线视图,处置状态分布(open → acknowledged → closed)
+    return _pie("告警处置状态", "alert.status")
+
+
+def vis_verdict():
+    # Phase 3.3:误报闭环,处置结论分布(TP/FP/duplicate)——FP 率统计的输入
+    return _pie("告警处置结论", "alert.analyst_verdict")
+
+
 def build_vis_object(obj_id, title, vis_state, dv_id):
     return {
         "id": obj_id, "type": "visualization",
@@ -165,6 +191,8 @@ def main():
         build_vis_object("vis-fail-by-user", "失败登录用户 TOP", vis_fail_by_user(), events_dv),
         build_vis_object("vis-alerts-severity", "告警严重级别分布", vis_alerts_severity(), alerts_dv),
         build_vis_object("vis-top-rules", "TOP 规则(告警量)", vis_top_rules(), alerts_dv),
+        build_vis_object("vis-alerts-status", "告警处置状态", vis_alerts_status(), alerts_dv),
+        build_vis_object("vis-verdict", "告警处置结论", vis_verdict(), alerts_dv),
     ]
 
     print("==> 3. Dashboard")
@@ -174,7 +202,9 @@ def main():
          (2, "vis-top-srcip", 0, 15, 12, 15),
          (3, "vis-fail-by-user", 12, 15, 12, 15),
          (4, "vis-alerts-severity", 0, 30, 12, 15),
-         (5, "vis-top-rules", 12, 30, 12, 15)],
+         (5, "vis-top-rules", 12, 30, 12, 15),
+         (6, "vis-alerts-status", 0, 45, 12, 15),
+         (7, "vis-verdict", 12, 45, 12, 15)],
     ))
 
     code, data = api("POST", "/api/saved_objects/_bulk_create?overwrite=true", objects)

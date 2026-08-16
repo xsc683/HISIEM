@@ -26,7 +26,14 @@
         },
         "source": {
           "properties": {
-            "ip": { "type": "ip" }
+            "ip": { "type": "ip" },
+            "geo": {
+              "properties": {
+                "country_name": { "type": "keyword" },
+                "city_name": { "type": "keyword" },
+                "location": { "type": "geo_point" }
+              }
+            }
           }
         },
         "user": {

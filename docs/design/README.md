@@ -14,6 +14,7 @@
 | [05-roadmap.md](05-roadmap.md) | **路线图**:Phase 3.0-3.5 分阶段实施(目标/落地项/验收口径) |
 | [mitre-coverage.md](mitre-coverage.md) | MITRE ATT&CK 覆盖矩阵 + Navigator layer(检测覆盖盲区) |
 | [ocsf-mapping.md](ocsf-mapping.md) | OCSF 可移植层映射(ECS → OCSF 字段) |
+| [security-rbac.md](security-rbac.md) | ES 安全与最小权限 RBAC 启用步骤 |
 
 ## 核心结论(Design North Star)
 
