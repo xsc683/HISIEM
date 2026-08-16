@@ -57,6 +57,15 @@ else
     echo "         docker cp $DEPLOY/flink/target/$JAR siem-flink-jobmanager:/opt/flink/"
 fi
 
+echo "==> 同步检测规则(infra/rules)到 jobmanager /opt/flink/rules(DetectionJob 启动读取,按 enabled 注册)"
+if docker inspect siem-flink-jobmanager >/dev/null 2>&1; then
+    docker exec siem-flink-jobmanager mkdir -p /opt/flink/rules
+    docker cp "$REPO/infra/rules/." siem-flink-jobmanager:/opt/flink/rules/
+else
+    echo "  [warn] 容器不存在,跳过规则同步。提交 job 前需手动:"
+    echo "         docker cp infra/rules/. siem-flink-jobmanager:/opt/flink/rules/"
+fi
+
 echo ""
 echo "✅ 部署就绪。提交运行(如需更新运行中的 job,先 cancel 旧 job):"
 echo "   docker exec siem-flink-jobmanager flink run -d /opt/flink/$JAR"

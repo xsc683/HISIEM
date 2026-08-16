@@ -28,11 +28,22 @@ public class BaselineAnomalyFunction extends ProcessWindowFunction<Event, String
 
     private final int baselineHours;
     private final int minBaselineHours;
+    /** 规则元数据(YAML 化后由声明注入,替代硬编码)。 */
+    private final RuleMeta meta;
     private transient ValueState<LinkedList<Double>> baselineState;
 
+    /** 默认元数据(历史测试用;生产走 YAML 加载的 RuleMeta)。 */
     public BaselineAnomalyFunction(int baselineHours, int minBaselineHours) {
+        this(baselineHours, minBaselineHours, new RuleMeta(
+                "rule-auth-rate-anomaly-001", "认证失败率异常(基线突增)", "auth_rate_anomaly",
+                "high", "该主机认证失败数超出滚动基线(μ+3σ),疑似暴力破解加剧", 60,
+                List.of("attack.t1110.001"), "experimental", "1.0"));
+    }
+
+    public BaselineAnomalyFunction(int baselineHours, int minBaselineHours, RuleMeta meta) {
         this.baselineHours = baselineHours;
         this.minBaselineHours = minBaselineHours;
+        this.meta = meta;
     }
 
     @Override
@@ -94,21 +105,21 @@ public class BaselineAnomalyFunction extends ProcessWindowFunction<Event, String
         alert.put("alert.status", "open");
         alert.put("alert.status_updated_at", Instant.now().toString());
         alert.put("alert.id", UUID.randomUUID().toString());
-        alert.put("alert.rule_id", "rule-auth-rate-anomaly-001");
-        alert.put("alert.rule_name", "认证失败率异常(基线突增)");
-        alert.put("alert.type", "auth_rate_anomaly");
-        alert.put("alert.severity", "high");
-        alert.put("alert.risk_score", 60);
-        alert.put("alert.description", "该主机认证失败数超出滚动基线(μ+3σ),疑似暴力破解加剧");
-        alert.put("rule.tags", List.of("attack.t1110.001"));
-        alert.put("rule.status", "experimental");
+        alert.put("alert.rule_id", meta.id());
+        alert.put("alert.rule_name", meta.name());
+        alert.put("alert.type", meta.type());
+        alert.put("alert.severity", meta.severity());
+        alert.put("alert.risk_score", meta.riskScore());
+        alert.put("alert.description", meta.description());
+        alert.put("rule.tags", meta.tags());
+        alert.put("rule.status", meta.status());
         alert.put("host.name", host);
         alert.put("event.action", "authentication_failure");
         alert.put("event_count", (int) count);
         alert.put("anomaly.baseline_mean", Math.round(mean * 100.0) / 100.0);
         alert.put("anomaly.baseline_sigma", Math.round(sigma * 100.0) / 100.0);
         alert.put("anomaly.threshold", Math.round(threshold * 100.0) / 100.0);
-        Ocsf.applyAuthView(alert, "high");
+        Ocsf.applyAuthView(alert, meta.severity());
         return MAPPER.writeValueAsString(alert);
     }
 }

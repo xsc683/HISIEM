@@ -1,6 +1,9 @@
 package com.siem;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.siem.config.RuleBuilder;
+import com.siem.config.RuleConfigLoader;
+import com.siem.config.RuleDecl;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.api.common.functions.FilterFunction;
 import org.apache.flink.api.common.serialization.SimpleStringSchema;
@@ -26,10 +29,23 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
 
+/**
+ * SIEM 检测作业(规则驱动)。
+ *
+ * 规则从 infra/rules/*.yaml 加载(检测即代码单一来源),按 type 分四类分支:
+ * - single_event → DetectionFunction(单事件条件匹配)+ AlertSuppressor(抑制)
+ * - window → WindowRuleFunction(窗口计数)
+ * - cep → CEP Pattern + BruteforceSuccessFunction(攻击链序列)
+ * - baseline → BaselineAnomalyFunction(统计基线异常)
+ * enabled=false 的规则不注册(启停 = 改 YAML enabled → deploy → 重启 job)。
+ *
+ * 规则目录解析:args[0] > 环境变量 SIEM_RULES_DIR > 默认 /opt/flink/rules(由 deploy.sh 同步)。
+ */
 public class DetectionJob {
 
     private static final ObjectMapper ALERT_MAPPER = new ObjectMapper();
@@ -66,6 +82,17 @@ public class DetectionJob {
         env.getCheckpointConfig().setMaxConcurrentCheckpoints(1);
         env.getCheckpointConfig().setTolerableCheckpointFailureNumber(3);
 
+        // 规则加载(检测即代码):解析目录,enabled 才注册
+        String rulesDir = args.length > 0 ? args[0]
+                : System.getenv().getOrDefault("SIEM_RULES_DIR", "/opt/flink/rules");
+        RuleConfigLoader loader = new RuleConfigLoader();
+        List<RuleDecl> decls = loader.loadDir(rulesDir);
+        List<RuleDecl> enabled = decls.stream().filter(d -> d.enabled).toList();
+        RuleBuilder builder = new RuleBuilder();
+        System.out.println("[DetectionJob] 加载规则目录 " + rulesDir
+                + ": 共 " + decls.size() + " 条,enabled " + enabled.size() + " 条");
+
+
         KafkaSource<String> source =
                 KafkaSource.<String>builder()
                         .setBootstrapServers("kafka:9092")
@@ -94,101 +121,105 @@ public class DetectionJob {
                 .map(EventParser::parseEvent)
                 .uid("event-parser");
 
-
-        /*
-         * 1) 单事件规则:逐规则匹配(RuleRegistry)→ 生成符合 Alert Schema 的告警 JSON。
-         */
-        DataStream<String> singleAlerts =
-                parsed
-                        .flatMap(new DetectionFunction(new RuleRegistry()))
-                        .uid("single-event-detection")
-                        // 告警抑制(Phase 3.1-F6):同一规则+实体在抑制窗口内只发一条,
-                        // 后续命中累加 alert.deduplicated_count。
-                        .keyBy(AlertSuppressor::suppressionKey)
-                        .process(new AlertSuppressor(Duration.ofMinutes(60)))
-                        .uid("alert-suppression");
-
-
-        /*
-         * 2) 时间窗口规则:SSH 暴力破解
-         *    同一源 IP 5 分钟内 authentication_failure >= 5 次 → critical 告警。
-         *    事件时间窗口 + 有界乱序 watermark。
-         */
-        WindowRule bruteForce = new WindowRule(
-                "rule-ssh-brute-force-001",
-                "SSH 暴力破解",
-                "ssh_brute_force",
-                "critical",
-                "同一源 IP 短时间多次认证失败,疑似暴力破解",
-                "source.ip",
-                new FieldEqualsCondition("event.action", "authentication_failure"),
-                5, 5,
-                73,
-                List.of("attack.t1110.001"),
-                "experimental");
-
-        DataStream<String> windowAlerts =
-                parsed
-                        .assignTimestampsAndWatermarks(
-                                WatermarkStrategy.<Event>forBoundedOutOfOrderness(Duration.ofSeconds(10))
-                                        .withTimestampAssigner((e, ts) -> e.getTimestampMillis())
-                                        // 日志暂停(SSH 突发写入)时推进 watermark,窗口仍能按时关闭(Phase 3.1-F5)
-                                        .withIdleness(Duration.ofSeconds(60))
-                        )
-                        .uid("window-watermark")
-                        .keyBy(e -> String.valueOf(
-                                e.getFields().getOrDefault(bruteForce.getKeyField(), "unknown")))
-                        .window(TumblingEventTimeWindows.of(
-                                Duration.ofMinutes(bruteForce.getWindowMinutes())))
-                        .process(new WindowRuleFunction(bruteForce))
-                        .uid("window-rule");
-
-
-        /*
-         * 3) CEP 攻击链规则(Phase 3.2):同一源 IP 10 分钟内 ≥5 次认证失败 → 随后 1 次成功登录
-         *    = 暴力破解成功。给分析师的不再是"又一条失败",而是"攻击得逞了"的完整叙事。
-         */
-        Pattern<Event, ?> bruteforceSuccess = Pattern.<Event>begin("failures")
-                .where(SimpleCondition.of((FilterFunction<Event>) EventConditions::isAuthenticationFailure))
-                .times(5, 100)
-                .next("success")
-                .where(SimpleCondition.of((FilterFunction<Event>) EventConditions::isAuthenticationSuccess))
-                .within(Duration.ofMinutes(10));
-
-        DataStream<String> cepAlerts = CEP.pattern(
-                        parsed
-                                .assignTimestampsAndWatermarks(
-                                        WatermarkStrategy.<Event>forBoundedOutOfOrderness(Duration.ofSeconds(10))
-                                                .withTimestampAssigner((e, ts) -> e.getTimestampMillis())
-                                                .withIdleness(Duration.ofSeconds(60)))
-                                .uid("cep-watermark")
-                                .keyBy(e -> String.valueOf(
-                                        e.getFields().getOrDefault("source.ip", "unknown"))),
-                        bruteforceSuccess)
-                .process(new BruteforceSuccessFunction(
-                        "rule-ssh-bruteforce-success-001", "SSH 暴力破解成功", "ssh_bruteforce_success",
-                        "critical", "同一源 IP 短时间多次认证失败后成功登录,疑似暴力破解得逞",
-                        90, List.of("attack.t1110.001", "attack.t1078.002"), "experimental"))
-                .uid("cep-attack-chain");
-
-
-        /*
-         * 4) 基线异常(Phase 3.5):按主机统计每 1 小时认证失败数,与滚动基线(最近 24 小时)
-         *    比较,当前值 > μ+3σ 且基线足够(≥3 小时)时产出"认证失败率异常"告警。
-         */
-        DataStream<String> anomalyAlerts = parsed
+        // 共享事件时间流:窗口/CEP/基线三个分支共用同一 watermark(有界乱序 10s + idle 60s)
+        DataStream<Event> parsedTimed = parsed
                 .assignTimestampsAndWatermarks(
                         WatermarkStrategy.<Event>forBoundedOutOfOrderness(Duration.ofSeconds(10))
                                 .withTimestampAssigner((e, ts) -> e.getTimestampMillis())
-                                .withIdleness(Duration.ofSeconds(60)))
-                .uid("anomaly-watermark")
-                .keyBy(e -> String.valueOf(e.getFields().getOrDefault("host.name", "unknown")))
-                .window(TumblingEventTimeWindows.of(Duration.ofHours(1)))
-                .process(new BaselineAnomalyFunction(24, 3))
-                .uid("baseline-anomaly");
+                                // 日志暂停(SSH 突发写入)时推进 watermark,窗口仍能按时关闭(Phase 3.1-F5)
+                                .withIdleness(Duration.ofSeconds(60))
+                )
+                .uid("window-watermark");
 
 
-        DataStream<String> alerts = singleAlerts.union(windowAlerts).union(cepAlerts).union(anomalyAlerts);
+        /*
+         * 1) 单事件规则:逐规则匹配 → 告警 JSON → 抑制(同一规则+实体窗口内只发一条)。
+         */
+        List<Rule> singleRules = enabled.stream()
+                .filter(d -> "single_event".equals(d.category))
+                .map(builder::toRule).toList();
+        DataStream<String> singleAlerts = parsed
+                .flatMap(new DetectionFunction(new RuleRegistry(singleRules)))
+                .uid("single-event-detection")
+                .keyBy(AlertSuppressor::suppressionKey)
+                .process(new AlertSuppressor(Duration.ofMinutes(60)))
+                .uid("alert-suppression");
+
+
+        /*
+         * 2) 时间窗口规则:keyField 分组,windowMinutes 窗口内 condition 命中数 >= threshold。
+         *    例:同一源 IP 5 分钟内 authentication_failure >= 5 次 → critical 告警。
+         */
+        List<DataStream<String>> windowStreams = new ArrayList<>();
+        for (RuleDecl d : enabled.stream().filter(x -> "window".equals(x.category)).toList()) {
+            WindowRule wr = builder.toWindowRule(d);
+            windowStreams.add(parsedTimed
+                    .keyBy(e -> String.valueOf(
+                            e.getFields().getOrDefault(wr.getKeyField(), "unknown")))
+                    .window(TumblingEventTimeWindows.of(
+                            Duration.ofMinutes(wr.getWindowMinutes())))
+                    .process(new WindowRuleFunction(wr))
+                    .uid("window-" + wr.getId()));
+        }
+        DataStream<String> windowAlerts = windowStreams.isEmpty()
+                ? null : windowStreams.stream().reduce((a, b) -> a.union(b)).get();
+
+
+        /*
+         * 3) CEP 攻击链规则:同 keyField 事件时间窗内按 pattern 序列匹配。
+         *    例:10 分钟内 ≥5 次认证失败 → 随后 1 次成功登录 = 暴力破解成功。
+         */
+        List<DataStream<String>> cepStreams = new ArrayList<>();
+        for (RuleDecl d : enabled.stream().filter(x -> "cep".equals(x.category)).toList()) {
+            RuleMeta meta = builder.toMeta(d);
+            cepStreams.add(CEP.pattern(
+                            parsedTimed.keyBy(e -> String.valueOf(
+                                    e.getFields().getOrDefault(d.keyField, "unknown"))),
+                            buildCepPattern(d.cep))
+                    .process(new BruteforceSuccessFunction(
+                            meta.id(), meta.name(), meta.type(), meta.severity(),
+                            meta.description(), meta.riskScore(), meta.tags(), meta.status()))
+                    .uid("cep-" + d.id));
+        }
+        DataStream<String> cepAlerts = cepStreams.isEmpty()
+                ? null : cepStreams.stream().reduce((a, b) -> a.union(b)).get();
+
+
+        /*
+         * 4) 基线异常:按 keyField 统计每 windowHours 小时命中数,与滚动基线比较,
+         *    当前值 > μ+3σ 且基线足够时产出告警。
+         */
+        List<DataStream<String>> anomalyStreams = new ArrayList<>();
+        for (RuleDecl d : enabled.stream().filter(x -> "baseline".equals(x.category)).toList()) {
+            RuleDecl.BaselineDecl b = d.baseline;
+            if (b == null || b.baselineHours == null || b.minBaselineHours == null) {
+                throw new IllegalArgumentException("baseline 规则缺少 baseline 参数: " + d.id);
+            }
+            RuleMeta meta = builder.toMeta(d);
+            long windowHours = b.windowHours == null ? 1L : b.windowHours;
+            anomalyStreams.add(parsedTimed
+                    .keyBy(e -> String.valueOf(
+                            e.getFields().getOrDefault(b.keyField, "unknown")))
+                    .window(TumblingEventTimeWindows.of(Duration.ofHours(windowHours)))
+                    .process(new BaselineAnomalyFunction(b.baselineHours, b.minBaselineHours, meta))
+                    .uid("baseline-" + d.id));
+        }
+        DataStream<String> anomalyAlerts = anomalyStreams.isEmpty()
+                ? null : anomalyStreams.stream().reduce((a, b) -> a.union(b)).get();
+
+
+        List<DataStream<String>> allAlerts = new ArrayList<>();
+        allAlerts.add(singleAlerts);
+        if (windowAlerts != null) {
+            allAlerts.add(windowAlerts);
+        }
+        if (cepAlerts != null) {
+            allAlerts.add(cepAlerts);
+        }
+        if (anomalyAlerts != null) {
+            allAlerts.add(anomalyAlerts);
+        }
+        DataStream<String> alerts = allAlerts.stream().reduce((a, b) -> a.union(b)).get();
 
         alerts.print();
         alerts.sinkTo(
@@ -213,6 +244,39 @@ public class DetectionJob {
         env.execute(
                 "SIEM Detection Engine"
         );
+    }
+
+    /** 构建 CEP 序列 Pattern:首个 begin 步骤 + 后续 next/followedBy 步骤,整体 within。 */
+    private static Pattern<Event, ?> buildCepPattern(RuleDecl.CepDecl cep) {
+        if (cep == null || cep.pattern == null || cep.pattern.isEmpty()) {
+            throw new IllegalArgumentException("cep 规则缺少 pattern");
+        }
+        Pattern<Event, ?> p = null;
+        for (RuleDecl.CepStep step : cep.pattern) {
+            SimpleCondition<Event> cond = SimpleCondition.of(
+                    (FilterFunction<Event>) e ->
+                            RuleBuilder.buildCondition(step.condition).matches(e.getFields()));
+            if ("begin".equals(step.type)) {
+                Pattern<Event, ?> begin = Pattern.<Event>begin(step.name).where(cond);
+                if (step.timesMax != null) {
+                    int min = step.timesMin == null ? step.timesMax : step.timesMin;
+                    begin = begin.times(min, step.timesMax);
+                } else if (step.timesMin != null) {
+                    begin = begin.times(step.timesMin);
+                }
+                p = begin;
+            } else if ("next".equals(step.type)) {
+                p = p.next(step.name).where(cond);
+            } else if ("followedBy".equals(step.type)) {
+                p = p.followedBy(step.name).where(cond);
+            } else {
+                throw new IllegalArgumentException("未知 CEP 步骤类型: " + step.type);
+            }
+        }
+        if (p != null && cep.withinMinutes != null) {
+            p = p.within(Duration.ofMinutes(cep.withinMinutes));
+        }
+        return p;
     }
 
     /**

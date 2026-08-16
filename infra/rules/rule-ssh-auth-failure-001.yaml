@@ -1,0 +1,17 @@
+# 检测规则声明(检测即代码单一来源,story-03)
+# 类别 category:single_event / window / cep / baseline;enabled=false 时不注册(启停 = 改此值 → deploy → 重启 job)
+id: rule-ssh-auth-failure-001
+name: SSH 认证失败
+category: single_event
+type: ssh_authentication_failure
+enabled: true
+severity: medium
+description: 检测到 SSH 认证失败
+riskScore: 40
+tags: ["attack.t1110.001"]
+status: experimental
+version: "1.0"
+condition:
+  type: field_equals
+  field: event.action
+  value: authentication_failure

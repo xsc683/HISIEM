@@ -18,6 +18,12 @@ public class RuleRegistry implements Serializable {
 
     private final List<Rule> rules;
 
+    /** 由外部声明构建(规则 YAML 化后,DetectionJob 传入加载的规则列表)。 */
+    public RuleRegistry(List<Rule> rules) {
+        this.rules = rules;
+    }
+
+    /** 默认(硬编码 3 条,历史测试用;生产走 YAML 加载)。 */
     public RuleRegistry() {
         this.rules = Arrays.asList(
                 new Rule(

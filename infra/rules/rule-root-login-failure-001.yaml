@@ -1,0 +1,17 @@
+# 检测规则声明(检测即代码单一来源,story-03)
+id: rule-root-login-failure-001
+name: root 账号认证失败
+category: single_event
+type: ssh_root_login_failure
+enabled: true
+severity: high
+description: 检测到 root 账号 SSH 认证失败(特权账号被攻击)
+riskScore: 81
+tags: ["attack.t1078.002", "attack.t1068"]
+status: experimental
+version: "1.0"
+condition:
+  type: all
+  conditions:
+    - { type: field_equals, field: event.action, value: authentication_failure }
+    - { type: field_equals, field: user.name, value: root }

@@ -1,0 +1,19 @@
+# 检测规则声明(检测即代码单一来源,story-03)
+id: rule-common-user-bruteforce-001
+name: 常见账号被爆破
+category: single_event
+type: ssh_common_user_bruteforce
+enabled: true
+severity: high
+description: 检测到常见弱账号(admin/test/guest 等)被尝试登录
+riskScore: 47
+tags: ["attack.t1078.002"]
+status: experimental
+version: "1.0"
+condition:
+  type: all
+  conditions:
+    - { type: field_equals, field: event.action, value: authentication_failure }
+    - type: field_in
+      field: user.name
+      values: [admin, administrator, test, guest, postgres, ubuntu, oracle]

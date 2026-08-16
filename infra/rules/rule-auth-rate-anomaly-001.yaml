@@ -1,0 +1,18 @@
+# 检测规则声明(检测即代码单一来源,story-03)
+# baseline:按 keyField 统计每 windowHours 小时命中数,与滚动基线比较,当前值 > μ+3σ 且基线足够时告警
+id: rule-auth-rate-anomaly-001
+name: 认证失败率异常(基线突增)
+category: baseline
+type: auth_rate_anomaly
+enabled: true
+severity: high
+description: 该主机认证失败数超出滚动基线(μ+3σ),疑似暴力破解加剧
+riskScore: 60
+tags: ["attack.t1110.001"]
+status: experimental
+version: "1.0"
+baseline:
+  keyField: host.name
+  windowHours: 1
+  baselineHours: 24
+  minBaselineHours: 3

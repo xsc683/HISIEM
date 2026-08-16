@@ -1,0 +1,20 @@
+# 检测规则声明(检测即代码单一来源,story-03)
+# window:keyField 分组,windowMinutes 窗口内 condition 命中数 >= threshold 触发告警
+id: rule-ssh-brute-force-001
+name: SSH 暴力破解
+category: window
+type: ssh_brute_force
+enabled: true
+severity: critical
+description: 同一源 IP 短时间多次认证失败,疑似暴力破解
+riskScore: 73
+tags: ["attack.t1110.001"]
+status: experimental
+version: "1.0"
+keyField: source.ip
+windowMinutes: 5
+threshold: 5
+condition:
+  type: field_equals
+  field: event.action
+  value: authentication_failure
