@@ -3,6 +3,7 @@ import {
   listTemplates, testParse, previewLogSource,
   listLogSources, createLogSource, activateLogSource, getLogSource,
   listDetectionRules, toggleRule, deployRules, ruleMitre,
+  dataHealthSources, dataHealthTrend, dataHealthFailures,
 } from './api.js'
 
 const styles = {
@@ -40,12 +41,31 @@ export default function App() {
   const [deployMsg, setDeployMsg] = useState('')
   const [mitre, setMitre] = useState({})
 
+  // 数据健康(Story 05)
+  const [health, setHealth] = useState([])
+  const [healthDetail, setHealthDetail] = useState(null)
+  const [healthLoading, setHealthLoading] = useState(false)
+
   useEffect(() => {
     listTemplates().then(setTemplates).catch((e) => alert(e.message))
     listLogSources().then(setSources).catch(() => {})
     listDetectionRules().then(setDetRules).catch(() => {})
     ruleMitre().then(setMitre).catch(() => {})
+    dataHealthSources().then(setHealth).catch(() => {})
   }, [])
+
+  async function handleHealthDetail(sourceId) {
+    setHealthLoading(true)
+    try {
+      const [trend, failures] = await Promise.all([
+        dataHealthTrend(sourceId), dataHealthFailures(sourceId, 20),
+      ])
+      setHealthDetail({ sourceId, trend, failures })
+    } catch (e) {
+      setHealthDetail(null)
+      alert(`加载健康详情失败: ${e.message}`)
+    } finally { setHealthLoading(false) }
+  }
 
   async function handleToggleRule(id) {
     try {
@@ -251,6 +271,57 @@ export default function App() {
             </table>
           </details>
         )}
+      </section>
+
+      <section style={styles.section}>
+        <h2 style={styles.h2}>⑥ 数据健康(每源事件量 / 失败率 / 最后收到)</h2>
+        {health.length === 0 && <p style={{ color: '#888' }}>暂无数据源事件(接入数据源并生效后,事件带 log.source_id 可聚合)</p>}
+        {health.map((s) => (
+          <div key={s.sourceId} style={{
+            border: `1px solid ${s.anomalous ? '#e7664c' : '#ddd'}`,
+            background: s.anomalous ? '#fdf0ee' : '#fff',
+            borderRadius: 8, padding: 12, marginBottom: 10,
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <strong>{s.sourceName || '(未命名)'}</strong> <code style={{ color: '#888', fontSize: 12 }}>{s.sourceId}</code>
+                {s.anomalous && <span style={{ ...styles.bad, marginLeft: 8 }}>⚠ 解析异常({s.reason})</span>}
+              </div>
+              <button style={styles.button} onClick={() => handleHealthDetail(s.sourceId)} disabled={healthLoading}>详情(趋势/失败日志)</button>
+            </div>
+            <div style={{ display: 'flex', gap: 24, marginTop: 8, fontSize: 13 }}>
+              <span>近 1h <b>{s.events1h}</b> 条</span>
+              <span>近 24h <b>{s.events24h}</b> 条</span>
+              <span>失败率 <b style={{ color: s.failRate > 5 ? styles.bad.color : styles.ok.color }}>{s.failRate}%</b> ({s.failures1h} 条)</span>
+              <span>最后收到 <b>{s.lastSeen ? new Date(s.lastSeen).toLocaleString() : '—'}</b></span>
+            </div>
+            {healthDetail && healthDetail.sourceId === s.sourceId && (
+              <div style={{ marginTop: 10 }}>
+                {healthDetail.trend.length > 0 && (
+                  <div>
+                    <div style={{ fontSize: 12, color: '#666' }}>近 24h 事件/失败趋势(逐小时,事件条;红=失败):</div>
+                    <div style={{ display: 'flex', alignItems: 'flex-end', gap: 1, height: 60, marginTop: 4 }}>
+                      {healthDetail.trend.map((t, i) => (
+                        <div key={i} title={`${t.bucket}: 事件 ${t.events} / 失败 ${t.failures}`}
+                          style={{ width: 8, background: t.failures > 0 ? '#e7664c' : '#4e9a51', height: Math.max(2, Math.min(60, (t.events || 0) * 3)) }} />
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {healthDetail.failures.length > 0 && (
+                  <details style={{ marginTop: 8 }}>
+                    <summary style={{ fontSize: 13 }}>最近解析失败日志({healthDetail.failures.length} 条)</summary>
+                    <ul style={{ fontSize: 12, marginTop: 6, maxHeight: 200, overflow: 'auto' }}>
+                      {healthDetail.failures.map((f, i) => (
+                        <li key={i}><code>{f['@timestamp']}</code> {f.message}</li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
+              </div>
+            )}
+          </div>
+        ))}
       </section>
     </div>
   )

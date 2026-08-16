@@ -83,3 +83,17 @@ export function deployRules() {
 export function ruleMitre() {
   return request('/detection-rules/mitre')
 }
+
+// ---- 数据健康(Story 05) ----
+
+export function dataHealthSources() {
+  return request('/data-health/sources')
+}
+
+export function dataHealthTrend(id) {
+  return request(`/data-health/sources/${id}/trend`)
+}
+
+export function dataHealthFailures(id, size) {
+  return request(`/data-health/sources/${id}/failures?size=${size || 50}`)
+}
