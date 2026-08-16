@@ -1,0 +1,6 @@
+# Logstash 主配置(Phase 3.0-L4)
+# 持久化队列:事件先落盘再处理,Logstash 崩溃/重启时不丢 tcp 输入的事件
+# (tcp input 无 ack 机制,内存队列在崩溃瞬间会丢事件)。
+# 队列数据存于 path.data(默认 /usr/share/logstash/data),已在 compose 挂持久卷。
+queue.type: persisted
+queue.max_bytes: 1gb

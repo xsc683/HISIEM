@@ -4,7 +4,12 @@
   "template": {
     "settings": {
       "number_of_shards": 1,
-      "number_of_replicas": 1
+      "number_of_replicas": 0,
+      "index.refresh_interval": "5s",
+      "index.codec": "best_compression",
+      "index.translog.durability": "async",
+      "index.translog.sync_interval": "30s",
+      "index.lifecycle.name": "siem-events-retention"
     },
     "mappings": {
       "properties": {

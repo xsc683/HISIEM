@@ -128,9 +128,11 @@ output {
 ## 6. 动手验证
 
 ```bash
-# 发送一条日志,观察解析结果(① stdout rubydebug 开启时)
+# 发送一条日志,观察解析结果
+# 注意:生产配置已默认关闭 stdout(Phase 3.0);调试时临时取消 logstash.conf
+# 中 stdout 的注释并 restart logstash,即可看到解析后的完整 JSON(含全部 ECS 字段)。
 echo 'Aug 1 10:20:00 server03 sshd[9999]: Failed password for test from 172.16.1.20' | nc -w1 localhost 5000
-docker logs siem-logstash --tail 20   # 可见解析后的完整 JSON(含全部 ECS 字段)
+docker logs siem-logstash --tail 20
 
 # 查看 Logstash 运行指标(吞吐/积压,需暴露 9600 端口)
 curl -s http://localhost:9600/_node/stats/pipelines

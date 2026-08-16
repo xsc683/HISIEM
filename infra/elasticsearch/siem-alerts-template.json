@@ -4,7 +4,11 @@
   "template": {
     "settings": {
       "number_of_shards": 1,
-      "number_of_replicas": 1
+      "number_of_replicas": 0,
+      "index.refresh_interval": "5s",
+      "index.codec": "best_compression",
+      "index.translog.durability": "async",
+      "index.translog.sync_interval": "30s"
     },
     "mappings": {
       "properties": {
@@ -15,7 +19,11 @@
         "alert.rule_name": { "type": "keyword" },
         "alert.type": { "type": "keyword" },
         "alert.severity": { "type": "keyword" },
+        "alert.risk_score": { "type": "integer" },
         "alert.description": { "type": "text" },
+        "rule.tags": { "type": "keyword" },
+        "rule.status": { "type": "keyword" },
+        "rule.version": { "type": "keyword" },
         "source.ip": { "type": "ip" },
         "user.name": { "type": "keyword" },
         "host.name": { "type": "keyword" },

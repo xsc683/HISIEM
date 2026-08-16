@@ -9,6 +9,10 @@ import java.util.List;
  *
  * 当前管道只有 SSH 认证失败事件(event.action=authentication_failure),
  * 单事件规则靠 user.name / source.ip 区分。
+ *
+ * 元数据约定:
+ * - riskScore 按危害定值(0-100),用于告警排序与实体风险聚合;
+ * - tags 为 MITRE ATT&amp;CK 技术 ID(如 attack.t1110.001),用于覆盖度分析。
  */
 public class RuleRegistry implements Serializable {
 
@@ -22,7 +26,11 @@ public class RuleRegistry implements Serializable {
                         "ssh_authentication_failure",
                         "medium",
                         "检测到 SSH 认证失败",
-                        new FieldEqualsCondition("event.action", "authentication_failure")
+                        new FieldEqualsCondition("event.action", "authentication_failure"),
+                        40,
+                        List.of("attack.t1110.001"),
+                        "experimental",
+                        "1.0"
                 ),
                 new Rule(
                         "rule-root-login-failure-001",
@@ -33,7 +41,11 @@ public class RuleRegistry implements Serializable {
                         new AllCondition(
                                 new FieldEqualsCondition("event.action", "authentication_failure"),
                                 new FieldEqualsCondition("user.name", "root")
-                        )
+                        ),
+                        81,
+                        List.of("attack.t1078.002", "attack.t1068"),
+                        "experimental",
+                        "1.0"
                 ),
                 new Rule(
                         "rule-common-user-bruteforce-001",
@@ -45,7 +57,11 @@ public class RuleRegistry implements Serializable {
                                 new FieldEqualsCondition("event.action", "authentication_failure"),
                                 new FieldInCondition("user.name", "admin", "administrator",
                                         "test", "guest", "postgres", "ubuntu", "oracle")
-                        )
+                        ),
+                        47,
+                        List.of("attack.t1078.002"),
+                        "experimental",
+                        "1.0"
                 )
         );
     }

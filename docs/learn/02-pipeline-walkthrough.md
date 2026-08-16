@@ -165,7 +165,9 @@ curl -s "http://localhost:9200/siem-events-*/_count"
 # 告警数应增加(该日志命中 2 条规则,产生 2 条告警)
 curl -s "http://localhost:9200/siem-alerts/_count"
 
-# 查看 Logstash 解析中间结果(stdout rubydebug 开启时)
+# 查看 Logstash 解析中间结果
+# 注意:生产配置已默认关闭 stdout(见 logstash.conf 注释);
+#       调试时临时取消 logstash.conf 中 stdout 的注释并 restart logstash。
 docker logs siem-logstash --tail 20
 
 # 确认 Flink job 处于运行状态

@@ -27,8 +27,12 @@ services:
       - kafka
     ports:
       - "5000:5000"
+    environment:
+      - LS_HEAP_SIZE=1g
     volumes:
       - ./logstash/pipeline:/usr/share/logstash/pipeline
+      - ./logstash/config/logstash.yml:/usr/share/logstash/config/logstash.yml
+      - logstash-data:/usr/share/logstash/data
 
   kafka:
     image: apache/kafka:3.8.0
@@ -52,6 +56,12 @@ services:
       - "8081:8081"
     environment:
       - JOB_MANAGER_RPC_ADDRESS=flink-jobmanager
+    volumes:
+      # checkpoint/savepoint 持久卷(DetectionJob 配置了 file:///opt/flink/checkpoints)
+      # 注意:全新 volume(首次 up 或 down -v 后)目录属主是 root,
+      #       Flink(flink 用户)无写权限会导致 job 启动失败。需先执行:
+      #       docker exec -u root siem-flink-jobmanager chown -R flink:flink /opt/flink/checkpoints
+      - flink-checkpoints:/opt/flink/checkpoints
     command: jobmanager
 
   flink-taskmanager:
@@ -62,7 +72,11 @@ services:
     environment:
       - JOB_MANAGER_RPC_ADDRESS=flink-jobmanager
       - TASK_MANAGER_NUMBER_OF_TASK_SLOTS=2
+    volumes:
+      - flink-checkpoints:/opt/flink/checkpoints
     command: taskmanager
 
 volumes:
   es-data:
+  flink-checkpoints:
+  logstash-data:

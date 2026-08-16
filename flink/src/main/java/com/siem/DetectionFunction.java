@@ -44,6 +44,10 @@ public class DetectionFunction implements FlatMapFunction<Event, String> {
         alert.put("alert.type", rule.getType());
         alert.put("alert.severity", rule.getSeverity());
         alert.put("alert.description", rule.getDescription());
+        alert.put("alert.risk_score", rule.getRiskScore());
+        alert.put("rule.tags", rule.getTags());
+        alert.put("rule.status", rule.getStatus());
+        alert.put("rule.version", rule.getVersion());
         promote(alert, event, "source.ip");
         promote(alert, event, "user.name");
         promote(alert, event, "host.name");

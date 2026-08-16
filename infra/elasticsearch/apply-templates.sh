@@ -14,6 +14,19 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$SCRIPT_DIR"
 
+echo "==> 创建 ILM 策略 siem-events-retention(hot → 90d 后 delete)"
+curl -s -X PUT "http://localhost:9200/_ilm/policy/siem-events-retention" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "policy": {
+      "phases": {
+        "hot": { "actions": { "set_priority": { "priority": 100 } } },
+        "delete": { "min_age": "90d", "actions": { "delete": {} } }
+      }
+    }
+  }'
+echo
+
 echo "==> 应用 siem-events 索引模板"
 curl -s -X PUT "http://localhost:9200/_index_template/siem-events" \
   -H 'Content-Type: application/json' \
@@ -24,6 +37,22 @@ echo "==> 应用 siem-alerts 索引模板"
 curl -s -X PUT "http://localhost:9200/_index_template/siem-alerts" \
   -H 'Content-Type: application/json' \
   --data-binary @"$REPO/siem-alerts-template.json"
+echo
+
+echo "==> 已存在的 siem-events-* 索引套用 ILM(模板只对新索引生效)"
+curl -s -X PUT "http://localhost:9200/siem-events-*/_settings" \
+  -H 'Content-Type: application/json' \
+  -d '{"index.lifecycle.name": "siem-events-retention"}'
+echo
+
+echo "==> 已存在的 siem-* 索引关闭副本(单节点无法分配副本,replica=1 只会 yellow + 写放大)"
+curl -s -X PUT "http://localhost:9200/siem-events-*/_settings" \
+  -H 'Content-Type: application/json' \
+  -d '{"index.number_of_replicas": 0}'
+echo
+curl -s -X PUT "http://localhost:9200/siem-alerts/_settings" \
+  -H 'Content-Type: application/json' \
+  -d '{"index.number_of_replicas": 0}'
 echo
 
 echo "==> 当前模板列表"
