@@ -1,5 +1,7 @@
 package com.xscsiem.hsiem_platform.onboarding;
 
+import com.xscsiem.hsiem_platform.auth.ForbiddenException;
+import com.xscsiem.hsiem_platform.auth.UnauthorizedException;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.ResponseStatus;
@@ -30,6 +32,18 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(IllegalArgumentException.class)
     @ResponseStatus(HttpStatus.BAD_REQUEST)
     public Map<String, Object> badRequest(IllegalArgumentException e) {
+        return Map.of("error", e.getMessage());
+    }
+
+    @ExceptionHandler(UnauthorizedException.class)
+    @ResponseStatus(HttpStatus.UNAUTHORIZED)
+    public Map<String, Object> unauthorized(UnauthorizedException e) {
+        return Map.of("error", e.getMessage());
+    }
+
+    @ExceptionHandler(ForbiddenException.class)
+    @ResponseStatus(HttpStatus.FORBIDDEN)
+    public Map<String, Object> forbidden(ForbiddenException e) {
         return Map.of("error", e.getMessage());
     }
 }

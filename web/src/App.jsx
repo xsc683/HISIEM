@@ -5,6 +5,7 @@ import {
   listDetectionRules, toggleRule, deployRules, ruleMitre,
   dataHealthSources, dataHealthTrend, dataHealthFailures,
   listCriticality, setCriticality, deleteCriticality, recalcCriticality,
+  login, logout, authMe, listUsers, createUser, deleteUser, updateUserRole, listRoles, auditLogs,
 } from './api.js'
 
 const styles = {
@@ -54,6 +55,17 @@ export default function App() {
   const [critLevel, setCritLevel] = useState('high')
   const [recalcMsg, setRecalcMsg] = useState('')
 
+  // 认证与权限(Story 08)
+  const [user, setUser] = useState(null)
+  const [loginUser, setLoginUser] = useState('')
+  const [loginPass, setLoginPass] = useState('')
+  const [users, setUsers] = useState([])
+  const [roles, setRoles] = useState([])
+  const [audit, setAudit] = useState([])
+  const [newUname, setNewUname] = useState('')
+  const [newPass, setNewPass] = useState('')
+  const [newRole, setNewRole] = useState('analyst')
+
   useEffect(() => {
     listTemplates().then(setTemplates).catch((e) => alert(e.message))
     listLogSources().then(setSources).catch(() => {})
@@ -61,7 +73,57 @@ export default function App() {
     ruleMitre().then(setMitre).catch(() => {})
     dataHealthSources().then(setHealth).catch(() => {})
     listCriticality().then(setCrit).catch(() => {})
+    authMe().then(setUser).catch(() => setUser(null))
   }, [])
+
+  useEffect(() => {
+    if (user && user.role === 'admin') {
+      listUsers().then(setUsers).catch(() => {})
+      listRoles().then(setRoles).catch(() => {})
+      auditLogs().then(setAudit).catch(() => {})
+    } else {
+      setUsers([]); setRoles([]); setAudit([])
+    }
+  }, [user])
+
+  async function handleLogin() {
+    try {
+      const r = await login(loginUser.trim(), loginPass)
+      setUser({ username: r.username, role: r.role })
+      setLoginPass('')
+    } catch (e) { alert(e.message) }
+  }
+
+  async function handleLogout() {
+    await logout()
+    setUser(null)
+  }
+
+  async function handleCreateUser() {
+    if (!newUname.trim()) return alert('填用户名')
+    try {
+      await createUser({ username: newUname.trim(), password: newPass, role: newRole })
+      setNewUname(''); setNewPass('')
+      setUsers(await listUsers())
+      setAudit(await auditLogs())
+    } catch (e) { alert(e.message) }
+  }
+
+  async function handleDelUser(username) {
+    try {
+      await deleteUser(username)
+      setUsers(await listUsers())
+      setAudit(await auditLogs())
+    } catch (e) { alert(e.message) }
+  }
+
+  async function handleRoleChange(username, role) {
+    try {
+      await updateUserRole(username, role)
+      setUsers(await listUsers())
+      setAudit(await auditLogs())
+    } catch (e) { alert(e.message) }
+  }
 
   async function handleCritSet(type, key, level) {
     try {
@@ -183,6 +245,21 @@ export default function App() {
   return (
     <div style={styles.root}>
       <h1>HISIEM · 日志接入</h1>
+
+      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginBottom: 12, fontSize: 13 }}>
+        {user ? (
+          <>
+            <span>👤 {user.username}({user.role})</span>
+            <button style={styles.button} onClick={handleLogout}>退出</button>
+          </>
+        ) : (
+          <>
+            <input style={styles.input} value={loginUser} onChange={(e) => setLoginUser(e.target.value)} placeholder="用户名(默认 admin)" />
+            <input style={styles.input} type="password" value={loginPass} onChange={(e) => setLoginPass(e.target.value)} placeholder="密码(admin123)" />
+            <button style={styles.button} onClick={handleLogin}>登录</button>
+          </>
+        )}
+      </div>
 
       <section style={styles.section}>
         <h2 style={styles.h2}>① 选择解析模板</h2>
@@ -396,6 +473,61 @@ export default function App() {
             ))}
           </div>
         ))}
+      </section>
+
+      <section style={styles.section}>
+        <h2 style={styles.h2}>⑧ 用户与权限(RBAC,admin 可见)</h2>
+        {!user || user.role !== 'admin' ? (
+          <p style={{ color: '#888' }}>需以 admin 登录后查看/管理用户、角色与审计日志。</p>
+        ) : (
+          <>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+              <input style={styles.input} value={newUname} onChange={(e) => setNewUname(e.target.value)} placeholder="新用户名" />
+              <input style={styles.input} value={newPass} onChange={(e) => setNewPass(e.target.value)} placeholder="密码(≥6位)" />
+              <select style={styles.input} value={newRole} onChange={(e) => setNewRole(e.target.value)}>
+                <option value="analyst">analyst</option><option value="ops">ops</option>
+                <option value="audit">audit</option><option value="admin">admin</option>
+              </select>
+              <button style={styles.button} onClick={handleCreateUser}>新增用户</button>
+            </div>
+            <table style={styles.table} border={1} cellPadding={6}>
+              <thead><tr><th>用户名</th><th>角色</th><th>状态</th><th>操作</th></tr></thead>
+              <tbody>
+                {users.map((u) => (
+                  <tr key={u.username}>
+                    <td>{u.username}</td>
+                    <td>
+                      <select value={u.role} onChange={(e) => handleRoleChange(u.username, e.target.value)}>
+                        <option value="analyst">analyst</option><option value="ops">ops</option>
+                        <option value="audit">audit</option><option value="admin">admin</option>
+                      </select>
+                    </td>
+                    <td>{u.status}</td>
+                    <td><button style={{ ...styles.button, color: '#c00' }} onClick={() => handleDelUser(u.username)}>删</button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <details style={{ marginTop: 10 }}>
+              <summary style={{ fontSize: 13 }}>角色权限矩阵({roles.length})</summary>
+              <table style={{ ...styles.table, marginTop: 6 }} border={1} cellPadding={4}>
+                <tbody>
+                  {roles.map((r) => (
+                    <tr key={r.name}><td style={{ width: 100 }}><code>{r.name}</code></td><td>{r.permissions.join(', ')}</td></tr>
+                  ))}
+                </tbody>
+              </table>
+            </details>
+            <details style={{ marginTop: 10 }}>
+              <summary style={{ fontSize: 13 }}>审计日志({audit.length})</summary>
+              <div style={{ maxHeight: 160, overflow: 'auto', marginTop: 6, fontSize: 12 }}>
+                {audit.slice().reverse().map((a, i) => (
+                  <div key={i}><code>{a.timestamp}</code> {a.action} → {a.target}</div>
+                ))}
+              </div>
+            </details>
+          </>
+        )}
       </section>
     </div>
   )

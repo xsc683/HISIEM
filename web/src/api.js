@@ -2,10 +2,24 @@
 
 const BASE = '/api'
 
+// 登录 token(Story 08 RBAC),本地持久化;所有请求自动携带
+let authToken = localStorage.getItem('siem_token') || ''
+
+function authHeaders(extra) {
+  const h = { ...(extra || {}) }
+  if (authToken) h.Authorization = `Bearer ${authToken}`
+  return h
+}
+
 async function request(path, options) {
-  const r = await fetch(BASE + path, options)
+  const r = await fetch(BASE + path, { ...options, headers: authHeaders(options?.headers) })
+  if (r.status === 401 && path !== '/auth/login') {
+    authToken = ''
+    localStorage.removeItem('siem_token')
+  }
   if (!r.ok) {
-    throw new Error(`请求失败: ${r.status}`)
+    const body = await r.json().catch(() => ({}))
+    throw new Error(body.error || `请求失败: ${r.status}`)
   }
   return r.json()
 }
@@ -118,4 +132,60 @@ export function deleteCriticality(type, key) {
 
 export function recalcCriticality() {
   return request('/settings/criticality/recalc', { method: 'POST' })
+}
+
+// ---- 认证与权限(Story 08 RBAC) ----
+
+export function login(username, password) {
+  return request('/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  }).then((r) => {
+    authToken = r.token
+    localStorage.setItem('siem_token', r.token)
+    return r
+  })
+}
+
+export function logout() {
+  authToken = ''
+  localStorage.removeItem('siem_token')
+  return request('/auth/logout', { method: 'POST' }).catch(() => {})
+}
+
+export function authMe() {
+  return request('/auth/me')
+}
+
+export function listUsers() {
+  return request('/auth/users')
+}
+
+export function createUser(payload) {
+  return request('/auth/users', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+}
+
+export function deleteUser(username) {
+  return request(`/auth/users/${username}`, { method: 'DELETE' })
+}
+
+export function updateUserRole(username, role) {
+  return request(`/auth/users/${username}/role`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ role }),
+  })
+}
+
+export function listRoles() {
+  return request('/auth/roles')
+}
+
+export function auditLogs() {
+  return request('/auth/audit-logs')
 }
