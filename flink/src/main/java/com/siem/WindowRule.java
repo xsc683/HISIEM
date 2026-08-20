@@ -23,6 +23,8 @@ public class WindowRule implements Serializable {
     private final long windowMinutes;
     /** 滑动步长(分钟);null/0 = tumbling 固定窗口;>0 = 滑动窗口(修边界盲区,F7)。 */
     private final Long slidingMinutes;
+    /** 窗口告警抑制时长(分钟),用于收敛重叠滑动窗口的重复命中。 */
+    private final long alertSuppressionMinutes;
     private final int threshold;
     /** 数值风险分(0-100)。 */
     private final int riskScore;
@@ -50,12 +52,20 @@ public class WindowRule implements Serializable {
                       String keyField, Condition condition, long windowMinutes, int threshold,
                       int riskScore, List<String> tags, String status, String version) {
         this(id, name, type, severity, description, keyField, condition, windowMinutes, threshold,
-                riskScore, tags, status, version, null);
+                riskScore, tags, status, version, null, null);
     }
 
     public WindowRule(String id, String name, String type, String severity, String description,
                       String keyField, Condition condition, long windowMinutes, int threshold,
                       int riskScore, List<String> tags, String status, String version, Long slidingMinutes) {
+        this(id, name, type, severity, description, keyField, condition, windowMinutes, threshold,
+                riskScore, tags, status, version, slidingMinutes, null);
+    }
+
+    public WindowRule(String id, String name, String type, String severity, String description,
+                      String keyField, Condition condition, long windowMinutes, int threshold,
+                      int riskScore, List<String> tags, String status, String version,
+                      Long slidingMinutes, Long alertSuppressionMinutes) {
         this.id = id;
         this.name = name;
         this.type = type;
@@ -65,6 +75,17 @@ public class WindowRule implements Serializable {
         this.condition = condition;
         this.windowMinutes = windowMinutes;
         this.slidingMinutes = slidingMinutes;
+        if (windowMinutes <= 0) {
+            throw new IllegalArgumentException("windowMinutes 必须 > 0: " + id);
+        }
+        if (threshold <= 0) {
+            throw new IllegalArgumentException("threshold 必须 > 0: " + id);
+        }
+        long suppression = alertSuppressionMinutes == null ? windowMinutes : alertSuppressionMinutes;
+        if (suppression <= 0) {
+            throw new IllegalArgumentException("alertSuppressionMinutes 必须 > 0: " + id);
+        }
+        this.alertSuppressionMinutes = suppression;
         this.threshold = threshold;
         this.riskScore = riskScore;
         this.tags = tags;
@@ -107,6 +128,10 @@ public class WindowRule implements Serializable {
     /** 滑动步长(分钟);null = tumbling 固定窗口。 */
     public Long getSlidingMinutes() {
         return slidingMinutes;
+    }
+
+    public long getAlertSuppressionMinutes() {
+        return alertSuppressionMinutes;
     }
 
     public int getThreshold() {

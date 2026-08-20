@@ -25,16 +25,25 @@ services:
     image: kibana:8.14.0
     container_name: siem-kibana
     depends_on:
-      - elasticsearch
+      elasticsearch:
+        condition: service_healthy
     ports:
       - "5601:5601"
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 2 bash -c '</dev/tcp/127.0.0.1/5601' >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
 
   logstash:
     image: logstash:8.14.0
     container_name: siem-logstash
     depends_on:
-      - elasticsearch
-      - kafka
+      elasticsearch:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
     ports:
       - "5000:5000"
       - "5006:5006"
@@ -46,8 +55,8 @@ services:
     environment:
       - LS_HEAP_SIZE=1g
     healthcheck:
-      # TCP 连通性检查 9600(logstash 监控 API 偶发 HTTP 空响应 bug,端口监听即可视为存活)
-      test: ["CMD", "bash", "-c", "timeout 2 bash -c '</dev/tcp/127.0.0.1/9600' || exit 1"]
+      # 必须同时检查监控端口和全部数据输入端口,避免容器 healthy 但 pipeline 尚未启动。
+      test: ["CMD-SHELL", "for port in 5000 5001 5002 5004 5005 5006 9600; do timeout 2 bash -c \"</dev/tcp/127.0.0.1/$$port\" >/dev/null 2>&1 || exit 1; done"]
       interval: 30s
       timeout: 5s
       retries: 5
@@ -94,13 +103,20 @@ services:
       #       Flink(flink 用户)无写权限会导致 job 启动失败。需先执行:
       #       docker exec -u root siem-flink-jobmanager chown -R flink:flink /opt/flink/checkpoints
       - flink-checkpoints:/opt/flink/checkpoints
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 2 bash -c '</dev/tcp/127.0.0.1/8081' >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
     command: jobmanager
 
   flink-taskmanager:
     image: flink:2.1-java21
     container_name: siem-flink-taskmanager
     depends_on:
-      - flink-jobmanager
+      flink-jobmanager:
+        condition: service_healthy
     environment:
       - JOB_MANAGER_RPC_ADDRESS=flink-jobmanager
       - TASK_MANAGER_NUMBER_OF_TASK_SLOTS=2

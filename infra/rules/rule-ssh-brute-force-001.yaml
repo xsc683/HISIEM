@@ -18,6 +18,9 @@ keyField: source.ip
 windowMinutes: 5
 # 滑动步长(分钟):>0 = 滑动窗口,修「4次在4:59+1次在5:01 不触发」的 tumbling 边界盲区(F7)
 slidingMinutes: 1
+# 同一规则+source.ip 的窗口告警在抑制期内只保留一个 ES 文档,
+# 期末以首条告警 ID 更新 event_count/alert.deduplicated_count。
+alertSuppressionMinutes: 5
 threshold: 5
 condition:
   type: field_equals

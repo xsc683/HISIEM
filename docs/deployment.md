@@ -28,28 +28,28 @@ mkdir -p ~/projects/mini-siem
 
 ```bash
 # 从 Windows 仓库根执行(WSL 内则去掉 wsl 前缀和 MSYS_NO_PATHCONV=1)
-MSYS_NO_PATHCONV=1 wsl bash /mnt/d/Project/SIEM/infra/deploy.sh
+MSYS_NO_PATHCONV=1 wsl bash /mnt/d/Project/SIEM/infra/deploy.sh --start-job
 ```
 
 `deploy.sh` 做的事:
 1. 同步 `infra/docker-compose.yml` → `~/projects/mini-siem/`
 2. 同步 `infra/logstash/` → `~/projects/mini-siem/logstash/`(rsync 原地同步,**不可 rm -rf**,见设计决策)
 3. 同步 `flink/` → `~/projects/mini-siem/flink/`
-4. WSL 内 `mvn clean package` 构建 jar
-5. `docker cp` 进 `siem-flink-jobmanager` 容器
+4. `docker compose config` 校验并启动服务,按 healthcheck 等待 ES/Kafka/Logstash/Flink/Kibana
+5. WSL 内 `mvn clean package` 构建 jar,拷贝到 JobManager,并原地重建规则目录
+6. `--start-job` 下仅当检测作业不存在时提交,避免重复运行
 
-> ⚠️ **新机器上 deploy.sh 的 `docker cp` 会失败**(容器还不存在)。新机器流程:
-> 只跑前 3 步同步 + 第 4 步构建,跳过 `docker cp`;先 `docker compose up`,
-> 再拷 jar 进容器并提交(见 §8)。
+Logstash 的 healthcheck 同时检查 5000/5001/5002/5004/5005/5006 和 9600,
+避免出现“容器 healthy 但 pipeline 尚未监听”的假就绪。
 > 若 WSL 内没有 Java/Maven,改在 Windows 侧用 IDEA 自带 Maven 构建(见 §11),
 > 再 `docker cp /mnt/d/Project/SIEM/flink/target/detection-job-1.0.jar siem-flink-jobmanager:/opt/flink/`。
 
 ## 4. 启动基础设施
 
 ```bash
+# deploy.sh 已包含启动和就绪等待;手动启动时:
 cd ~/projects/mini-siem && docker compose up -d
-# 等待所有容器 Up(ES/Kibana/Logstash/Kafka/Flink ×2)
-docker ps
+docker compose ps
 ```
 
 ## 5. 创建 Kafka topic
@@ -89,7 +89,16 @@ docker exec siem-flink-jobmanager flink run -d /opt/flink/detection-job-1.0.jar
 > 更新 job:先 `flink list` 拿到 JobID → `flink cancel <JobID>` → 重新 `flink run`。
 > 因为已开 checkpointing + `committedOffsets`,重启**不会重放历史**(不会重复告警)。
 
-## 9. 验证链路
+## 9. 自动自验证
+
+```bash
+bash /mnt/d/Project/SIEM/infra/validate-deployment.sh
+```
+
+脚本以非 0 退出表示失败,检查 Compose 配置、6 个容器状态、健康检查、6 个 Logstash 输入端口、ES/Kibana/Flink API、Kafka topic 及检测作业 RUNNING。
+只启动数据面而未提交 Flink 作业时可用 `REQUIRE_DETECTION_JOB=0`。
+
+## 10. 验证链路
 
 ```bash
 # 发一条测试日志
@@ -104,7 +113,7 @@ curl -s "http://localhost:9200/siem-alerts/_count"
 bash /mnt/d/Project/SIEM/infra/simulator/brute-force-test.sh
 ```
 
-## 10. 常见故障
+## 11. 常见故障
 
 | 症状 | 原因 | 处理 |
 | --- | --- | --- |
@@ -115,8 +124,9 @@ bash /mnt/d/Project/SIEM/infra/simulator/brute-force-test.sh
 | Kibana dashboard 报 searchSourceJSON undefined | dashboard 对象缺 `kibanaSavedObjectMeta.searchSourceJSON` | 用 create_dashboards.py 重建 |
 | WSL 跑 `.sh` 报 `set: pipefail: invalid option name` | 脚本 CRLF 换行(仓库已强制 `*.sh` 用 LF) | 重新 checkout 或 `sed -i 's/\r$//'` |
 | 单机 24G 内存吃紧 | ES 4G + Flink TM | 调低 ES_JAVA_OPTS 或加内存 |
+| Logstash healthcheck 超时 | pipeline 配置或 ES/Kafka 依赖未就绪 | `docker compose logs logstash`,确认 5000-5006 均监听 |
 
-## 11. 构建命令参考
+## 12. 构建命令参考
 
 Windows 侧用 **IDEA 自带的 Maven**(已验证:3.9.16 + Java 21,依赖已缓存到 `C:\Users\1\.m2\repository`),
 绕开 `./mvnw`(bash 版)在 Windows 用 curl 下载 Maven 时的 schannel 证书吊销报错

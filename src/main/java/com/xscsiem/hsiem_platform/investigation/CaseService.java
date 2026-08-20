@@ -97,10 +97,7 @@ public class CaseService {
             if (a == null) {
                 throw new IllegalArgumentException("告警不存在: " + id);
             }
-            String st = str(a.get("alert.status"));
-            if (!"open".equals(st)) {
-                throw new IllegalArgumentException("告警非 open 状态(已处置或已结案): " + id);
-            }
+            validateAlertCanJoinCase(str(a.get("alert.status")), str(a.get("alert.case_id")), id);
             alertsDoc.add(a);
         }
         Set<Map<String, Object>> entities = extractEntities(alertsDoc);
@@ -125,20 +122,41 @@ public class CaseService {
             throw new IllegalStateException("案件序列化失败", e);
         }
         // 给案内告警写 alert.case_id 标记(聚合幂等根基:同批告警只入一案)
-        markAlertsInCase(alertIds.stream().distinct().toList(), caseId);
+        try {
+            markAlertsInCase(alertIds.stream().distinct().toList(), caseId);
+        } catch (RuntimeException e) {
+            // ES 没有跨索引事务:关联失败时删除已创建的空壳案件,并尽力清理已写入的标记。
+            try {
+                esCallCode("DELETE", "/siem-cases/_doc/" + caseId, null);
+            } catch (Exception cleanup) {
+                e.addSuppressed(cleanup);
+            }
+            throw e;
+        }
         return detail(caseId);
     }
 
-    /** 给告警写归属案件标记(并发竞态根治:聚合只取 case_id 为空的告警)。 */
+    /** 给告警写归属案件标记;部分失败时清理已成功标记并抛错,由调用方补偿案件文档。 */
     private void markAlertsInCase(List<String> alertIds, String caseId) {
+        List<String> marked = new ArrayList<>();
+        List<String> failed = new ArrayList<>();
         for (String id : alertIds) {
             try {
                 String body = "{\"doc\":{\"alert.case_id\":\"" + caseId + "\"}}";
-                esCallCode("POST", "/siem-alerts/_update/" + id + "?refresh=false", body);
+                int code = esCallCode("POST", "/siem-alerts/_update/" + id + "?refresh=false", body);
+                if (code / 100 != 2) {
+                    throw new IllegalStateException("ES 返回 " + code);
+                }
+                marked.add(id);
             } catch (Exception e) {
-                // 单条标记失败不阻塞建案(下次聚合会因 case_id 缺失重新关联,属可接受边界)
-                System.out.println("[CaseService] 告警标记案件失败 " + id + ": " + e.getMessage());
+                failed.add(id);
             }
+        }
+        if (!failed.isEmpty()) {
+            for (String id : marked) {
+                clearAlertCase(id);
+            }
+            throw new IllegalStateException("告警标记案件失败,已回滚成功标记: " + failed);
         }
     }
 
@@ -149,6 +167,7 @@ public class CaseService {
             throw new IllegalArgumentException("案件已结案,不能追加告警");
         }
         List<String> currentIds = strList(cur.get("alert_ids"));
+        List<String> originalIds = new ArrayList<>(currentIds);
         List<String> added = new ArrayList<>();
         List<String> rejected = new ArrayList<>();
         for (String id : new LinkedHashSet<>(alertIds)) {
@@ -171,7 +190,16 @@ public class CaseService {
             throw new IllegalArgumentException("以下告警非 open 或已属他案,追加被拒: " + rejected);
         }
         optimisticUpdate(caseId, currentIds, null, operator);
-        markAlertsInCase(added, caseId);
+        try {
+            markAlertsInCase(added, caseId);
+        } catch (RuntimeException e) {
+            try {
+                optimisticUpdate(caseId, originalIds, null, operator);
+            } catch (Exception rollback) {
+                e.addSuppressed(rollback);
+            }
+            throw e;
+        }
         return Map.of("added", added);
     }
 
@@ -206,6 +234,7 @@ public class CaseService {
             throw new IllegalArgumentException("结案必选 verdict(true_positive/false_positive/duplicate)");
         }
         Map<String, Object> cur = detail(caseId);
+        validateStatusTransition(str(cur.get("case.status")), status);
         String now = Instant.now().toString();
         if ("resolved".equals(status)) {
             // 结案联动:案内告警批量 closed + verdict(逐条乐观锁,复用 Story 04 update)
@@ -235,9 +264,39 @@ public class CaseService {
         }
         Map<String, Object> doc = new LinkedHashMap<>();
         doc.put("case.status", status);
+        if ("open".equals(status) && !"open".equals(str(cur.get("case.status")))) {
+            doc.put("case.verdict", null);
+            doc.put("case.closed_at", null);
+        }
         doc.put("case.updated_at", now);
         doc.put("case.operator", operator == null ? "anonymous" : operator);
         return optimisticUpdate(caseId, null, doc, operator);
+    }
+
+    /** 服务层案件状态机:允许结案后重开,禁止从调查中直接回到 open。 */
+    static void validateStatusTransition(String currentStatus, String targetStatus) {
+        if (targetStatus == null || !STATUSES.contains(targetStatus)) {
+            throw new IllegalArgumentException("案件状态非法(open/investigating/resolved): " + targetStatus);
+        }
+        String current = currentStatus == null ? "open" : currentStatus;
+        boolean allowed = switch (current) {
+            case "open" -> List.of("open", "investigating", "resolved").contains(targetStatus);
+            case "investigating" -> List.of("investigating", "resolved").contains(targetStatus);
+            case "resolved" -> List.of("resolved", "open").contains(targetStatus);
+            default -> false;
+        };
+        if (!allowed) {
+            throw new IllegalArgumentException("不允许从 " + current + " 流转到 " + targetStatus);
+        }
+    }
+
+    static void validateAlertCanJoinCase(String status, String caseId, String alertId) {
+        if (!"open".equals(status)) {
+            throw new IllegalArgumentException("告警非 open 状态(已处置或已结案): " + alertId);
+        }
+        if (caseId != null && !caseId.isBlank()) {
+            throw new IllegalArgumentException("告警已归属其他案件: " + alertId);
+        }
     }
 
     /** 删除案件(移出全部告警后可删空案)。 */

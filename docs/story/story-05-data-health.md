@@ -49,9 +49,9 @@
 | --- | --- | --- | --- |
 | FR-1 | 数据源健康指标(量/失败率/最后收到) | P1 | 按 log.source_id 聚合(story-01 注入 source 标记) |
 | FR-2 | 失败率趋势(最近 24h) | P1 | date_histogram(24h,1h bucket) |
-| FR-3 | 失败日志下钻(原文) | P1 | _parsefailure 事件查询(现状取 siem-events-*,raw 桶落地后再切) |
-| FR-4 | 失败率突升高亮(阈值) | P1 | 统一口径(U1):本 1h 失败率 **>5%**,或 本 1h/前一 1h 失败率环比 **≥2×**,且本 1h 失败事件数 **≥20** 才高亮(小样本不误高亮);**阈值可配置**:默认=上述口径,用户可在系统设置覆盖阈值(提供默认值,不强制 MVP 做配置 UI;设计上预留「阈值外置/可覆盖」扩展点,见 ADR-3) |
-| FR-5 | 未知日志兜底桶(siem-events-raw) | P2 | 解析失败日志路由;索引与模板属 P2 落地;留存=短留存 **30d**(U2,未知日志不进检测,无需 365d 合规留存) |
+| FR-3 | 失败日志下钻(原文) | P1 | 解析失败事件从 `siem-events-raw-*` 查询,并按 source_id 过滤 |
+| FR-4 | 失败率突升高亮(阈值) | P1 | 失败率 = 失败事件 / (成功事件 + 失败事件);总尝试数达到最小样本(默认 20)且失败率 **>5%**,或失败率环比 **≥2×** 且本 1h 失败数 **≥20** 才高亮;阈值从 `app.health.minimum-samples` 开始集中配置 |
+| FR-5 | 未知日志兜底桶(siem-events-raw) | P2 | 解析失败日志已路由到 raw 索引;留存=短留存 **30d**(U2,未知日志不进检测,无需 365d 合规留存) |
 
 ### 4.2 非功能需求
 
@@ -61,7 +61,7 @@
 | 权限/安全 | 鉴权:数据健康需登录态,角色按 08 §7 矩阵——admin/analyst 可读,ops 可写(停采/下线);失败下钻响应含原始日志(可能含敏感字段),仅授权角色可查;审计:停采/下线操作记录 operator + time(复用 `alert.operator` / `alert.status_updated_at` 同款模式) |
 | 异常恢复/回滚 | 健康指标为只读聚合,无写操作;P2 兜底路由改 logstash.conf 走 `--config.test_and_exit` 校验,失败保留旧配置、不 reload,禁止部分生效(见 §5.4/§7 回滚用例) |
 | 可观测 | failRate / 停采(lastSeen)/ 未知桶计数可查询;失败率突升触发高亮有日志;P2 兜底路由生效后可验证 raw 桶事件量 |
-| 可维护性 | 阈值(>5% / ≥2× / ≥20 / 停采 2× 间隔 默认 15min)集中一处配置、为**唯一可覆盖来源**(用户可在系统设置覆盖阈值,默认逻辑见 FR-4),不散落硬编码;枚举/字段取自 _template §4.3 与 story-01,不自创 |
+| 可维护性 | 阈值(>5% / ≥2× / 最小样本 20 / 停采 2× 间隔 默认 15min)集中一处配置、为**唯一可覆盖来源**;枚举/字段取自 _template §4.3 与 story-01,不自创 |
 
 ### 4.3 枚举与字段字典(全 story 唯一取值来源)
 
@@ -70,7 +70,7 @@
 | 字段 | 取值集合 | 权威来源 | 说明 |
 | --- | --- | --- | --- |
 | `log.source_id` / `log.source_name` | 数据源 uuid / 名称(自由字符串) | story-01 落地(input 内 add_field 注入) | FR-1/FR-3 按 `log.source_id` 聚合/下钻;字段名与 story-01 保持一致 |
-| `tags` | `_parsefailure`(含 `_grokparsefailure` 等) | Logstash 解析失败标记(已有) | failRate 分子 = 近 1h 该源 tags=_parsefailure 事件数;失败下钻查询条件 |
+| `tags` | `_parsefailure`(含 `_grokparsefailure` 等) | Logstash 解析失败标记(已有) | raw 桶中的失败事件作为 failRate 分子;失败下钻查询条件 |
 | `log-source.status` | `creating` / `active` / `stopped` / `failed` | _template §4.3,story-01 落地 | 停采卡片状态参考(引用,不重定义) |
 
 ## 5. 后端架构
@@ -83,11 +83,11 @@
 | 组件 | 职责 |
 | --- | --- |
 | `DataHealthService`(新) | 按数据源聚合事件量/失败率 |
-| 存储 | `siem-events-*`(聚合/失败下钻)、`siem-events-raw`(未知桶,P2) |
+| 存储 | `siem-events-*`(成功事件聚合)、`siem-events-raw-*`(失败事件下钻) |
 
 ### 5.2 API 契约
 ```
-GET /api/data-health/sources                 → 200 [{sourceId, sourceName, events1h, events24h, failRate, lastSeen}]
+GET /api/data-health/sources                 → 200 [{sourceId, sourceName, events1h, events24h, totalEvents1h, failRate, lastSeen}]
 GET /api/data-health/sources/{id}/trend      → 200 24h 趋势
 GET /api/data-health/sources/{id}/failures?size=50 → 200 最近失败日志(原文)
 ```
@@ -102,7 +102,8 @@ GET /api/data-health/sources → 200
     "sourceName": "web-nginx-01",          // string,必填,log.source_name
     "events1h": 1234,                      // integer,必填,近 1h 事件量
     "events24h": 28901,                    // integer,必填,近 24h 事件量
-    "failRate": 0.013,                     // float,必填,近 1h 失败率(0~1,0.013=1.3%)
+    "totalEvents1h": 1300,                 // integer,近 1h 成功+失败总尝试数
+    "failRate": 1.3,                       // number,近 1h 失败率百分比(1.3=1.3%)
     "lastSeen": "2026-08-16T16:20:00Z"     // string(ISO8601),必填,最后收到事件时间
   }
 ]
@@ -138,11 +139,11 @@ GET /api/data-health/sources → 200
 ## 6. 数据流实现
 
 ```
-① 健康指标:ES terms 聚合(log.source_id)+ 失败率 → 卡片;failRate = 近 1h 该源 tags=_parsefailure 事件数 / 该源事件总数
+① 健康指标:ES terms 聚合(log.source_id)并合并 events/raw 两个索引;failRate = 近 1h 失败事件数 / (成功事件数 + 失败事件数),仅有失败事件的源也要返回
 ② 趋势:date_histogram(24h,1h bucket)→ 折线
-③ 失败下钻:query tags=_parsefailure + log.source_id → 原始日志(现状取 siem-events-*,_parsefailure 事件带原文;raw 桶落地后再切)
+③ 失败下钻:query `siem-events-raw-*` + log.source_id → 原始日志
 ④ 停采判定:lastSeen 超过 2× 该源正常到达间隔(默认 15min)无新事件 → 卡片异常
-⑤ 兜底路由(P2):logstash.conf output 加 if [tags] 含 _parsefailure → siem-events-raw 分支(示例见下);`logstash --config.test_and_exit` 校验通过后重启;siem-events-raw 索引与模板属 P2 落地
+⑤ 兜底路由:logstash.conf output 加 if [tags] 含 _parsefailure → siem-events-raw 分支;配置校验通过后重启
 
 ```
 
@@ -173,7 +174,7 @@ output {
 - **正常**:**Given** 接入了一个数据源并流入日志 **When** 打开数据健康 **Then** 该源显示事件量增长、失败率正常。
 - **正常**:**Given** 某源解析失败率高 **When** 下钻 **Then** 看到失败日志原文,可跳转补模板。
 - **异常**:**Given** 数据源停采 **When** 查看 **Then** 事件量下降、lastSeen 超过 2× 该源正常到达间隔(默认 15min)无新事件,卡片提示异常。
-- **边界(FR-4 阈值)**:**Given** 某源近 1h 失败率 10%(>5%)但失败事件数仅 5 条(<20) **When** 查看健康卡片 **Then** 不高亮(小样本不误高亮);某源本 1h 失败率 8% 且环比 3×、失败事件数 30 条 **Then** 高亮。
+- **边界(FR-4 阈值)**:**Given** 某源近 1h 共 6 次尝试、失败 5 次 **When** 查看健康卡片 **Then** 不高亮(总样本不足);某源近 1h 共 100 次尝试、失败 10 次 **Then** 高亮。
 - **边界**:**Given** 无任何数据源 **When** 打开 **Then** 显示空态 + 引导接入。
 - **异常/回滚(P2)**:**Given** infra logstash.conf 已含 `_parsefailure` 路由分支并生效 **When** 提交一份非法 output 路由配置(如 index 名非法) **Then** `logstash --config.test_and_exit` 校验失败,旧 conf 保留、logstash 不 reload,`siem-events-*` 采集不受影响(全生效或全回滚)。
 
@@ -187,7 +188,7 @@ output {
 ## 9. 开放问题
 
 - ~~数据源维度标识~~ **已决定**:由 story-01 生成 Logstash input 时 add_field 注入 `log.source_id`/`log.source_name`,FR-1/FR-3 按 `log.source_id` 聚合/下钻(见 ADR-1)。
-- ~~失败率阈值与突增判定口径~~ **已定**:failRate = 近 1h 该源 tags=_parsefailure 事件数 / 该源事件总数;突升高亮统一口径(U1):本 1h 失败率 **>5%**,或 本 1h/前一 1h 环比 **≥2×**,且本 1h 失败事件数 **≥20**。
+- ~~失败率阈值与突增判定口径~~ **已定**:failRate = 近 1h 失败事件 / (成功事件 + 失败事件);本 1h 总尝试数达到最小样本(默认 20)且失败率 **>5%**,或失败率环比 **≥2×** 且失败数 **≥20**。
 
 ## 10. 设计决策(ADR 式)
 
@@ -197,14 +198,14 @@ output {
 - **取舍**:A 在采集入口注入,所有事件(含解析失败事件)都带标识,聚合/下钻不依赖解析成功;source_id 用 uuid 稳定、不随改名变化。B 依赖模板、各源不统一,失败事件可能无字段; C port 与源非一一对应、迁移后失真。
 - **决定**:**A:数据源标识由 story-01 提供**(生成配置时 input 内 `add_field` 写 `log.source_id=<uuid>` + `log.source_name`),字段名两 story 对齐;本 story 全部按 `log.source_id` 聚合/下钻(FR-1/FR-3)。
 
-### ADR-2 未知日志兜底路由(siem-events-raw)为 P2
+### ADR-2 未知日志兜底路由(siem-events-raw)
 - **背景**:解析失败事件现状与正常事件同桶(`siem-events-*`),会污染"正常事件量/失败率"的度量纯净性;raw 桶需单独索引模板与路由。
 - **选项**:A. logstash.conf output 按 `tags` 条件路由 `_parsefailure` → `siem-events-raw`,其余维持现状双写(ES 事件索引 + Kafka)/ B. 保持现状(Kafka 全量 + `siem-events-*`)。
 - **取舍**:A 让失败事件与正常事件分桶,健康指标纯净化;raw 桶保留原文可回溯、可补模板(对齐 06 §4.5);未知日志**不进检测引擎**(不进 Kafka),无合规留存需求 → 留存短 **30d**(U2);代价=需新增 raw 索引模板 + 改 output 路由,B 现状零改动但失败事件混在事件桶、度量被污染。
-- **决定**:**A(logstash.conf output 条件路由,`_parsefailure` → `siem-events-raw`)列为 P2 落地项**(story-05 FR-5);改前必须 `logstash --config.test_and_exit` 校验 + 保留旧配置回滚(§5.4);MVP 失败下钻仍取 `siem-events-*` 的 `_parsefailure` 事件(带原文)。
+- **决定**:**A(logstash.conf output 条件路由,`_parsefailure` → `siem-events-raw`)已落地**(story-05 FR-5);配置必须经过 `logstash --config.test_and_exit` 校验并保留旧配置回滚;健康聚合合并正常桶和 raw 桶。
 
 ### ADR-3 失败率突升高亮阈值 =「默认值 + 用户可配置」(FR-4)
-- **背景**:FR-4 高亮口径(本 1h 失败率 >5% 或 环比 ≥2× 且失败事件数 ≥20)是产品定的默认口径,但不同数据源对失败的容忍度不同(核心交易日志 vs 低敏采集),固定硬编码无法适配;业界 SIEM 普遍支持可调阈值 / 用户自定义规则。
+- **背景**:FR-4 高亮口径(最小样本 + 失败率 >5% 或 环比 ≥2× 且失败数 ≥20)是产品定的默认口径,但不同数据源对失败的容忍度不同(核心交易日志 vs 低敏采集),固定硬编码无法适配;业界 SIEM 普遍支持可调阈值 / 用户自定义规则。
 - **选项**:A. 阈值硬编码在代码(现状)/ B. 阈值集中到可配置来源(默认值 + 用户可覆盖),MVP 只落默认、配置 UI 后置 / C. 为每个数据源独立配置阈值。
 - **取舍**:A 违反「阈值集中一处、不散落硬编码」的可维护性要求(§4.2);C 适配性最好但 MVP 成本高、需逐源管理; B 满足"默认逻辑先行 + 预留可覆盖扩展点",对齐业界 SIEM 可调阈值能力,代价=配置 UI 非 MVP,需保证默认值即生效逻辑。
-- **决定**:**B:FR-4 阈值提供默认值(本 1h 失败率 >5% 或 环比 ≥2×,且失败事件数 ≥20),用户可在系统设置覆盖**;MVP 只落默认逻辑(§6 ③ 口径),配置 UI 不强制 MVP,但设计上预留「阈值外置/可覆盖」扩展点;阈值唯一来源集中(§4.2 可维护性),不散落硬编码。
+- **决定**:**B:FR-4 阈值提供默认值(最小样本 20、失败率 >5% 或 环比 ≥2× 且失败数 ≥20),当前默认值集中在 `app.health.minimum-samples`;配置 UI 后置,不散落硬编码。

@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
@@ -46,5 +47,27 @@ class CaseServiceTest {
                 () -> svc.updateStatus("x", "resolved", null, "alice"));
         assertThrows(IllegalArgumentException.class,
                 () -> svc.updateStatus("x", "resolved", "yes", "alice"));
+    }
+
+    @Test
+    void statusTransition_rejectsReverseMove() {
+        assertThrows(IllegalArgumentException.class,
+                () -> CaseService.validateStatusTransition("investigating", "open"));
+    }
+
+    @Test
+    void statusTransition_allowsResolveAndReopen() {
+        assertDoesNotThrow(() -> CaseService.validateStatusTransition("open", "investigating"));
+        assertDoesNotThrow(() -> CaseService.validateStatusTransition("investigating", "resolved"));
+        assertDoesNotThrow(() -> CaseService.validateStatusTransition("resolved", "open"));
+    }
+
+    @Test
+    void alertJoin_rejectsAlreadyAssignedAlert() {
+        assertDoesNotThrow(() -> CaseService.validateAlertCanJoinCase("open", null, "a"));
+        assertThrows(IllegalArgumentException.class,
+                () -> CaseService.validateAlertCanJoinCase("open", "case-1", "a"));
+        assertThrows(IllegalArgumentException.class,
+                () -> CaseService.validateAlertCanJoinCase("closed", null, "a"));
     }
 }

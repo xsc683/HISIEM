@@ -169,7 +169,14 @@ public class DetectionJob {
                 windowed = keyed.window(TumblingEventTimeWindows.of(Duration.ofMinutes(wr.getWindowMinutes())))
                         .process(new WindowRuleFunction(wr));
             }
-            windowStreams.add(windowed.uid("window-" + wr.getId()));
+            // 滑动窗口会对同一批事件产生多个相邻窗口命中;按规则+实体抑制,
+            // 保留边界覆盖能力,同时避免 ES 中为同一活跃攻击创建重复告警文档。
+            windowed.uid("window-" + wr.getId());
+            windowStreams.add(windowed
+                    .keyBy(alert -> WindowAlertSuppressor.suppressionKey(alert, wr.getKeyField()))
+                    .process(new WindowAlertSuppressor(
+                            Duration.ofMinutes(wr.getAlertSuppressionMinutes())))
+                    .uid("window-alert-suppression-" + wr.getId()));
         }
         DataStream<String> windowAlerts = windowStreams.isEmpty()
                 ? null : windowStreams.stream().reduce((a, b) -> a.union(b)).get();
@@ -298,10 +305,12 @@ public class DetectionJob {
         try {
             Map<String, Object> alert = ALERT_MAPPER.readValue(element, Map.class);
             String ruleId = String.valueOf(alert.getOrDefault("alert.rule_id", "unknown"));
+            Object declaredEntity = alert.get("alert.entity");
             Object ip = alert.get("source.ip");
             Object user = alert.get("user.name");
-            String entity = ip != null ? String.valueOf(ip)
-                    : (user != null ? String.valueOf(user) : "unknown");
+            String entity = declaredEntity != null ? String.valueOf(declaredEntity)
+                    : (ip != null ? String.valueOf(ip)
+                    : (user != null ? String.valueOf(user) : "unknown"));
             String ts = String.valueOf(alert.getOrDefault("@timestamp", "unknown"));
             return sha1Hex(ruleId + "|" + entity + "|" + ts);
         } catch (Exception e) {

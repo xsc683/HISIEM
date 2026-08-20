@@ -54,6 +54,9 @@ public class WindowRuleFunction extends ProcessWindowFunction<Event, String, Str
         alert.put("alert.severity", rule.getSeverity());
         alert.put("alert.description", rule.getDescription());
         alert.put("alert.risk_score", rule.getRiskScore());
+        // 窗口规则的分组字段可能是 source.ip/host.name/自定义字段,
+        // 显式记录实体供下游去重和 ES 确定性 _id 使用。
+        alert.put("alert.entity", key);
         alert.put("rule.tags", rule.getTags());
         alert.put("rule.status", rule.getStatus());
         alert.put("rule.version", rule.getVersion());

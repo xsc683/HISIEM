@@ -119,7 +119,7 @@ output {
 - **F4** 全算子 `.uid("...")`(`kafka-source`→`es-sink` 共 11 处),支持 savepoint 平滑升级(7e86478)
 - **F5** 三支窗口(暴力破解/CEP/基线)均 `.withIdleness(60s)`,日志暂停时窗口仍按时关闭(b284fa3)
 - **F6** 单事件规则后接 `AlertSuppressor`:keyBy(rule_id + 实体)+ 处理时间对齐 60min 桶 + `registerProcessingTimeTimer` + `onTimer` 产最终 count 告警(b284fa3;边界见 §3.3 注)
-- **F7** 暴力破解仍为事件时间 tumbling 5min(≥5),跨窗口边界盲区保留为优化项(参数建议见 §3.3 F7 注)
+- **F7** 暴力破解为事件时间 sliding 5min/1min(≥5),并在窗口输出后按规则+实体做显式告警抑制,避免重叠窗口重复建档
 - **F8** `flink-cep` 攻击链规则 `rule-ssh-bruteforce-success-001`(`BruteforceSuccessFunction`)已落地,含单测(da1a0f6)
 
 ### 3.3 落地项
@@ -132,12 +132,12 @@ output {
 | F4 | 全算子 `.uid("...")` + 一次 cancel→restore 演练 | DetectionJob | P0 | ✅ 已落地(.uid 全算子,7e86478;演练 2026-08-16:savepoint 恢复 RUNNING 且检测正常) |
 | F5 | 窗口分支 `.withIdleness(60s)`;评估 `allowedLateness`/迟到侧输出 | DetectionJob | P1 | ✅ 已落地(withIdleness 60s,b284fa3);`allowedLateness`/迟到侧输出 ⏳ 评估 |
 | F6 | 单事件规则后接 suppression:keyBy(rule_id + 实体)+ 处理时间对齐 60min 桶 + `registerProcessingTimeTimer` + `onTimer` 产最终 count(边界见下方注) | DetectionFunction→`AlertSuppressor` | P0 | ✅ 已落地(b284fa3;首个命中即发 count=1,窗口内累加 `alert.deduplicated_count` 不新建) |
-| F7 | 暴力破解 tumbling→sliding(5min/1min)或加 early trigger(修边界盲区) | DetectionJob/WindowRule | P2 | ✅ 已实现(2026-08-16:rule-ssh-brute-force 加 `slidingMinutes: 1`,DetectionJob 按 slidingMinutes 分支选 SlidingEventTimeWindows(5min/1min);单测锁定) |
+| F7 | 暴力破解 tumbling→sliding(5min/1min),并治理重叠窗口重复告警 | DetectionJob/WindowRule/WindowAlertSuppressor | P2 | ✅ 已实现(2026-08-20:规则增加 `alertSuppressionMinutes: 5`;窗口输出后按规则+实体抑制,最终以首条告警 ID 更新累计数;含算子 Harness 回归测试) |
 | F8 | 引入 `flink-cep`(锁定 2.1.0 坐标 + 单测),攻击链 Pattern 规则 | 新增 | P1 | ✅ 已落地(da1a0f6;`rule-ssh-bruteforce-success-001` + 单测) |
 
 > **F6 抑制实现边界(已实现,权衡取舍)**:`AlertSuppressor` 用处理时间对齐 60min 桶(`(now/60min)*60min`),已知边界:恰在整点前后跨桶的事件(如 11:59:59 与 12:00:01)会被计入不同窗口、各发一条告警。这是「实现简单 + 处理时间不依赖事件时间、与事件时间窗口解耦」的取舍。若需「自首次命中时间起算的滑动抑制(TTL)」,列为 P1 备选(`ValueState` + `StateTtlConfig`),上线前需评估跨桶语义对分析师的影响。
 >
-> **F7 参数建议(✅ 已落地,2026-08-16)**:sliding 窗口 5min、滑动步长 1min(对应原 tumbling 5min≥5),状态约 tumbling 的 ×5。取舍:sliding 修复「4 次在 4:59 + 1 次在 5:01 不触发」的边界盲区,代价是状态/输出量上升。验收口径:模拟「同一 IP 在相邻两个 tumbling 边界各发 3 次失败」应产出 1 条告警;且告警总量不因 sliding 明显上升(仍由抑制层收敛)。**注意**:sliding 窗口滑动时,同一批命中可能落入相邻滑动窗口各触发一次 → 告警量上升,由 60min 抑制(`AlertSuppressor`)按实体收敛。
+> **F7 参数建议(✅ 已落地,2026-08-20)**:sliding 窗口 5min、滑动步长 1min(对应原 tumbling 5min≥5),状态约 tumbling 的 ×5。取舍:sliding 修复「4 次在 4:59 + 1 次在 5:01 不触发」的边界盲区,代价是状态/输出量上升。验收口径:模拟「同一 IP 在相邻两个 tumbling 边界各发 3 次失败」应产出 1 条告警;且同一 source.ip 在 5 分钟抑制期内只保留一个 ES 文档,`alert.deduplicated_count` 等于被合并的窗口数。窗口抑制使用处理时间表达通知收敛,事件统计仍由事件时间窗口决定。
 
 > 状态观测:盯 Web UI 的 checkpoint 大小/时延与 state 增长;状态 >~1GB 或 GC 明显才切 RocksDB(统一 savepoint 格式支持平滑切换)。
 

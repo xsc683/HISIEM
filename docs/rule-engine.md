@@ -8,7 +8,8 @@ Flink 检测引擎由两类规则组成:**单事件规则**(逐事件匹配)和*
 DetectionJob
   ├─ KafkaSource(siem-events) → EventParser.parseEvent → Event(POJO)
   ├─ DetectionFunction(单事件规则)→ 告警 JSON
-  └─ 窗口规则:assignTimestampsAndWatermarks → keyBy → window → WindowRuleFunction → 告警 JSON
+  └─ 窗口规则:assignTimestampsAndWatermarks → keyBy → window → WindowRuleFunction
+       → WindowAlertSuppressor → 告警 JSON
   └─ union → ES sink(siem-alerts)
 ```
 
@@ -23,8 +24,9 @@ DetectionJob
 | `Rule` | 单事件规则:元数据 + Condition |
 | `RuleRegistry` | 单事件规则库(集中注册) |
 | `DetectionFunction` | 逐条事件评估所有单事件规则 |
-| `WindowRule` | 窗口规则:keyField + condition + windowMinutes + threshold |
+| `WindowRule` | 窗口规则:keyField + condition + windowMinutes + threshold + alertSuppressionMinutes |
 | `WindowRuleFunction` | 窗口关闭时统计命中数,≥阈值生成关联告警 |
+| `WindowAlertSuppressor` | 收敛重叠滑动窗口;抑制期内使用首条告警 ID 更新累计数 |
 
 ## 2. 加一条单事件规则
 
@@ -68,6 +70,11 @@ DataStream<String> windowAlerts = parsed
 
 > 事件时间窗口需要 watermark 越过窗口边界才关闭。模拟测试时要发一条时间戳在窗口之后的事件推进 watermark(参考 `infra/simulator/brute-force-test.sh`)。
 
+窗口规则可在 YAML 中声明 `alertSuppressionMinutes`。它只治理告警输出频率,不改变事件时间窗口的命中逻辑。
+例如 `rule-ssh-brute-force-001` 使用 5 分钟滑动窗口和 5 分钟告警抑制:
+相邻滑动窗口可以继续覆盖边界,但同一 `source.ip` 在抑制期内只保留一个 ES 文档,
+并通过 `alert.deduplicated_count` 观察被合并的窗口数。
+
 ## 4. 事件字段参考
 
 规则条件匹配的是**扁平点分字段**,常见字段:
@@ -88,6 +95,7 @@ DataStream<String> windowAlerts = parsed
 
 - `RuleEngineTest`:单事件规则条件、EventParser 扁平化、DetectionFunction 输出
 - `WindowRuleTest`:窗口告警结构、条件匹配、时间戳提取
+- `WindowAlertSuppressorTest`:重叠窗口合并、稳定首条时间/ES ID、抑制期结束后的新告警
 
 ## 6. 当前规则清单
 

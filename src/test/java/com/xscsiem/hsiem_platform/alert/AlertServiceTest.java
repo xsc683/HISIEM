@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
@@ -47,5 +48,23 @@ class AlertServiceTest {
     void batch_invalidVerdict_rejected() {
         assertThrows(IllegalArgumentException.class,
                 () -> svc.batch(List.of("a"), "acknowledged", "yes", "alice"));
+    }
+
+    @Test
+    void statusTransition_rejectsReverseMoveAndClosingWithoutVerdict() {
+        assertThrows(IllegalArgumentException.class,
+                () -> AlertService.validateStatusTransition("acknowledged", "open", null, null));
+        assertThrows(IllegalArgumentException.class,
+                () -> AlertService.validateStatusTransition("investigating", "closed", null, null));
+    }
+
+    @Test
+    void statusTransition_allowsTriageAndReopenPaths() {
+        assertDoesNotThrow(() -> AlertService.validateStatusTransition(
+                "open", "acknowledged", null, null));
+        assertDoesNotThrow(() -> AlertService.validateStatusTransition(
+                "open", "closed", null, "false_positive"));
+        assertDoesNotThrow(() -> AlertService.validateStatusTransition(
+                "closed", "open", "false_positive", null));
     }
 }

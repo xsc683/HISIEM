@@ -39,7 +39,8 @@ public class RuleBuilder {
                 d.tags == null ? List.of() : d.tags,
                 d.status == null ? "experimental" : d.status,
                 d.version == null ? "1.0" : d.version,
-                d.slidingMinutes);
+                d.slidingMinutes,
+                d.alertSuppressionMinutes);
     }
 
     public RuleMeta toMeta(RuleDecl d) {

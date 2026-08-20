@@ -79,6 +79,12 @@ public class AlertService {
         if (status == null && verdict == null) {
             throw new IllegalArgumentException("status 或 verdict 至少给一个");
         }
+        Map<String, Object> cur = esGet("/siem-alerts/_doc/" + id);
+        if (cur == null) {
+            throw new NotFoundException("告警不存在: " + id);
+        }
+        validateStatusTransition(str(cur.get("alert.status")), status,
+                str(cur.get("alert.analyst_verdict")), verdict);
         Map<String, Object> doc = new LinkedHashMap<>();
         doc.put("alert.status_updated_at", Instant.now().toString());
         doc.put("alert.operator", operator == null ? "anonymous" : operator);
@@ -88,7 +94,11 @@ public class AlertService {
         if (verdict != null) {
             doc.put("alert.analyst_verdict", verdict);
         }
-        return optimisticUpdate(id, doc);
+        if ("open".equals(status) && !"open".equals(str(cur.get("alert.status"))) && verdict == null) {
+            // 重开意味着重新分诊,清掉旧 verdict,避免 FP/TP 统计继续使用过时结论。
+            doc.put("alert.analyst_verdict", null);
+        }
+        return optimisticUpdate(id, doc, cur);
     }
 
     /** 批量处置:批量 close 前置 verdict;逐条乐观锁更新,收集成功/失败。 */
@@ -102,24 +112,49 @@ public class AlertService {
         if (verdict != null && !VERDICTS.contains(verdict)) {
             throw new IllegalArgumentException("verdict 非法: " + verdict);
         }
-        if ("closed".equals(status)) {
-            // 前置校验(数据驱动):所选告警均已打 verdict,未打→阻止
-            List<String> missing = new ArrayList<>();
+        Map<String, Map<String, Object>> currentById = new LinkedHashMap<>();
+        List<String> missingVerdict = new ArrayList<>();
+        List<String> invalidTransitions = new ArrayList<>();
+        if (status != null) {
+            // 所有状态先校验,确保批量操作不会在发现非法项后留下部分写入。
             for (String id : ids) {
                 Map<String, Object> a = esGet("/siem-alerts/_doc/" + id);
-                if (a == null || a.get("alert.analyst_verdict") == null) {
-                    missing.add(id);
+                currentById.put(id, a);
+                if (a == null) {
+                    if ("resolved".equals(status) || "closed".equals(status)) {
+                        missingVerdict.add(id);
+                    }
+                    continue;
+                }
+                if (("resolved".equals(status) || "closed".equals(status))
+                        && verdict == null && a.get("alert.analyst_verdict") == null) {
+                    missingVerdict.add(id);
+                }
+                try {
+                    validateStatusTransition(str(a.get("alert.status")), status,
+                            str(a.get("alert.analyst_verdict")), verdict);
+                } catch (IllegalArgumentException e) {
+                    invalidTransitions.add(id + ": " + e.getMessage());
                 }
             }
-            if (!missing.isEmpty()) {
-                throw new IllegalArgumentException("以下告警未打 verdict,请先批量补: " + missing);
-            }
+        }
+        if (!missingVerdict.isEmpty()) {
+            throw new IllegalArgumentException("以下告警未打 verdict,请先批量补: " + missingVerdict);
+        }
+        if (!invalidTransitions.isEmpty()) {
+            throw new IllegalArgumentException("告警状态流转非法: " + invalidTransitions);
         }
         int succeeded = 0;
         List<String> failed = new ArrayList<>();
         for (String id : ids) {
             try {
-                optimisticUpdate(id, buildDoc(status, verdict, operator));
+                Map<String, Object> current = currentById.get(id);
+                Map<String, Object> doc = buildDoc(status, verdict, operator);
+                if ("open".equals(status) && current != null
+                        && !"open".equals(str(current.get("alert.status"))) && verdict == null) {
+                    doc.put("alert.analyst_verdict", null);
+                }
+                optimisticUpdate(id, doc, current);
                 succeeded++;
             } catch (Exception e) {
                 failed.add(id);
@@ -178,9 +213,48 @@ public class AlertService {
         return doc;
     }
 
+    /**
+     * 服务层告警状态机。允许设计文档中的快捷结案和复查重开路径,
+     * 但禁止跳过调查阶段的逆向流转；resolved/closed 必须有有效 verdict。
+     */
+    static void validateStatusTransition(String currentStatus, String targetStatus,
+                                         String currentVerdict, String requestedVerdict) {
+        if (targetStatus == null) {
+            return;
+        }
+        String current = currentStatus == null ? "open" : currentStatus;
+        if (!STATUSES.contains(current)) {
+            throw new IllegalArgumentException("当前状态非法: " + current);
+        }
+        boolean allowed = switch (current) {
+            case "open" -> List.of("open", "acknowledged", "resolved", "closed").contains(targetStatus);
+            case "acknowledged" -> List.of("acknowledged", "investigating", "closed").contains(targetStatus);
+            case "investigating" -> List.of("investigating", "resolved", "closed").contains(targetStatus);
+            case "resolved", "closed" -> List.of(current, "open").contains(targetStatus);
+            default -> false;
+        };
+        if (!allowed) {
+            throw new IllegalArgumentException("不允许从 " + current + " 流转到 " + targetStatus);
+        }
+        String effectiveVerdict = requestedVerdict == null ? currentVerdict : requestedVerdict;
+        if (("resolved".equals(targetStatus) || "closed".equals(targetStatus))
+                && (effectiveVerdict == null || !VERDICTS.contains(effectiveVerdict))) {
+            throw new IllegalArgumentException("结案必选 verdict(true_positive/false_positive/duplicate)");
+        }
+    }
+
+    private static String str(Object value) {
+        return value == null ? null : String.valueOf(value);
+    }
+
     /** 乐观锁更新:先 GET 拿 _seq_no/_primary_term,再 _update 带 if_seq_no/if_primary_term,冲突 409。 */
     private Map<String, Object> optimisticUpdate(String id, Map<String, Object> doc) {
         Map<String, Object> cur = esGet("/siem-alerts/_doc/" + id);
+        return optimisticUpdate(id, doc, cur);
+    }
+
+    private Map<String, Object> optimisticUpdate(String id, Map<String, Object> doc,
+                                                  Map<String, Object> cur) {
         if (cur == null) {
             throw new NotFoundException("告警不存在: " + id);
         }

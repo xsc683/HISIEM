@@ -78,6 +78,10 @@ class RuleLintTest {
                         assertTrue(d.slidingMinutes <= d.windowMinutes,
                                 d.id + " slidingMinutes 不应大于 windowMinutes");
                     }
+                    if (d.alertSuppressionMinutes != null) {
+                        assertTrue(d.alertSuppressionMinutes > 0,
+                                d.id + " alertSuppressionMinutes 应 > 0");
+                    }
                 }
                 case "cep" -> {
                     assertNotNull(d.keyField, d.id + " cep 缺 keyField");

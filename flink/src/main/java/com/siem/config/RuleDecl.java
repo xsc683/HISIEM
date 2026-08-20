@@ -45,6 +45,8 @@ public class RuleDecl implements Serializable {
     public Long windowMinutes;
     /** 滑动步长(分钟);缺省 = tumbling 固定窗口;>0 = 滑动窗口(修边界盲区,F7)。 */
     public Long slidingMinutes;
+    /** 窗口告警抑制时长(分钟);缺省由 WindowRule 回退为 windowMinutes。 */
+    public Long alertSuppressionMinutes;
     public Integer threshold;
     // ---- cep:序列参数 ----
     public CepDecl cep;

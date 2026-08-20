@@ -10,7 +10,9 @@
 | `kafka/` | topic 规划(单 topic `siem-events` + `event.action` 区分) | ✅ |
 | `kibana/` | dashboard 创建脚本 + NDJSON 导出 | ✅ |
 | `simulator/` | 日志模拟器(单条 + 暴力破解测试) | ✅ |
+| `validate-deployment.sh` | Docker Desktop + WSL2 部署只读自验证 | ✅ |
 
-部署流程:`改仓库 → wsl bash infra/deploy.sh → 重启受影响容器 → flink run 提交 job`。
+部署流程:`改仓库 → wsl bash infra/deploy.sh --start-job → bash infra/validate-deployment.sh`。
+`deploy.sh` 按健康状态等待依赖;重复执行不会重复提交检测作业。若 JAR/规则有变且旧作业仍在运行,先 cancel 旧 Job 再用 `--start-job` 提交。
 
 > 新机器完整部署步骤见 [docs/deployment.md](../docs/deployment.md)。

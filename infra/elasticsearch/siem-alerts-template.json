@@ -24,6 +24,7 @@
         "alert.rule_id": { "type": "keyword" },
         "alert.rule_name": { "type": "keyword" },
         "alert.type": { "type": "keyword" },
+        "alert.entity": { "type": "keyword" },
         "alert.severity": { "type": "keyword" },
         "alert.risk_score": { "type": "integer" },
         "alert.deduplicated_count": { "type": "integer" },

@@ -29,14 +29,14 @@
 ├──────────────────────────────────────────────────────────────────────┤
 │ 计算层  Flink 2.1  DetectionJob                                        │
 │   - 规则引擎(6 条:3 单事件 + 窗口 + CEP + 基线)  [已实现]              │
-│   - 窗口规则(暴力破解,tumbling 5min ≥5,事件时间)  [已实现]             │
+│   - 窗口规则(暴力破解,sliding 5min/1min ≥5,事件时间)  [已实现]         │
 │   - CEP 序列规则(攻击链)  [已实现]                                     │
 │   - 基线异常 BaselineAnomalyFunction(24h μ+3σ)  [已实现]               │
-│   - 告警抑制 AlertSuppressor:keyBy(rule_id+实体)+处理时间 60min 对齐桶  [已实现] │
+│   - 告警抑制:单事件 AlertSuppressor + 窗口 WindowAlertSuppressor     [已实现] │
 │   - 告警写入:确定性 _id(幂等) + 持久化 checkpoint  [已实现]            │
 │   - 富化:GeoIP at-ingest(6524fb6)+ TI 查表(664f6a6)  [已实现;告警侧异步富化 P2 未做]│
 │   - 实体风险聚合(siem-entity-risk + entity-risk.py)  [已实现]          │
-│   - 窗口演进:sliding / early trigger  [P2]                             │
+│   - 窗口治理:sliding 覆盖边界 + alertSuppressionMinutes 收敛重复     [已实现] │
 │   (后续:alert-service(Spring Boot 占位工程)→ 实体风险聚合/案件迁移目标)│
 ├──────────────────────────────────────────────────────────────────────┤
 │ 缓冲层  Kafka 3.8                                                      │
@@ -111,8 +111,8 @@ SSH 日志
 | 可靠性配置 | 显式 EXACTLY_ONCE、`timeout=5min`、`tolerable-failed-checkpoints=3~5`、restart-strategy exponential-delay | P0 |
 | savepoint 能力 | 全算子 `.uid("...")` | P0 |
 | idle 处理 | 窗口分支 `.withIdleness(60s)`(日志暂停时窗口仍能关闭) | P1 |
-| 去重抑制 | `AlertSuppressor`:keyBy(rule_id + 实体)+ 处理时间 60min 对齐桶(`(now/windowMillis)*windowMillis`)+ `registerProcessingTimeTimer` + `onTimer` 产最终告警;首个命中即发 count=1 告警,窗口内后续命中累加 `alert.deduplicated_count` 不新建 | ✅已实现 |
-| 窗口演进 | 暴力破解 tumbling→sliding(5min/1min 步进)或加 early trigger | P2 |
+| 去重抑制 | 单事件 `AlertSuppressor` 保持 60min 抑制;窗口 `WindowAlertSuppressor` 按规则声明的 keyField + 实体抑制重叠窗口,用首条告警 ID 更新 `event_count` 与 `alert.deduplicated_count` | ✅已实现 |
+| 窗口演进 | 暴力破解 sliding(5min/1min 步进)覆盖边界,`alertSuppressionMinutes` 收敛重复输出 | ✅已实现 |
 | CEP | `flink-cep` Pattern API(next/followedBy/within)做攻击链序列,`BruteforceSuccessFunction`(rule-ssh-bruteforce-success-001) | ✅已实现 |
 | 基线异常 | `BaselineAnomalyFunction`:按主机每小时失败数 vs 滚动基线(默认 baselineHours=24,minBaselineHours=3),当前值 > μ+3σ 产告警,冷启动守卫(样本不足不判) | ✅已实现 |
 
@@ -158,7 +158,8 @@ SSH 日志
 | `alert.status` | keyword | open/acknowledged/investigating/resolved/closed(5 态) | ✅已实现 |
 | `alert.status_updated_at` | date | 状态变更时间(`triage-alert.py` 写入) | ✅已实现 |
 | `alert.analyst_verdict` | keyword | true_positive/false_positive/duplicate | ✅已实现 |
-| `alert.deduplicated_count` | integer | suppression 合并的事件数 | ✅已实现 |
+| `alert.deduplicated_count` | integer | suppression 合并的单事件命中数或窗口命中数 | ✅已实现 |
+| `alert.entity` | keyword | 窗口规则的 keyField 实体,用于稳定 `_id` 与告警抑制 | ✅已实现 |
 > 幂等写入依赖 `_id` 而非字段;`_id = sha1(alert.rule_id + source.ip/user.name + 时间桶)`。
 
 ### 5.3 OCSF 可移植层(P1)
@@ -176,7 +177,7 @@ SSH 日志
 | 决策 | 内容 | 理由 |
 | --- | --- | --- |
 | 决策 H | 告警幂等用确定性 `_id`(at-least-once 下) | ES8 sink 不参与 2PC,`_id` 使重放变 upsert,不引外部去重组件 |
-| 决策 I | suppression 内建于 Flink(`AlertSuppressor`):keyBy(rule_id + 实体)+ 处理时间 60min 对齐桶(`(now/windowMillis)*windowMillis`)+ `registerProcessingTimeTimer` + `onTimer` 产最终告警;首个命中即发 count=1,窗口内后续命中累加不新建 | 实现即按对齐桶(时钟整齐、无需 TTL 状态);已知权衡:11:59:59 与 12:00:01 的事件落在相邻窗口不合并。「从首次命中起算的滑动抑制(TTL)」列为 P1 备选 |
+| 决策 I | suppression 内建于 Flink:单事件沿用 `AlertSuppressor` 60min 对齐桶;窗口规则使用 `WindowAlertSuppressor` + YAML `alertSuppressionMinutes`,首条告警 ID 稳定并在期末更新累计数 | 单事件与窗口通知语义分离;窗口仍保留事件时间 sliding 覆盖边界,处理时间仅用于告警收敛 |
 | 决策 J | ILM 只加 delete 阶段,不引 data stream/rollover | 单日量远低于 50GB,按天索引 + delete 足够,复杂度最小 |
 | 决策 K | 状态后端保持 heap(HashMapStateBackend) | 状态 <1GB,无需 RocksDB;切 RocksDB 时机=状态 >~1GB 或 GC 明显 |
 | 决策 L | 单 topic + ECS 字段区分,不按数据源拆 topic | 单生产者/消费者,retention/ACL 无分叉需求;出现分叉再拆 |

@@ -672,7 +672,8 @@ export default function App() {
                       extra={<Button size="small" loading={healthLoading} onClick={() => handleHealthDetail(s.sourceId)}>详情(趋势/失败日志)</Button>}
                     >
                       <Space size="large">
-                        <span>近 1h <b>{s.events1h}</b> 条</span>
+                        <span>近 1h 成功 <b>{s.events1h}</b> 条</span>
+                        <span>总尝试 <b>{s.totalEvents1h ?? s.events1h}</b> 条</span>
                         <span>近 24h <b>{s.events24h}</b> 条</span>
                         <span>失败率 <b style={{ color: s.failRate > 5 ? '#f5222d' : '#52c41a' }}>{s.failRate}%</b> ({s.failures1h} 条)</span>
                         <span>最后收到 <b>{s.lastSeen ? new Date(s.lastSeen).toLocaleString() : '—'}</b></span>
@@ -683,9 +684,9 @@ export default function App() {
                             <div>
                               <Typography.Text type="secondary" style={{ fontSize: 12 }}>近 24h 事件/失败趋势(红=失败):</Typography.Text>
                               <div style={{ display: 'flex', alignItems: 'flex-end', gap: 2, height: 60, marginTop: 6 }}>
-                                {healthDetail.trend.map((t, i) => (
-                                  <div key={i} title={`${t.bucket}: 事件 ${t.events} / 失败 ${t.failures}`}
-                                    style={{ width: 9, background: t.failures > 0 ? '#f5222d' : '#52c41a', height: Math.max(2, Math.min(60, (t.events || 0) * 3)), borderRadius: '2px 2px 0 0' }} />
+                                  {healthDetail.trend.map((t, i) => (
+                                    <div key={i} title={`${t.bucket}: 事件 ${t.events} / 失败 ${t.failures}`}
+                                     style={{ width: 9, background: t.failures > 0 ? '#f5222d' : '#52c41a', height: Math.max(2, Math.min(60, (t.totalEvents || t.events || 0) * 3)), borderRadius: '2px 2px 0 0' }} />
                                 ))}
                               </div>
                             </div>
