@@ -107,7 +107,7 @@
 | 落地项 | 文档来源 | 优先级 | 验收 | 状态 |
 | --- | --- | --- | --- | --- |
 | 基线异常 Flink 统计 job(滚动 24h,可配 baselineHours;μ+3σ,BaselineAnomalyFunction) | 01-F-R13 | P2 | 基线偏离 μ+3σ 触发 rule-auth-rate-anomaly-001 | ✅ 已实现(c6fb407) |
-| 实体风险聚合(entity-risk.py,资产权重加权;alert-service 为未来迁移目标) | 04-§4.2 | P2 | siem-entity-risk 索引产出实体风险分 | ✅ 已实现(c6fb407) |
+| 实体风险聚合(entity-risk.py,资产权重加权;控制台负责配置与展示) | 04-§4.2 | P2 | siem-entity-risk 索引产出实体风险分 | ✅ 已实现(c6fb407) |
 | 威胁情报查表富化 | 01-F-R14 | P2 | — | ✅ 已做(2026-08-16:Logstash translate 本地字典,threat.is_malicious/confidence;更新脚本 infra/ti/update-ti.py) |
 
 ---

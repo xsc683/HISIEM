@@ -78,7 +78,7 @@ topic: siem-events
 
 ### 3.5 Spring Kafka 的并行消费(扩展)
 
-**背景**:本项目 Flink 通过 Flink `KafkaSource` 消费 Kafka;本小节说明若未来以 Spring Boot(如 alert-service)消费 Kafka 时的并行机制,是 3.3 消费组负载均衡概念在 Spring 侧的具体落地。
+**背景**:本项目 Flink 通过 Flink `KafkaSource` 消费 Kafka;本小节说明若未来以 Spring Boot 控制面或独立 consumer 消费 Kafka 时的并行机制,是 3.3 消费组负载均衡概念在 Spring 侧的具体落地。
 
 **定义**:Spring Kafka 通过 `@KafkaListener` 注解声明消费方法;并行度并非注解中的单一参数,而是由**容器并发数(concurrency)**与 **Kafka 分区数**共同决定。
 
@@ -98,7 +98,7 @@ topic: siem-events
 | 3 | 5 | 3 | 3 个分到分区,2 个空转 |
 | 1 | 任意 | 1 | 单分区无法并行 |
 
-**场景举例**:若未来 alert-service 消费 `siem-alerts` 做实体风险聚合,应先保证 topic 分区数 ≥ 目标并行度,再设置 concurrency;分区只能增加不能减少,应尽早规划。
+**场景举例**:当前 Flink 直接消费 `siem-events` 完成检测，实体风险由 `infra/elasticsearch/entity-risk.py` 聚合；若未来改为服务消费 `siem-alerts`,仍应先保证 topic 分区数 ≥ 目标并行度,再设置 concurrency。分区只能增加不能减少,应尽早规划。
 
 **与 Flink 的对应**:Flink 中 `KafkaSource` 的并行度(并行任务数)等价于 Spring 的 concurrency;两者都受"分区数为单组内并行度上限"这一约束。
 

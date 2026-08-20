@@ -169,11 +169,11 @@ Windows 侧用 **IDEA 自带的 Maven**(已验证:3.9.16 + Java 21,依赖已缓�
 ```bash
 MVN="D:/application/IntelliJ IDEA 2026.2.0.1/plugins/maven-plugin/lib/maven3/bin/mvn.cmd"
 
-# Flink 检测 job —— 注意用 -f flink/pom.xml(根 pom.xml 是 Spring Boot 占位工程,不是它)
-"$MVN" -f flink/pom.xml clean package          # 含 9 个 JUnit 用例
+# Flink 检测 job —— 注意用 -f flink/pom.xml(根 pom.xml 是 Spring Boot 控制面,不是它)
+"$MVN" -f flink/pom.xml clean package          # 含 30 个 Flink 测试
 "$MVN" -f flink/pom.xml clean package -DskipTests   # 部署时加快
 
-# Spring Boot 占位应用(根 pom)
+# Spring Boot 控制面(根 pom,含 65 个测试)
 "$MVN" -f pom.xml clean package
 ```
 

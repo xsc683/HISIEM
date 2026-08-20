@@ -30,7 +30,7 @@ CEP 表达:`Pattern.begin("failures").where(fail).times(5, 100).next("success").
 | `riskScore` | int(0-100) | 认证失败 40、root 登录失败 81、弱账号 47、窗口暴力破解 73、暴力破解成功(CEP)90、基线突增 60(按危害定) |
 | `status` | String | experimental / stable / deprecated |
 | `version` | String | 规则版本 |
-| `references` | String[] | 文档/告警参考链接(未落地,需设计 schema) |
+| `references` | String[] | 文档/告警参考链接,已写入 6 条规则 YAML |
 | `falsepositives` | String[] | 已知误报场景(调优用)(未落地,需设计 schema) |
 
 **告警模板同步加**:`alert.risk_score`(numeric)、`rule.tags`(keyword[])、`rule.status`(keyword)、`rule.version`(keyword)。severity 可保留字符串但 Kibana 排序改用 `alert.risk_score`。
@@ -59,7 +59,7 @@ CEP 表达:`Pattern.begin("failures").where(fail).times(5, 100).next("success").
 ### 4.2 风险评分(P0/P2)
 
 - **规则级**:`alert.risk_score`(0-100,按危害定值)。
-- **实体级**(复刻 Splunk RBA / Elastic entity risk scoring,P2):**`infra/elasticsearch/entity-risk.py` 已落地**(+ `asset-criticality.json` + `siem-entity-risk-template.json`),定时聚合近 30 天告警——按 `source.ip` / `user.name` 对 `alert.risk_score` 求和,叠资产关键度权重(Low 0.5/Medium 1/High 1.5/Extreme 2);分档 `<20 Unknown / 20-40 Low / 40-70 Moderate / 70-90 High / >90 Critical`,写 `siem-entity-risk` 索引(_id = type-value,幂等)。alert-service(Spring Boot 占位工程)化另行 story,当前 entity-risk.py 即产品雏形。
+- **实体级**(复刻 Splunk RBA / Elastic entity risk scoring,P2):**`infra/elasticsearch/entity-risk.py` 已落地**(+ `asset-criticality.json` + `siem-entity-risk-template.json`),定时聚合近 30 天告警——按 `source.ip` / `user.name` 对 `alert.risk_score` 求和,叠资产关键度权重(Low 0.5/Medium 1/High 1.5/Extreme 2);分档 `<20 Unknown / 20-40 Low / 40-70 Moderate / 70-90 High / >90 Critical`,写 `siem-entity-risk` 索引(_id = type-value,幂等)。当前控制台负责资产关键度配置与展示，脚本仍是实体风险计算入口。
 - **聚合取舍(sum vs max)**:当前实现用 **sum**(累计威胁量——告警越多分越高,体现"持续被攻击"程度);**max**(取单条最严重告警)更反映单点峰值风险。可取 sum+count 双列或 max 按需选。**改进点**:现查询只按 `alert.created_at` 范围过滤,**不过滤 `alert.status`**(closed 告警也计入),后续可加 status 过滤避免已结案告警推高实体分。
 - **优先级 = 风险分 DESC + 资产关键性 + ATT&CK tactic 覆盖多 + 规则频度**(极少触发的规则信号更强)。
 
@@ -108,7 +108,7 @@ FP 率 = `fp.doc_count` ÷ `by_rule.doc_count`(**分母 = 该规则已打 verdic
    - 历史回放(⏳ 待做):两种可执行方案——**Kafka 重放**(近 30 天 `siem-events` 重发到 topic 观察新规则命中);或 **ES 历史 dry-run 脚本**(`infra/kibana/replay-dryrun.py`,规划中)对 `siem-events-*` 查询统计命中率。
    - 攻击模拟(Atomic Red Team,远期)。
 3. **渐进发布**(⏳ 待做):新规则默认 `status: experimental` 且只写 `siem-alerts-test` 索引观察,再提升级。**sink 分流方案**:Flink ES sink 的 elementConverter 按 `rule.status` 选 index(`experimental` → `siem-alerts-test`,`stable` → `siem-alerts`),无需两套 sink。
-4. **复用现有测试**(✅ 部分):`RuleEngineTest`/`WindowRuleTest`/`EventConditionsTest`/`BaselineAnomalyTest` 已作为规则驱动回归(Flink 27 用例);单事件规则经 RuleBuilder 由 YAML condition 驱动。
+4. **复用现有测试**(✅ 部分):`RuleEngineTest`/`WindowRuleTest`/`EventConditionsTest`/`BaselineAnomalyTest` 已作为规则驱动回归(Flink 30 用例);单事件规则经 RuleBuilder 由 YAML condition 驱动。
 
 ## 7. 合规与留存(远期,P3)
 

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 # HISIEM 平台 — 项目速览
 
-轻量级 SIEM(Elastic Stack + Flink)。Phase 1(管道 MVP)+ Phase 2(架构完善:ECS schema、规则引擎、多规则、时间窗口关联、Kibana)全部完成。详细设计见 [docs/](docs/README.md)。
+轻量级 SIEM(Elastic Stack + Flink)。Phase 3.0-3.5 检测引擎基线与 Phase 4.0-4.3 控制台/运维能力已完成；控制面为 Spring Boot + PostgreSQL/Flyway，数据面为 Elastic Stack + Kafka + Flink。详细设计见 [docs/](docs/README.md)。
 
 ## 数据链路
 
@@ -19,18 +19,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - `flink/` — **Flink 检测 job**(独立 Maven 工程,主类 `com.siem.DetectionJob`)。规则引擎:单事件(`RuleRegistry`/`DetectionFunction`)+ 窗口(`WindowRule`/`WindowRuleFunction`)
 - `infra/` — 基础设施配置唯一来源:docker-compose、logstash、ES 模板、Kibana 脚本、simulator、deploy.sh
-- `src/` `pom.xml` — Spring Boot 应用(占位,未来 alert-service)
+- `src/` `pom.xml` — Spring Boot 控制面 API(认证、接入、告警、案件、通知、运维)
+- `web/` — React/Vite 控制台(路由表见 `web/src/routes.js`)
 - `docs/` — 架构/部署/决策/规则引擎文档
 
 ## 常用命令
 
 ```bash
 # 构建 + 测试 Flink job(Windows 侧)
-# 注意:根目录 ./mvnw 对应 Spring Boot 占位工程(未来 alert-service);
-#       Flink job 必须用 -f flink/pom.xml,不能裸跑 ./mvnw。
+# 根目录 ./mvnw 用于 Spring Boot 控制面；Flink job 必须用 -f flink/pom.xml。
 ./mvnw -f flink/pom.xml clean package                       # 构建(含测试)
 ./mvnw -f flink/pom.xml test                                # 全部用例
 ./mvnw -f flink/pom.xml test -Dtest=RuleEngineTest          # 单个测试类
+./mvnw spring-boot:run                                     # 启动控制面(默认 8080)
+npm --prefix web run dev                                   # 启动前端(默认 5173)
 
 # 部署(同步仓库 → WSL + 构建 + 拷 jar 进 jobmanager)
 MSYS_NO_PATHCONV=1 wsl bash /mnt/d/Project/SIEM/infra/deploy.sh
@@ -77,7 +79,8 @@ curl -s "http://localhost:9200/siem-alerts/_count"
 ## 测试
 
 ```bash
-./mvnw -f flink/pom.xml test                              # 全部 9 个用例
+./mvnw test                                                # 根项目全部 65 个测试
+./mvnw -f flink/pom.xml test                              # Flink 模块全部 30 个测试
 ./mvnw -f flink/pom.xml test -Dtest=RuleEngineTest        # 单个测试类
 ./mvnw -f flink/pom.xml test "-Dtest=WindowRuleTest#bruteForceAlertHasCountAndRelatedEvents"  # 单个方法
 ```

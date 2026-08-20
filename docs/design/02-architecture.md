@@ -39,7 +39,7 @@
 │   - 富化:GeoIP at-ingest(6524fb6)+ TI 查表(664f6a6)  [已实现;告警侧异步富化 P2 未做]│
 │   - 实体风险聚合(siem-entity-risk + entity-risk.py)  [已实现]          │
 │   - 窗口治理:sliding 覆盖边界 + alertSuppressionMinutes 收敛重复     [已实现] │
-│   (后续:alert-service(Spring Boot 占位工程)→ 实体风险聚合/案件迁移目标)│
+│   (实体风险继续由 entity-risk.py 维护;案件由 Spring Boot CaseService + PostgreSQL 管理)│
 ├──────────────────────────────────────────────────────────────────────┤
 │ 缓冲层  Kafka 3.8                                                      │
 │   - siem-events  3 分区 + zstd + acks=all  [已实现,7e86478];retention 3d 待设 │
@@ -186,7 +186,7 @@ SSH 日志
 | 决策 M | 富化 at-ingest(Logstash geoip)而非 query-time | 上下文一致、规则直接用、历史永久保留 |
 | 决策 N | OCSF 为可移植视图,ECS 为存储 schema | 存储稳定 + 生态兼容,可移植性留后路 |
 | 决策 O | siem-alerts 留存:建议 ILM delete 180d,或按天索引 + 别名 | 当前单索引无 ILM,持续增长会失控;180d 覆盖常见合规回看,按天索引+别名便于精确裁剪/归档 |
-| 决策 P | 告警通知/路由:MVP=产品控制台内横幅 + 日志,不投递外部(邮件/Webhook) | 通知渠道依赖接收方编排,先做控制台内闭环,外部投递后置 |
+| 决策 P | 告警通知/路由:MVP=产品控制台通知中心 + 菜单/头部未读角标,不投递外部(邮件/Webhook) | 当前先闭环控制台操作/健康查询通知;自动扫描与外部渠道后置 |
 | 决策 Q | 控制台与 Kibana 分工:控制台为主(接入/解析/检测规则/告警三线) | 用户拍板「控制台为主」:告警三线已由控制台告警台承接(story-04,e3db7bc);triage-alert.py 保留为 Kibana 侧备用过渡工具 |
 
 ### 6.1 编号决策引用索引
@@ -209,4 +209,4 @@ SSH 日志
 | ES | `infra/elasticsearch/siem-events-template.json`、`siem-alerts-template.json`、`siem-entity-risk-template.json`(实体风险)、`entity-risk.py`、`asset-criticality.json`、`backup.sh`、`setup-rbac.sh`、ILM 策略脚本 |
 | Kibana | `infra/kibana/create_dashboards.py`(视图)、`infra/kibana/triage-alert.py`(告警 5 态 + verdict) |
 | 规则 | `flink/.../Rule.java`(元数据,含 version)、`flink/.../WindowRule.java`、`RuleRegistry.java`、`infra/rules/*.yaml`(P1 规则声明:enabled + 元数据,Flink 启动读取注册) |
-| 控制台 | `web/`(React/Vite 前端)+ `src/`(Spring Boot alert-service 占位工程),commit b2051fd 骨架 |
+| 控制台 | `web/`(React/Vite 前端)+ `src/`(Spring Boot 控制面 API);用户/案件/通知/审计/任务由 PostgreSQL/Flyway 管理 |

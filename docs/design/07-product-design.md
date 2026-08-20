@@ -40,7 +40,7 @@
 - Splunk 的「粘贴样例 → 置信度识别 → 预览」→ 接入向导第 ④ 步(发样例验证)与模板库检索
 - QRadar 的「高亮 → 映射」→ 自定义解析编辑器(§4.2)
 - Elastic 的「一键装集成 + simulate」→ 模板库"选即用" + 上线前 `logstash --config.test_and_exit` 校验(§4.1 第 ⑤ 步)
-- Cribl 的「unknown 兜底」→ `_parsefailure` 计数与失败率可见(§4.3);siem-events-raw 兜底路由为 P2
+- Cribl 的「unknown 兜底」→ `_parsefailure` 计数与失败率可见(§4.3);`siem-events-raw-*` 兜底路由已落地
 - Sentinel 的「声明式」→ 数据源 = 声明式 YAML(`infra/log-sources/*.yaml`),非手写管道
 
 **提炼的产品 UX 共性**(本产品遵循):
@@ -138,7 +138,7 @@
 
 **失败下钻**:点失败率高的卡片 → 最近失败日志列表(默认 50 条),每行展示**原文(`event.original` 未解析行,产品口径即 `event.raw`)+ 时间 + 来源**;可"复制原文到自定义解析"(跳 §4.2 一键补模板),决定"补模板 / 调采集 / 该源下线"。
 
-> 现状 `_parsefailure` 事件带原文(存 `siem-events-*`),健康页先取 `siem-events-*`;`siem-events-raw` 未知桶路由为 P2 落地(story-05 FR-5)。
+> 当前 `_parsefailure` 事件带原文并路由到 `siem-events-raw-*`;未知桶不进入 Kafka/Flink，健康页可按源下钻查看。
 
 ### 4.4 模板生命周期(experimental → stable → deprecated)
 
@@ -247,7 +247,7 @@ experimental ──晋升──▶ stable ──降级──▶ deprecated ─�
 **审计日志**(所有 `activate`/配置生成/停用/删除/模板变更操作必写):
 - 字段:`who`(账号)、`when`(时间戳)、`what`(动作 + 对象 id + 前后状态/配置 diff 摘要)、`result`(成功/失败)。
 - 覆盖:数据源创建/生效/停用/删除、模板创建/修改/晋升/降级/删除、规则启停。
-- 存储:先日志文件,`siem-audit` ES 索引落地(P1 末),控制台 `/settings` 下可检索、可导出 CSV。
+- 存储:控制面 PostgreSQL `audit_logs` 已落地,控制台 API 可查询；ES 侧审计索引映射仍按后续需要评估。
 
 ## 6. 功能能力地图 + MVP 优先级
 
@@ -258,11 +258,11 @@ experimental ──晋升──▶ stable ──降级──▶ deprecated ─�
 | 解析规则库 | 预置模板浏览/选择 | **MVP** |
 | 解析规则库 | 自定义解析(样例 → grok → 预览 → 保存) | P1 |
 | 解析规则库 | 模板生命周期(晋升/降级、模板改动影响面提示) | P1 |
-| 数据源管理 | 数据源 CRUD、状态、停用/删除(释放端口) | P1 |
-| 数据健康 | 事件量/失败率(含突升判定/下钻)/未知日志视图 | P1 |
-| 设置 | 权限与审计(console 角色鉴权 + 审计日志) | P1 |
-| 设置 | 资产关键度配置 | P2 |
-| 设置 | 用户与权限(RBAC 完整管理) | P2 |
+| 数据源管理 | 数据源 CRUD、状态、停用/删除(释放端口) | ✅ 已实现 |
+| 数据健康 | 事件量/失败率(含突升判定/下钻)/未知日志视图 | ✅ 已实现 |
+| 设置 | 权限与审计(console 角色鉴权 + 审计日志) | ✅ 已实现 |
+| 设置 | 资产关键度配置 | ✅ 已实现 |
+| 设置 | 用户与权限(RBAC 完整管理) | ✅ 已实现 |
 
 **MVP 定义**:安全管理员能用向导把一种新日志源接进来并真正生效(日志流入可查),且能从模板库选到 SSH 等预置模板。
 
@@ -291,17 +291,17 @@ experimental ──晋升──▶ stable ──降级──▶ deprecated ─�
 
 - **当前**:Web 控制台(React) + Spring Boot API;接入层独立于 Kibana。
 - **后续**:API 开放(第三方/脚本接入)、与 Kibana 检测看板导航打通。
-- **与检测层分工**:控制台管"数据进得来、解析对不对";Kibana/告警管"检测得准不准、处置得完不完"(4.0 过渡,控制台告警台 P1 落地)。
+- **与检测层分工**:控制台管"数据进得来、解析对不对、权限与处置";Kibana 管"看什么、查什么、怎么可视化";Flink 管检测。
 
 **Phase 4 后路标**(何时做什么,与 [05-roadmap.md](05-roadmap.md) 对齐):
 
 | 能力 | 何时做 | 触发条件 / 理由 |
 | --- | --- | --- |
 | 配置热加载(改文件即生效、免重启) | Phase 4 中期(P1) | 当前 reload/重启有秒级中断;多源并发接入后手动重启不可接受 |
-| 完整 RBAC 用户管理(建账号/角色分配) | Phase 4 后 | console 角色鉴权(§5.3,P1)先落地;账号管理依赖认证后端(现骨架无登录) |
+| 多人协作 RBAC(转派/锁定/FLS) | 后置 | console 认证、四角色与基本用户管理已落地；复杂协作和多租户仍未做 |
 | 开放 API / 脚本接入(`add-log-source.py` → 正式 REST) | Phase 4 后(P2) | 第三方/脚本化接入场景出现;复用 `LogSourceService` 契约 |
 | 多租户(按 org/index 隔离 + FLS) | 远期 | 单租户 lab 跑通后;依赖 RBAC + ES 多租户模式(security-rbac §3) |
-| siem-events-raw 未知桶路由(健康页切到 raw) | P2 | 现 `_parsefailure` 事件带原文可先查 `siem-events-*`;raw 路由落地后切 |
+| siem-events-raw 未知桶路由(健康页切到 raw) | ✅ 已实现 | `_parsefailure` 路由到 `siem-events-raw-*`,不进入 Kafka/Flink |
 | 模板市场 / 远程共享 | 远期 | 内部库积累稳定模板后;社区生态价值 |
 | 采集 Agent(轻量转发端) | 远期 | 当前 tcp/syslog/file 输入即可覆盖 lab;远端主机采集需 Agent |
 
@@ -309,13 +309,13 @@ experimental ──晋升──▶ stable ──降级──▶ deprecated ─�
 
 | # | 问题 | 当前状态 | 决策点 / 后置 |
 | --- | --- | --- | --- |
-| 1 | siem-events-raw 未知桶路由未落地 | 设计已定(§4.3),**落地 = P2**(story-05 FR-5);现状 `_parsefailure` 事件带原文,健康页先查 `siem-events-*` | 路由规则 + raw 索引/模板,排入 P2 |
+| 1 | siem-events-raw 未知桶路由 | ✅ 已实现 | 继续观察短留存 30d 与健康页下钻体验 |
 | 2 | 配置生效 = reload/重启 vs 热加载 | 现走 reload/重启(校验通过才生效) | 热加载列 P1(§7) |
 | 3 | 实时校验 <500ms 的性能承诺 | grok 编译结果缓存可满足;需在 java-grok 侧压测验证 P95 | 编辑器性能压测(P1) |
-| 4 | 审计日志存储:日志文件 vs ES `siem-audit` 索引 | 先日志文件 + 控制台检索(P1) | 索引落地(P1 末)与 retention 对齐 |
+| 4 | 审计日志存储:PostgreSQL vs ES 索引 | PostgreSQL `audit_logs` 已作为控制面事实来源 | ES 侧索引仅在跨系统检索需要时增加 |
 | 5 | 模板版本管理的完整 Git 工作流 | 先文件 + 状态字段(§4.4) | 版本化/回滚列 P1 后 |
 | 6 | 多租户 / 开放 API 何时做 | 单租户 lab 跑通后(§7) | 依赖 RBAC + ES 多租户模式 |
-| 7 | console 认证后端 | 现骨架无登录(前后端骨架 b2051fd) | 与 §5.3 角色鉴权一同落地(P1) |
+| 7 | console 认证后端 | ✅ Spring Security + PostgreSQL 会话/RBAC 已实现 | 后续完善 ES 角色映射与多租户 FLS |
 
 ## 9. 参考来源
 

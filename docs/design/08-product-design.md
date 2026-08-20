@@ -10,7 +10,9 @@
 
 ```
 日志源 → 接入(Logstash: 采集+解析+归一化)→ 缓冲(Kafka)→ 检测(Flink: 规则/CEP/基线)
-        → 存储(Elasticsearch: 事件/告警/实体风险)→ 呈现(Kibana: 检测看板)+ 产品控制台(接入/规则/运维)
+        → 数据存储(Elasticsearch: 事件/告警/实体风险)
+        → 呈现(Kibana: 检测看板)+ 产品控制台(接入/处置/运维)
+产品控制面(Spring Boot) ↔ PostgreSQL(用户/案件关系/通知/审计/任务)
 ```
 
 | 层 | 技术组件 | 产品层的对应 |
@@ -18,7 +20,7 @@
 | 接入 | Logstash | **接入中心 / 解析规则库**(管理数据怎么进来、怎么解析) |
 | 缓冲 | Kafka | 无直接产品界面(可靠性由运维管) |
 | 检测 | Flink | **检测规则**(管理检测什么) |
-| 存储 | Elasticsearch | 无直接界面(数据健康里看量/留存) |
+| 存储 | Elasticsearch + PostgreSQL | ES 负责事件/告警检索，PostgreSQL 负责控制面事务状态 |
 | 呈现 | Kibana + 控制台 | **Kibana**(分析师看告警/调查)+ **产品控制台**(管理员管接入/规则/运维) |
 
 **分工原则**:产品控制台管"接入/解析/检测规则/告警三线(产品化方向)";Kibana 管"事件检索(Discover)/检测看板/深度调查"。告警三线 **已由控制台告警台承接(story-04,e3db7bc)**,替代 triage-alert.py 交互版;triage-alert.py 保留为 Kibana 侧过渡/备用工具。
@@ -32,11 +34,11 @@
 | 告警三线(产品方向) | **控制台** | ✅ 已落地(story-04,e3db7bc):控制台告警台三线/verdict/批量处置,替代 triage-alert.py 交互版 |
 | 事件检索(Discover) | **Kibana** | 原生全文检索/过滤/时间线,不重复造轮子 |
 | 检测看板 / 数据可视化 | **Kibana** | ES 原生态看板,检测态势可视化 |
-| 深度调查(单事件 → 关联 → 原文) | **Kibana(MVP)/ 调查台(远期 §5.7)** | 案件聚合远期归控制台;前期以 Kibana 深度调查视图承接 |
+| 深度调查(单事件 → 关联 → 原文) | **Kibana + 调查台(§5.7)** | 自由检索仍由 Kibana 承担;案件聚合、案件处置和时间线由控制台承担 |
 
 **为什么"主 + 分阶段"**(三原则):
 1. **用户分两类**:配置类(接入/模板/规则)面向管理员,调查类(告警/事件)面向分析师;拆开各自收敛,不做"什么都管的巨型页面"。
-2. **告警三线值得独立 UI**:五态流转 + verdict 回流 + 误报闭环是产品差异化,但 4.0 阶段 Kibana 视图 + triage-alert.py 已能完整走通(零新代码),先把确定性需求(MVP)做透再投 UI,避免"新 UI 好看但处置不了"的返工。
+2. **告警三线值得独立 UI**:五态流转 + verdict 回流 + 误报闭环是产品差异化,当前已由控制台告警台承接；`triage-alert.py` 保留为脚本化备用入口。
 3. **不重建 Kibana 已有的**:Discover/看板/深度调查复用度高,重建得不偿失;控制台只补 Kibana 做不好的(配置、启停、批量处置、verdict 闭环)。
 
 **边界判定规则**(后续新功能的归属标准):"管理数据怎么进、怎么解析、检测什么、如何处置" → 控制台;"看什么、查什么、怎么可视化、深挖单条" → Kibana。
@@ -90,7 +92,7 @@
 ├── 检测规则            ← 规则 CRUD/启停、MITRE 标注、风险分、规则测试
 ├── 告警中心(与 Kibana 协作)← 告警三线、verdict 回流、风险排序
 ├── 数据健康            ← 各源事件量/解析失败率/未知日志、系统状态
-├── 系统设置            ← 资产关键度、留存策略、用户权限(远期)
+├── 系统设置            ← 资产关键度、留存策略、用户权限
 └── 调查台(✅ 已实现,§5.7)   ← 案件聚合、关联时间线
 ```
 
@@ -214,15 +216,15 @@
 - **首个可验收能力**(引用 Story 05 §7):**Given** 接入了一个数据源并流入日志 **When** 打开数据健康 **Then** 该源显示事件量增长、失败率正常。
 
 #### 5.6 系统设置
-- **职责**:资产关键度、留存策略、用户权限(远期)
-- **P2**:资产关键度编辑(预留:Phase 3.5 实体风险聚合依赖资产权重)
+- **职责**:资产关键度、留存策略、用户权限
+- **当前状态**:资产关键度与控制台 RBAC 已实现；留存策略只读展示，ES 侧角色映射与多租户隔离仍后置。
 - **页面/路由**(主导航第 6 项「系统设置」):
 
   | 页面 | 路由 | 说明 |
   | --- | --- | --- |
   | 资产关键度 | /settings/criticality | IP/用户/主机 → Low/Medium/High/Extreme(CRUD) |
   | 留存策略(P2) | /settings/retention | ILM(hot→delete 365d)只读展示 |
-  | 用户权限(远期) | /settings/rbac | —(见 §7) |
+  | 用户权限 | /settings/rbac | 四角色权限矩阵、用户启停与审计(见 §7) |
 
 - **关键交互(字段级)**:
   - 资产关键度:级别→权重 Low 0.5 / Medium 1 / High 1.5 / Extreme 2(对齐 Elastic);新增 `类型(ip/user/host)`+`键`+`级别`;重复项→提示覆盖;保存→写 `asset-criticality.json`;写入失败→回滚不破坏配置;entity-risk.py 读最新权重生效。
@@ -233,7 +235,7 @@
 - **职责**:案件聚合、关联时间线(自动/手动聚合,追加移出,结案联动)
 - **核心交互**:事件/告警聚合为案件、关联时间线(对标 Elastic Cases / QRadar Offense);结案时案内告警批量 closed+verdict
 - **MVP**:✅ 已落地(控制台⑩调查台;siem-cases 索引 + CaseService/Controller/Job);Kibana 深度调查仍承接自由检索
-- **页面/路由**(主导航第 7 项「调查台」,远期):
+- **页面/路由**(主导航第 7 项「调查台」):
 
   | 页面 | 路由 | 说明 |
   | --- | --- | --- |
@@ -255,8 +257,9 @@
 | 优先级 | 模块能力 |
 | --- | --- |
 | **Must(MVP)** | 接入向导(新建数据源/选模板/配端点/测试/生效)、数据源落库生效、解析模板库选择、接入后数据健康可见 |
-| **Should(P1)** | 自定义解析编辑器、检测规则可视化/启停、告警三线 UI(4.0 用 Kibana 过渡)、数据健康下钻、告警通知横幅+日志(§8,MVP 闭环) |
-| **Could(P2)** | 调查台(案件聚合 §5.7)、资产关键度(§5.6)、用户权限与 RBAC(§7)、报表合规、SOAR 集成(告警通知外部投递已提为 P1+,见 §8) |
+| **已交付(阶段 4.0-4.3)** | 告警三线 UI、数据健康下钻、资产关键度设置、案件控制面、RBAC、基础通知中心 |
+| **Should(P1)** | 自定义解析编辑器、检测规则可视化编辑、热加载与更多采集协议、自动通知扫描 |
+| **Could(P2)** | 报表合规、动态规则编辑、SOAR 集成、多租户与字段级权限 |
 | **Won't(现阶段)** | 网络流分析、完整 UEBA/ML、独立 TI 平台 |
 
 > 注:§7 权限与安全、§8 通知与告警路由、§9 非功能与风险、§10 产品 KPI、§11 已实现 vs 待做、§12 开放问题 为产品规格深度补充,非新增模块。
@@ -287,15 +290,12 @@
 - 审计:告警状态/verdict 变更记录 operator + status_updated_at(Story 04 FR-7);数据源生效/规则启停写审计日志。
 - 字段级:敏感字段(如 user.name)可用 FLS 隐藏(security-rbac.md §3 示例);MVP 单机不启用,多租户前必做。
 
-## 8. 通知与告警路由(横幅+日志 P1,外部投递 P1+)
+## 8. 通知与告警路由(通知中心基础已实现,自动扫描与外部投递后置)
 
-- **MVP(4.0)**:控制台内横幅 + 服务端日志,不投递外部(决策:不引入邮件/Slack 依赖,先验证闭环)。
-- **P1+**:邮件 / Webhook(Slack/Teams/自定义 endpoint),触发条件:
-  1. **高 FP 规则**:某规则 FP 率 >50% 触发 review 时,通知 admin(对接 §5.4 FP 回流);
-  2. **接入失败**:数据源生效失败、端口冲突、校验失败(status=failed);
-  3. **健康异常**:停采(lastSeen 超时)、失败率突升(§5.5 高亮口径)、`_cluster/health` 非 green。
-- **频控防风暴**:同一对象同类型 1h 内最多 1 条(对齐 Story 10);通知内容 = 主题 + 计数 + 链接。
-- **优先级**:横幅 + 日志 = **P1**(MVP 闭环);外部投递(邮件/Webhook)= **P1+**(与本节标题、§6 MoSCoW、story-10 一致)。
+- **当前已实现**:规则部署、实体风险重算和数据源健康查询异常写入 PostgreSQL `notifications`;控制台菜单/头部通知按钮显示未读角标,通知中心支持查询、已读和单条删除;同一 `type + target` 1h 频控。
+- **后置**:高 FP 自动扫描、接入失败监听、定时健康扫描与通知清理策略。
+- **外部渠道**:邮件 / Webhook(Slack/Teams/自定义 endpoint)明确 Won't,不建立订阅表或派发器。
+- **频控防风暴**:同一对象同类型 1h 内最多 1 条;通知内容为摘要与对象标识,不复制原始日志。
 
 ## 9. 非功能与风险
 
@@ -316,7 +316,7 @@
 | 生效机制依赖 deploy.sh 全量同步 | 频繁同步慢、误伤 | 先 `logstash --config.test_and_exit` 校验再 reload/重启,失败保留旧配置(Story 01);热加载列 P1(§12) |
 | 控制台与 Kibana 边界漂移 | 同一能力两处入口 | §1.1 边界判定规则 + 分阶段口径;story 拆解时先查归属 |
 | 规则编辑依赖 Git/PR | 动态性差、交付链路长 | MVP 接受(检测即代码 = 单一来源);动态编辑 P2(§12) |
-| 脚本化组件迁移(alert-service) | entity-risk.py/triage-alert.py 与未来 alert-service 功能重复 | §11 已实现 vs 待做 跟踪;迁移按 story 排期 |
+| 脚本化组件迁移 | entity-risk.py/triage-alert.py 与控制台能力存在边界重叠 | 当前保留脚本作为运维/备用入口；后续按收益决定是否迁移,不作为当前缺陷 |
 
 ## 10. 产品 KPI
 
@@ -335,9 +335,10 @@
 | entity-risk.py | ✅ 已实现 | `infra/elasticsearch/entity-risk.py` + `asset-criticality.json` + `siem-entity-risk` 索引;定时聚合近 30 天告警 × 资产权重;关键度已接控制台(Story 06,7feea08 触发重算);**改进点**:查询不过滤 alert.status(closed 也计入,04-§4.2) |
 | triage-alert.py | ✅ 已实现 | `infra/kibana/triage-alert.py`;5 态 + verdict;控制台告警台落地后为**过渡工具**(保留备用) |
 | 前后端骨架 | ✅ 已实现 | `src/`(Spring Boot)+ `web/`(React/Vite);Story 01-06/08/10 全部落地(接入闭环/解析/规则/告警/健康/关键度/RBAC/通知),10 区块控制台 |
+| 通知中心 | ✅ 基础能力已实现 | PostgreSQL `notifications`;规则部署、实体风险重算和健康查询异常触发;自动 FP/接入失败/定时健康扫描后置 |
 | 检测规则引擎 | ✅ 已实现 | 6 条规则 + AlertSuppressor + 窗口/CEP/基线(Phase 3.0-3.5) |
 | infra/parser-templates/ssh-auth.yaml | ✅ 已存在 | 预置解析模板(ssh-auth),接入向导可选 |
-| siem-events-raw(未知桶) | ⬜ 未落地(P2) | 解析失败路由 output + 索引模板;现状 tags=_parsefailure 在 siem-events-*(§5.5 FR-5) |
+| siem-events-raw(未知桶) | ✅ 已实现 | 解析失败路由到 `siem-events-raw-*` + 独立模板/短留存,不进入 Kafka/Flink(§5.5 FR-5) |
 | infra/log-sources/*.yaml | ✅ 已实现 | Story 01(7f23fc9):LogSourceStore 读写 `infra/log-sources/*.yaml`(数据源声明,文件 + Git),创建/生效闭环已接控制台 |
 | infra/rules/*.yaml | ✅ 已实现 | Story 03(f1739e0):6 条规则声明(含 enabled),Flink 启动按 enabled 注册;控制台只读 + 启停 + deploy(1671f51) |
 | 控制台告警台 | ✅ 已实现(P1) | Story 04(e3db7bc):三线/verdict/批量处置,替代 triage-alert.py 交互版 |
@@ -347,8 +348,9 @@
 | 开放问题 | 状态/方向 |
 | --- | --- |
 | 动态规则编辑(条件可视化,不改 YAML) | P2;MVP 走 Git/PR + enabled 启停(§5.3) |
-| 告警通知渠道(邮件/Webhook) | P1+(§8);MVP 横幅 + 日志 |
-| console 认证与 ES RBAC 的关系 | 待定:console 自建用户表 + 映射 ES 角色,或直接复用 ES/Kibana 认证(§7) |
+| 告警通知自动扫描 | 后置;当前仅规则部署、实体风险重算和健康查询异常触发通知 |
+| 告警通知渠道(邮件/Webhook) | Won't;当前仅控制台通知中心与未读角标 |
+| console 认证与 ES RBAC 的关系 | console 侧 Spring Security + PostgreSQL 已实现；ES 侧最小权限脚本已具备,四角色映射/多租户 FLS 后置(§7) |
 | 生效机制:deploy.sh 全量同步 vs Logstash 热加载 | 已定 MVP 用 deploy.sh 同步 + test_and_exit(Story 01);热加载列 P1 |
 | 多租户 / FLS 敏感字段 | P2+(security-rbac.md §3) |
 | 反查键稳定化(related_events 缺 ES _id) | 窗口/CEP 函数回带事件 id,或 Logstash fingerprint 固定 document_id(Story 04 §9) |

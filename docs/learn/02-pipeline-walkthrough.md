@@ -1,6 +1,6 @@
 # 功课 2 — 本项目管道全流程走读
 
-> 本文档以一条真实日志为样本,逐段说明它经过的每个组件做了什么,使"日志 → 事件 → 告警"有具体对应。每个阶段给出**所在组件、文件位置、处理逻辑与中间产物**。
+> 本文档以一条真实日志为样本,逐段说明数据面经过的每个组件,并补充告警进入控制面案件的路径,使"日志 → 事件 → 告警 → 案件"有具体对应。每个阶段给出**所在组件、文件位置、处理逻辑与中间产物**。
 
 ## 1. 完整旅程总览
 
@@ -12,7 +12,8 @@
 ⑤ Flink 消费    KafkaSource 读取事件 → EventParser 扁平化为字段 Map
 ⑥ Flink 检测    DetectionFunction 逐条规则匹配,命中则生成「告警」JSON
 ⑦ Flink 写出    ES sink 写入 siem-alerts
-⑧ Kibana 呈现   分析师在 SIEM 总览 dashboard 查看告警
+⑧ Kibana/控制台呈现 分析师查看告警并执行状态处置
+⑨ CaseService    多条相关告警聚合为案件,状态与关联写入 PostgreSQL
 ```
 
 ## 2. 样本日志与处理过程
@@ -118,9 +119,18 @@ for (Rule rule : registry.getRules()) {
 
 告警采用**扁平结构**:关键事件字段提升到顶层(便于筛选/聚合),完整事件存于 `event.raw` 供取证。
 
-### ⑧ Kibana 呈现
+### ⑧ Kibana 与控制台呈现
 
-`siem-alerts` 的数据进入 `SIEM 总览` dashboard,展示告警严重级分布、TOP 源 IP 等可视化。
+`siem-alerts` 的数据进入 `SIEM 总览` dashboard,展示告警严重级分布、TOP 源 IP 等可视化；控制台通过 Spring Boot API 检索告警,执行 ack/investigating/resolved/closed 与 verdict 处置。
+
+### ⑨ 控制面:告警 → 案件
+
+当同一实体在 30 分钟内出现至少两条 open 告警时,`CaseAggregateJob` 可以自动聚合；分析师也可以从控制台手动聚合。`CaseService` 将案件状态、负责人、证据和案件—告警关系写入 PostgreSQL，并把案件兼容镜像保留在 Elasticsearch，案件详情再从 ES 反查时间线与原始事件。
+
+```text
+控制台 /api/cases → CaseService → PostgreSQL(事务状态/关联)
+                              └→ Elasticsearch(案件镜像/事件时间线)
+```
 
 ## 3. 时间窗口规则的处理差异(第二条 Flink 分支)
 
@@ -151,7 +161,8 @@ parsed
 | 建 topic | Kafka | `infra/kafka/create-topics.sh` |
 | 消费、检测、写出告警 | Flink | `flink/src/main/java/com/siem/DetectionJob.java`、`DetectionFunction.java`、`RuleRegistry.java`、`WindowRuleFunction.java` |
 | 事件/告警存储 | ES | `infra/elasticsearch/*-template.json` |
-| 呈现 | Kibana | `infra/kibana/create_dashboards.py` |
+| 呈现/处置 | Kibana + Spring Boot | `infra/kibana/create_dashboards.py`、`src/main/java/.../alert`、`.../investigation` |
+| 控制面存储 | PostgreSQL/Flyway | `src/main/resources/db/migration/V1__control_plane.sql` 至 `V3__case_ownership_and_evidence.sql` |
 
 ## 5. 动手验证
 

@@ -190,11 +190,11 @@ POST /api/detection-rules/rule-ssh-brute-force-001/toggle → 请求(无 body);2
 
 | 数据 | 存储 | 关键字段(mapping 形状) | infra 对应 | 已落地? |
 | --- | --- | --- | --- | --- |
-| 规则声明 | `infra/rules/*.yaml` | id / name / type(§4.3) / severity(§4.3) / risk_score / enabled(boolean) / mitre_tags[] / condition / status / version | 待建(检测即代码:01 F-R10 / 08 §5.3,单一来源) | **本 story 建** |
+| 规则声明 | `infra/rules/*.yaml` | id / name / type(§4.3) / severity(§4.3) / risk_score / enabled(boolean) / mitre_tags[] / condition / status / version | `infra/rules/*.yaml` | ✅ 已落地 |
 | 命中/样例告警(只读) | ES `siem-alerts` | alert.rule_id(keyword) / alert.risk_score(integer) / alert.status(keyword) / alert.analyst_verdict(keyword) / related_events(nested) | infra/elasticsearch/siem-alerts-template.json | 是(已有) |
-| 启停/审计记录 | console 日志 / ES `siem-audit-*`(P1) | operator / action(rule_toggle) / target(rule_id) / enabled_before / enabled_after / time | 待建(复用 alert.operator 同款模式) | 待 P1 |
+| 启停/审计记录 | PostgreSQL `audit_logs` + console 日志 | actor / action(rule_toggle) / target(rule_id) / created_at | Flyway `audit_logs` | ✅ 已落地 |
 
-> 校验提示:`infra/rules/` 当前不存在(已查 infra/),本 story 建目录 + 6 条规则声明 YAML(含 enabled);`siem-alerts-template.json` 已存在,无需新建。
+> 校验提示:`infra/rules/` 已包含 6 条规则声明 YAML(含 enabled);`siem-alerts-template.json` 已存在,无需新建。
 
 ### 5.4 配置同步与生效链路
 

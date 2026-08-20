@@ -2,7 +2,7 @@
 
 基于 **Elastic Stack + Flink** 的轻量级 SIEM(Security Information and Event Management),覆盖日志采集、解析、实时检测、告警存储与可视化。
 
-**项目状态:Phase 1(管道 MVP)+ Phase 2(架构完善)全部完成并端到端验证。**
+**项目状态:Phase 3.0-3.5 检测引擎基线、Phase 4.0-4.3 控制台与运维能力均已完成并验证。**当前数据面由 Elastic Stack + Kafka + Flink 承载，控制面由 Spring Boot + PostgreSQL/Flyway 承载。
 
 ## 数据链路
 
@@ -23,13 +23,13 @@ Linux 日志 ──> Logstash (Grok 解析 + ECS 标准化)
                                                           └──> Kibana (SIEM 总览 dashboard)
 ```
 
-**组件职责**:Logstash 只做解析/标准化,不做检测;Kafka 是事件总线,解耦生产与消费;Flink 是检测引擎;ES 负责事件/告警存储与检索;Kibana 负责可视化;PostgreSQL 负责控制面事务数据。
+**组件职责**:Logstash 只做解析/标准化,不做检测;Kafka 是事件总线,解耦生产与消费;Flink 是检测引擎;ES 负责事件/告警存储与检索;Kibana 负责可视化;Spring Boot 控制台负责接入、处置、鉴权和运维 API;PostgreSQL 负责控制面事务数据。
 
 ## 仓库结构
 
 ```
 SIEM/
-├── pom.xml / src/          Spring Boot 应用(占位,未来 alert-service 告警服务)
+├── pom.xml / src/          Spring Boot 控制面 API(认证、接入、告警、案件、运维)
 ├── flink/                  独立 Flink job 工程(规则引擎 + 检测任务)
 │   ├── pom.xml             Flink 2.1,shade 打 jar,mainClass com.siem.DetectionJob
 │   └── src/{main,test}/    规则引擎代码 + JUnit 测试
@@ -40,7 +40,8 @@ SIEM/
 │   ├── kibana/             dashboard 创建脚本 + NDJSON 导出
 │   ├── simulator/          日志模拟器(含暴力破解测试脚本)
 │   └── deploy.sh           同步仓库 → 部署环境 + 构建 + 拷贝 jar
-├── docs/                   设计文档(架构/部署/决策/规则引擎)
+├── docs/                   设计、部署、学习路线与 Story 文档
+├── web/                    React/Vite 控制台
 └── CLAUDE.md               面向 AI 会话的项目速览
 ```
 
@@ -53,6 +54,8 @@ SIEM/
 | [docs/design-decisions.md](docs/design-decisions.md) | 设计决策 + 踩坑记录 |
 | [docs/event-alert-schema.md](docs/event-alert-schema.md) | Event/Alert Schema 详细设计 |
 | [docs/rule-engine.md](docs/rule-engine.md) | 规则引擎使用与扩展 |
+| [docs/roadmap-next.md](docs/roadmap-next.md) | 后续改进主线与项目学习主线 |
+| [docs/learn/README.md](docs/learn/README.md) | 从 SIEM 基础到 Kafka/ES/Flink/Logstash 的学习地图 |
 
 ## 快速开始(新机器)
 
@@ -69,6 +72,12 @@ bash /mnt/d/Project/SIEM/infra/kibana/create-dashboards.sh
 docker exec siem-flink-jobmanager flink run -d /opt/flink/detection-job-1.0.jar
 # 6. 验证(发一条测试日志)
 echo 'Aug 1 10:20:00 server03 sshd[9999]: Failed password for test from 172.16.1.20' | nc -w1 localhost 5000
+
+# 7. 启动控制面(另开终端;默认连接 localhost:5432/siem)
+./mvnw spring-boot:run
+
+# 8. 启动前端(另开终端)
+npm --prefix web run dev
 ```
 
 > 详细步骤见 [docs/deployment.md](docs/deployment.md)。
@@ -84,4 +93,6 @@ echo 'Aug 1 10:20:00 server03 sshd[9999]: Failed password for test from 172.16.1
 - ✅ ES 索引模板(`siem-events-*`、`siem-alerts`)
 - ✅ Kibana "SIEM 总览" dashboard
 - ✅ Flink checkpointing(重启不重放历史)
-- ✅ JUnit 测试(9 用例)
+- ✅ Spring Boot 控制面:PostgreSQL/Flyway、登录会话、RBAC、审计、案件、通知、后台任务
+- ✅ 运维能力:六组件健康扫描、Actuator/Micrometer、数据源停用/删除回滚、ES 备份恢复演练
+- ✅ 测试:根项目 65 个测试、Flink 模块 30 个测试,前端生产构建通过

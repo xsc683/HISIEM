@@ -31,7 +31,7 @@
 
 ### 2.1 背景(当前痛点)
 - 当前加数据源 = 手改 `infra/logstash/pipeline/logstash.conf`(grok/ECS/时间解析),门槛高、不可复用、无测试。
-- 已有前后端骨架:模板列表、解析测试(java-grok)、配置预览、前端日志接入页——但**数据源只预览配置,没落库、没生效到 Logstash**。(✅ **已由本 story 落地,7f23fc9**:LogSource 落库 + pipeline 生成 + 校验/生效/回滚)
+- 历史痛点是数据源只能预览配置、不能落库或生效。(✅ **已由本 story 落地,7f23fc9**:数据源声明写入 `infra/log-sources/*.yaml`，pipeline 生成、校验、生效、停用、删除与失败回滚均已接入控制台；异步任务状态由控制面查询)
 
 ### 2.2 目标(可度量)
 - 数据源接入从"改配置"变为"≤10 分钟向导完成并真正生效"。
@@ -61,7 +61,7 @@
 
 | ID | 需求 | 优先级 | 说明 |
 | --- | --- | --- | --- |
-| FR-1 | 数据源声明落库(名称/协议/模板/端点/状态) | MVP | 存 `infra/log-sources/*.yaml`(文件 + Git,复用模板模式);ES 索引列为未来选项 |
+| FR-1 | 数据源声明落库(名称/协议/模板/端点/状态) | MVP | 存 `infra/log-sources/*.yaml`(文件 + Git,复用模板模式);控制面保存任务和操作状态，ES 索引不作为声明来源 |
 | FR-2 | 由模板生成**完整** Logstash 配置(input+filter+output) | MVP | 扩展现有 preview 为完整 pipeline |
 | FR-3 | 生效:配置同步到 Logstash 并生效 | MVP | 写 repo `infra/logstash/pipeline/` → deploy.sh rsync → logstash `--config.test_and_exit` 校验 → reload/重启;失败→保留旧配置、状态=failed 可重试 |
 | FR-4 | 数据源列表(状态:creating/active/stopped/failed) | MVP | 接入中心"我的数据源";status 取值见 §4.3(API/存储英文、UI 展示可中文) |
@@ -245,9 +245,9 @@ createdAt: 2026-08-16T10:00:00Z
 
 > 存储选型与生效机制已在 §10 收敛为「决定」,本节仅留真正未决/后续排期项。
 
-- 配置**热加载**(改文件即生效、免重启):当前 reload/重启有秒级中断,多源并发接入后手动重启不可接受,列为 **P1**(07 §7 排期)。
-- 数据源 CRUD 完整化(**停用/删除**):MVP 含创建 + 生效 + 列表;停用/删除走 07 §4.5 异步链路(202 + taskId,复用 activate 同步通道),列为 **P1**。
-- 同步状态可视化(失败时展示校验日志):列为 **P2**。
+- 配置**热加载**(改文件即生效、免重启):当前仍通过校验后 reload/restart，存在秒级中断；多源并发接入后的无损热加载列为后续 P1。
+- 多协议输入(syslog/file):当前服务端创建逻辑只接受 `tcp`，其余协议保留为后续扩展。
+- preview 与样例大小防御性校验:创建接口已校验端口，但 preview 尚未完全复用；8KB/1MB 样例上限仍待 API 层硬限制。
 
 ## 10. 设计决策(ADR 式)
 

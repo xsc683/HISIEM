@@ -1,10 +1,10 @@
-# Story 07 — 调查台·案件聚合(远期)
+# Story 07 — 调查台·案件聚合
 
 > **元信息**
-> - 关联模块:08 产品设计 §5.7 调查台(远期)([08](../design/08-product-design.md) §5.7)
-> - 优先级:远期(4.0 MVP 之前以 Kibana 深度调查视图承接)
-> - 状态:✅ 已实现(2026-08-16:siem-cases 索引 + CaseService/Controller/Job + 控制台⑩调查台;自动/手动聚合、追加移出、结案联动、时间线均验证)
-> - 依赖:告警三线(Story 04,`AlertService`/siem-alerts status+verdict);关联数据(`related_events` 快照 / `siem-entity-risk` 实体风险);`alert-service`(Spring Boot)为未来迁移目标
+> - 关联模块:08 产品设计 §5.7 调查台([08](../design/08-product-design.md) §5.7)
+> - 优先级:Phase 4.0 已交付(原“远期”设计项)
+> - 状态:✅ 已实现(2026-08-16:自动/手动聚合、追加移出、结案联动、时间线、负责人/证据均已验证)
+> - 依赖:告警三线(Story 04,`AlertService`/siem-alerts status+verdict);控制面 PostgreSQL;ES 负责事件/告警检索与案件兼容镜像
 
 ---
 
@@ -18,7 +18,7 @@
 
 ### 2.1 背景(当前状态)
 - 告警已带 `related_events`(窗口/CEP 命中时固化的事件快照)、`alert.status`(5 态,Story 04)、`alert.analyst_verdict`(三值)、`alert.risk_score`(风险排序)、实体风险 `siem-entity-risk`(entity-risk.py 产出)。
-- 缺:告警→案件聚合、案件生命周期、关联时间线/实体视图、结案批量联动。08 §1 分工中"Kibana 深度调查"已承接手工检索,但**案件化(聚合→一案处置→批量回流)**是控制台侧能力,尚无人落地。
+- 历史缺口是告警→案件聚合、案件生命周期、关联时间线/实体视图、结案批量联动。(✅ **已由本 story 落地**:控制台负责案件操作，PostgreSQL 保存事务状态与案件—告警关系，ES 保留兼容镜像并提供时间线检索)
 
 ### 2.2 目标(可度量)
 - 同一实体 30min 内 ≥2 条 open 告警自动并入一案;分析师也能手动聚合/追加/移出。
@@ -28,7 +28,7 @@
 ### 2.3 非目标 / 分工
 - 不做 SOAR 自动化处置、不做完整取证(镜像/链式保全)。
 - **不对外对接 TheHive / 工单系统**(开放问题,见 §9,留方向)。
-- 不做用户体系/多人分工:**MVP 用单一「操作者」字段**(`case.operator`);RBAC/多负责人列远期。
+- 不做多人协作编排或多租户隔离；当前使用单一 `case.owner`/`case.operator`，并由 Story 08 的 RBAC 保护案件写操作。多负责人、转派与 FLS 仍后置。
 - **与 Kibana 深度调查衔接(08 §1)**:调查台是控制台模块;案件内时间线条目/原始事件可跳 Kibana Discover(`siem-events-*`,带时间+实体过滤),Kibana 检测看板可加 drilldown 跳回控制台案件页。案件聚合(自动化)归调查台,事件自由检索归 Kibana,二者互跳不重复实现。
 
 ## 3. 用户旅程
@@ -52,22 +52,22 @@
 
 | ID | 需求 | 优先级 | 说明 |
 | --- | --- | --- | --- |
-| FR-1 | 自动聚合:同实体(source.ip 或 user.name)30min 内 ≥2 条 open 告警自动并入一案 | 远期 | 聚合 job 每 5min 扫描;实体键取 `source.ip` 优先,无 IP 退 `user.name`;组内告警数 <2 不建案;已入他案告警跳过(防重复聚合) |
-| FR-2 | 手动聚合:告警台勾选 ≥2 条 open 告警 → "聚合为案件"(可自定义标题) | 远期 | 入口在告警台(Story 04 列表)复用;≤1 条禁用按钮;创建后跳案件详情。**体验遗留点(2026-08-16,见 05-roadmap 已知问题)**:勾选在告警台、执行在调查台,跨页签割裂;待方案评估 |
-| FR-3 | 案件详情:时间线 + 关联告警 + 关联实体 + 原始事件下钻 | 远期 | 时间线=MVP 实时关联 siem-events(见 §6.3 数据来源决策);实体含风险分/风险级别(查 siem-entity-risk) |
-| FR-4 | 手动追加/移出告警 | 远期 | 追加需告警 open 且未入他案;移出后 case.alert_ids 同步;案件 alert_ids 为空时提示可删除空案 |
-| FR-5 | 案件生命周期 open/investigating/resolved | 远期 | 状态机:open→investigating→resolved;resolved 触发结案联动(FR-6) |
-| FR-6 | 结案联动:案件 resolved → 内部告警批量 closed + verdict 批量置值 | 远期 | 复用 Story 04 更新 API(POST /api/alerts/{id}/status|verdict,或批量化扩展);verdict 三值取结案所选 |
-| FR-7 | 案件列表/检索 | 远期 | 按 status/实体/时间筛选;按 updated_at 或最高 alert.risk_score 排序 |
-| FR-8 | 负责人单一"操作者"字段 | 远期 | `case.operator`(不建用户体系);案内所有 status/追加/移出操作记录 operator |
-| FR-9 | 并发更新保护 | 远期 | 案件更新用 `_seq_no/_primary_term`;冲突→409 提示刷新(与 Story 04 一致) |
+| FR-1 | 自动聚合:同实体(source.ip 或 user.name)30min 内 ≥2 条 open 告警自动并入一案 | 已实现 | 聚合 job 每 5min 扫描;实体键取 `source.ip` 优先,无 IP 退 `user.name`;组内告警数 <2 不建案;已入他案告警跳过 |
+| FR-2 | 手动聚合:告警台勾选 ≥2 条 open 告警 → "聚合为案件"(可自定义标题) | 已实现 | 当前告警台与调查台跨页签衔接仍有体验遗留点,功能链路已验证 |
+| FR-3 | 案件详情:时间线 + 关联告警 + 关联实体 + 原始事件下钻 | 已实现 | 时间线实时关联 `siem-events-*`;实体信息查 `siem-entity-risk` |
+| FR-4 | 手动追加/移出告警 | 已实现 | 追加需告警 open 且未入他案;移出后同步案件关系和告警标记 |
+| FR-5 | 案件生命周期 open/investigating/resolved | 已实现 | 状态机由 `CaseService` 校验;resolved 触发结案联动 |
+| FR-6 | 结案联动:案件 resolved → 内部告警批量 closed + verdict 批量置值 | 已实现 | 逐条复用告警并发保护;部分失败保留成功项并返回失败项 |
+| FR-7 | 案件列表/检索 | 已实现 | 按 status/实体/时间筛选;优先读取 PostgreSQL,兼容查询 ES 镜像 |
+| FR-8 | 负责人和证据 | 已实现 | `case.owner` 与 `evidence` 由 V3 控制面迁移持久化;操作人仍记录为 `case.operator` |
+| FR-9 | 并发更新保护 | 已实现 | ES 镜像更新使用乐观锁，控制面更新使用版本校验;冲突返回 409 |
 
 ### 4.2 非功能需求
 
 | 维度 | 要求 |
 | --- | --- |
 | 性能 | 自动聚合 job 单轮 <30s(千级 open 告警);案件详情时间线查询 <2s;结案批量联动 ≤5s |
-| 权限/安全 | 案件/告警不暴露敏感字段;所有 status/追加/移出/结案操作记录 operator+time(审计);MVP 单一操作者、无用户体系,鉴权口径与 Story 04 一致 |
+| 权限/安全 | 案件/告警不暴露敏感字段;所有 status/追加/移出/结案操作记录 operator+time(审计);案件写操作由 Story 08 RBAC 保护 |
 | 异常恢复/回滚 | 结案批量更新部分失败→已生效告警保留(closed+verdict 不回滚)、失败项可重试并列出未更新告警 id;并发冲突→`_seq_no/_primary_term` 409 提示刷新、alert_ids/status 不覆盖先到者写入;聚合 job 幂等可重跑 |
 | 可观测 | 聚合/结案联动有日志;批量更新失败可定位到未更新告警 id;案件时间线缓存刷新可追溯 |
 | 可维护性 | 案件存储 `siem-cases` 独立索引 + 模板即代码(`infra/elasticsearch/siem-cases-template.json`,Git 版本化,见 §5.3/ADR-1);AlertService 复用,不重复实现告警状态机 |
@@ -75,21 +75,23 @@
 ## 5. 后端架构
 
 ```
-前端(调查台 React) → Spring Boot API(/api/cases) → CaseService → ES siem-cases(案件)
+前端(调查台 React) → Spring Boot API(/api/cases) → CaseService → PostgreSQL(案件状态/案件关系/owner/evidence)
+                                          ├→ ES siem-cases(兼容镜像)
                                           ├→ AlertService(复用 Story 04):状态/verdict 更新
                                           ├→ ES siem-events-*:时间线实时关联/原始事件下钻
                                           └→ ES siem-entity-risk:实体风险展示
-聚合调度:CaseAggregateJob(定时,每 5min) → 扫 siem-alerts open → 聚类 → 建/并入 siem-cases
+聚合调度:CaseAggregateJob(定时,每 5min) → 扫 siem-alerts open → 聚类 → 建/并入控制面案件并同步 ES 镜像
 ```
 
 ### 5.1 组件与职责
 | 组件 | 职责 |
 | --- | --- |
-| `CaseService`(新) | 案件 CRUD、手动聚合、追加/移出、状态流转、结案联动 |
+| `CaseService` | 案件 CRUD、手动聚合、追加/移出、状态流转、结案联动、元数据同步 |
 | `CaseAggregateJob`(新) | 定时自动聚合(每 5min,扫描近 30min open 告警按实体聚类) |
 | `AlertService`(复用,Story 04) | 结案时批量更新内部告警 status/verdict;open 告警检索供追加 |
 | `TimelineService`(新) | 实时关联 siem-events 生成时间线 + 原始事件下钻 |
-| 存储 `siem-cases` | 案件(新索引,见 §5.3,模板待建) |
+| PostgreSQL `cases`/`case_alerts` | 案件处置状态、案件—告警关系、负责人、证据(事务真相) |
+| 存储 `siem-cases` | 案件兼容镜像与历史迁移来源(模板已落地) |
 | 存储 `siem-alerts` / `siem-events-*` / `siem-entity-risk` | 告警/事件/实体风险(已有) |
 
 **案件状态机**:`open` →(接手)→ `investigating` →(结案,选 verdict)→ `resolved`;resolved 联动内部告警批量 closed + verdict。案件 3 态是告警 5 态之上的"归并视图"——案件 resolved 对内部告警施加 closed,二者不同粒度(见 §2.3/FR-6)。
@@ -123,9 +125,9 @@ POST /api/cases/case-20260801-0001/status
 ```
 > **4xx 语义**:400 非法参数(alertIds<2、status 非三态、resolved 缺 verdict、verdict 非三值);404 案件/告警不存在;409 并发冲突(`_seq_no` 不匹配,提示刷新)。
 
-### 5.3 存储(siem-cases 最小 schema)
+### 5.3 存储(控制面 + ES 兼容镜像)
 
-> **需新建 ES 模板** `infra/elasticsearch/siem-cases-template.json`(待建,与 siem-alerts-template.json 同风格:shards=1 / replicas=0 / refresh_interval=5s)。
+> **当前实现**:PostgreSQL `cases`/`case_alerts` 是案件状态与关联的事务真相；`infra/elasticsearch/siem-cases-template.json` 和 `siem-cases` 索引作为查询/兼容镜像保留。V1/V3 负责表结构与 `owner`/`evidence` 字段。
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -133,7 +135,9 @@ POST /api/cases/case-20260801-0001/status
 | `case.title` | keyword/text | 案件标题(自动生成:"实体 活动 日期";或手动指定) |
 | `case.status` | keyword | `open/investigating/resolved` |
 | `case.created_at` / `case.updated_at` | date | 创建 / 最近更新 |
-| `case.operator` | keyword | 负责人(单一操作者,MVP;远期 RBAC) |
+| `case.operator` | keyword | 当前操作人/审计字段 |
+| `case.owner` | keyword | 案件负责人,控制面 V3 持久化 |
+| `evidence` | object[] / JSON | 证据引用列表,控制面以 JSON 保存 |
 | `case.aggregation` | keyword | `auto/manual`(聚合来源) |
 | `case.verdict` | keyword | 结案结论 `true_positive/false_positive/duplicate`(resolved 后必有) |
 | `case.closed_at` | date | 结案时间 |
@@ -146,7 +150,7 @@ POST /api/cases/case-20260801-0001/status
 ### 6.1 主路径
 ```
 ① 自动聚合:CaseAggregateJob(每 5min)→ 查 siem-alerts(status=open, alert.created_at ≥ now-30m)
-   → 按 source.ip/user.name 分组 → 组内 ≥2 条 → 建 case(alert_ids=该组;entities 提取)→ 写 siem-cases
+   → 按 source.ip/user.name 分组 → 组内 ≥2 条 → 建 case(alert_ids=该组;entities 提取)→ 写 PostgreSQL 并同步 siem-cases
 ② 手动聚合:告警台多选 → POST /api/cases → CaseService 校验(≥2、open、未入他案)→ 建 case → 跳详情
 ③ 案件详情:GET /api/cases/{id} → 案件 + alert_ids 关联告警(查 siem-alerts)+ entities 风险(查 siem-entity-risk)
 ④ 时间线:GET /api/cases/{id}/timeline → TimelineService 按实体+案件时间窗实时查 siem-events-* → 生成时间线
@@ -195,16 +199,16 @@ POST /api/cases/case-20260801-0001/status
 > 存储选型 / 时间线来源 / 聚合阈值 / 负责人等已收敛为 §10 决定;以下仅留真正未决。
 
 - **是否支持"按规则分组"二次聚类、自定义聚合时间窗/阈值**:MVP 聚合阈值已定(§10 ADR-3:同实体 30min ≥2 条 open);按规则二次聚类、自定义时间窗/阈值列 P2。
-- **多人分工 / RBAC**:MVP 单一 `case.operator`(§10 ADR-4);多负责人/多人协同如何接入 RBAC(story-08)列远期。
+- **多人分工 / RBAC**:当前 `case.owner` 支持单一负责人,案件写操作由 Story 08 RBAC 保护；多负责人转派、协作锁和多租户 FLS 后置。
 - **外部工单 / SOAR 对接**:本期明确不做(§2.3 非目标);若未来要做,方向=抽象 `CaseExporter` 接口对接 TheHive/工单,不做即不展开。
 
 ## 10. 设计决策(ADR 式)
 
-### ADR-1 [siem-cases 存储选型:ES 索引,不做关系库/复用告警]
-- **背景**:案件需按 status/实体/时间检索、与 siem-alerts 的 `alert_ids` 关联、聚合 job 高频写入 + 状态流转;并发下需乐观锁。
-- **选项**:A. 新建 ES 索引 `siem-cases`(独立模板)/ B. 复用 siem-alerts 加 case 字段 / C. 关系库。
-- **取舍**:A 与告警/事件同栈、无跨存储一致性成本、`_seq_no/_primary_term` 提供并发保护、模板即代码与 siem-alerts-template.json 同风格(运维面最小);B 污染告警五态状态机、结案批量回流逻辑复杂;C 引入新存储与跨系统事务成本,对本案无收益。
-- **决定**:采用 **A——新建 ES 索引 `siem-cases`** + `infra/elasticsearch/siem-cases-template.json`(shards=1 / replicas=0 / refresh_interval=5s,待本 story 建,见 §5.3)。
+### ADR-1 [案件采用 PostgreSQL 主存 + ES 兼容镜像]
+- **背景**:案件需维护 status/owner/evidence、与告警的唯一关联和结案联动；跨请求更新必须有事务约束,详情又需要复用 ES 检索。
+- **选项**:A. ES 单独存储 / B. PostgreSQL 控制面 + ES 镜像 / C. 只复用 `siem-alerts`。
+- **取舍**:A 的查询便利但缺少关系约束和控制面事务；C 会污染告警状态机；B 用 PostgreSQL 保证关系与状态一致性,同时保留 ES 时间线和兼容查询能力,代价是写入需处理镜像同步。
+- **决定**:采用 **B**。PostgreSQL 为案件事实来源,ES `siem-cases` 为兼容镜像；历史 ES 案件首次查询时惰性导入控制面。
 
 ### ADR-2 [时间线/实体数据来源:实时关联 + related_events 做跳转入口]
 - **背景**:时间线/实体要最新数据,但全部物化会膨胀案件存储且与 siem-events 重复。
@@ -218,8 +222,8 @@ POST /api/cases/case-20260801-0001/status
 - **取舍**:A 与告警关联时间窗口径一致、误聚低、MVP 可闭环;自定义窗口/按规则二次聚类列 P2(§9)。
 - **决定**:采用 **A**——自动聚合 job 每 5min 扫描近 30min open 告警,按实体分组,组内 ≥2 条建案;组内 <2 不建案;已入他案告警跳过(防重复聚合)。
 
-### ADR-4 [负责人模型:单一 case.operator]
-- **背景**:案件状态流转需要记录负责人,但本期无用户体系。
-- **选项**:A. 单一 `case.operator` 字段 / B. 建用户体系多负责人 / C. 对接 RBAC(story-08)。
-- **取舍**:A 零依赖、MVP 可闭环(结案联动 ≤5s);B/C 涉及用户体系与权限矩阵,列远期(§9)。
-- **决定**:采用 **A**——MVP 单一 `case.operator`;所有 status/追加/移出/结案操作记录 operator(审计);RBAC/多负责人列远期。
+### ADR-4 [负责人模型:owner + operator]
+- **背景**:案件需要区分当前负责人和执行具体操作的用户；Story 08 已提供控制台 RBAC,但尚未引入多人协作编排。
+- **选项**:A. 仅 `case.operator` / B. `case.owner` + 操作人审计 / C. 多负责人协作模型。
+- **取舍**:B 能满足当前分派和审计,且 V3 只需增加 owner/evidence；C 需要转派、锁定和通知等更大范围的协作设计。
+- **决定**:采用 **B**——`case.owner` 持久化负责人,`case.operator` 记录最近/当前操作人；多负责人协作后置。

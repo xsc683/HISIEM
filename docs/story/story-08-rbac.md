@@ -1,10 +1,10 @@
 # Story 08 — 用户与权限(RBAC)
 
 > **元信息**
-> - 关联模块:08 产品设计 §5.6 系统设置(用户权限·远期)+ §7 权限与安全;对齐 [security-rbac.md](../design/security-rbac.md) 的 ES 侧 RBAC
-> - 优先级:P2
-> - 状态:✅ 已实现(dd3e32f;登录/会话/用户角色 CRUD + 权限矩阵 + 审计)
-> - 依赖:console 前后端骨架(b2051fd);ES 侧 RBAC 文档已就绪(security-rbac.md,Phase 3.4);story-03(规则启停)/ story-04(告警处置)/ story-05(停采)提供写操作鉴权点
+> - 关联模块:08 产品设计 §5.6 系统设置(用户权限)+ §7 权限与安全;对齐 [security-rbac.md](../design/security-rbac.md) 的 ES 侧 RBAC
+> - 优先级:Phase 4.3 已交付(原 P2)
+> - 状态:✅ 已实现(dd3e32f + 4.2 持久化增强;登录/会话/用户角色 CRUD + 方法级权限 + 审计)
+> - 依赖:Spring Boot + React 控制台;PostgreSQL/Flyway V1-V2;ES 侧最小权限脚本独立维护
 >
 > **填写完成度 checklist**
 > - [x] **1 用户故事**:「作为…我希望…以便…」
@@ -30,14 +30,14 @@
 ## 2. 背景与目标
 
 ### 2.1 背景(当前痛点)
-- console(Spring Boot + React 骨架)当前**无用户体系**:接口直接可调,任何能访问端口的人可读写(与 ES 9200 未开认证同源风险,见 security-rbac.md §1)。
-- 08 §7 已定 console 四角色 × 模块 × 动作矩阵,但未落地;ES 侧已有 `siem_ingest`/`siem_analyst` 角色(security-rbac.md §3),console 侧产品角色需与之对齐。(✅ **已由本 story 落地,dd3e32f**:四角色 × 模块 × 动作矩阵 + AuthInterceptor 鉴权 + 审计日志)
-- 敏感操作(数据源生效、规则启停、批量 close、verdict)目前无鉴权无审计。(✅ **已落地**:AuthInterceptor 保护写操作,operator 审计)
+- 历史状态是接口无用户体系、任何能访问端口的人均可读写。(✅ **已由本 story 落地**:Bearer 会话、四角色权限矩阵和统一 401/403 错误)
+- 控制台四角色 × 模块 × 动作矩阵已落地；会话、用户、失败计数和审计已迁移到 PostgreSQL，`infra/auth/users.yaml` 仅作为首次启动兼容导入源。
+- 数据源生效、规则启停、告警处置、案件更新等敏感操作均由 Spring Security 方法级授权保护，并记录操作人/时间/动作。
 
 ### 2.2 目标(可度量)
 - 登录鉴权 + 四角色授权:未登录访问任意 API → 401;角色无权限动作 → 403,拒绝率 100%。
-- 敏感写操作全部带审计记录(operator + time + 变更字段),可查询可导出。
-- 单机 MVP 可关闭 RBAC(`auth.enabled=false`)保持现状直连;开启后全部接口按矩阵生效。
+- 敏感写操作全部带审计记录(operator + time + 变更字段),可查询；文件导出后置。
+- `/api/**` 默认要求 Bearer 会话；登录、健康探针等明确公共端点例外。方法级 `@PreAuthorize` 再按角色限制具体写操作。
 
 ### 2.3 非目标(明确不做)
 - 不做用户自助注册/找回/密码策略(导入式维护,见 §10 ADR-1)。
@@ -64,22 +64,22 @@
 
 | ID | 需求 | 优先级 | 说明 |
 | --- | --- | --- | --- |
-| FR-1 | 登录鉴权(session/token) | P2 | `POST /api/auth/login`;失败 401;`auth.enabled=false` 时跳过(单机直连过渡,与现状一致) |
-| FR-2 | 用户 CRUD + 启停 | P2 | 用户名唯一(≤64 字符);角色∈§4.3 字典;disabled 用户登录被拒(403) |
-| FR-3 | 角色×模块×动作矩阵授权 | P2 | 按 08 §7 矩阵实现;动作∈{read/write/export};默认 deny(未授权动作→403) |
-| FR-4 | 敏感操作审计 | P2 | 记录 operator + time + 变更字段(复用 `alert.operator` 同款模式);可查询/导出(audit) |
-| FR-5 | 前端按角色渲染 | P2 | 无权限动作按钮置灰/隐藏;接口层 403 兜底(前端隐藏不替代服务端鉴权) |
-| FR-6 | 审计导出 | P2 | 仅 audit/export 权限;导出范围按模块筛选 |
+| FR-1 | 登录鉴权(session/token) | 已实现 | `POST /api/auth/login`;失败 401;Bearer 会话默认 8 小时,数据库保存 token hash |
+| FR-2 | 用户 CRUD + 启停 | 已实现 | 用户名唯一;角色∈§4.3 字典;disabled 用户登录被拒 |
+| FR-3 | 角色×模块×动作矩阵授权 | 已实现 | `@PreAuthorize` + 角色权限集合;未授权动作→403 |
+| FR-4 | 敏感操作审计 | 已实现 | 记录 operator + time + action/target;审计写入 PostgreSQL |
+| FR-5 | 前端按角色渲染 | 已实现 | 前端按当前用户角色隐藏/禁用动作;接口层 403 兜底 |
+| FR-6 | 审计查询 | 已实现 | 通过控制面 API 查询审计记录;独立文件导出仍可后置 |
 
 ### 4.2 非功能需求
 
 | 维度 | 要求 |
 | --- | --- |
-| 性能 | 登录/鉴权接口 P95 <300ms;角色缓存 60s,不影响业务接口 P95 |
+| 性能 | 登录/鉴权接口 P95 <300ms;权限变更在下一次鉴权时生效 |
 | 权限/安全 | 全部 API 默认 deny;401/403 语义区分;密码仅存 hash(BCrypt),禁止返回/日志打印;敏感写操作全量审计 |
-| 异常恢复/回滚 | 用户/角色写 infra/auth/*.yaml 原子化:校验失败保留旧文件 + 操作=failed;并发改同一用户→409(文件锁/`_seq_no`) |
+| 异常恢复/回滚 | 用户/角色/会话写 PostgreSQL 事务化:校验失败回滚;并发更新由 Service 统一处理 |
 | 可观测 | 审计日志可查询;403 拒绝计数可统计;用户/角色版本可追溯 |
-| 可维护性 | 用户/角色即代码(YAML + Git),console 只读 + 启停,编辑走 Git/PR;与 log-sources/rules 同一同步链路 |
+| 可维护性 | 运行时用户/角色存 PostgreSQL;`infra/auth/users.yaml` 仅用于首次导入;sources/rules 等配置继续走 Git/PR |
 
 ### 4.3 枚举与字段字典
 
@@ -95,16 +95,16 @@
 ## 5. 后端架构
 
 ```
-React 前端 → /api(Spring Boot AuthInterceptor 鉴权) → PolicyService(infra/auth/policy.yaml) + UserService(infra/auth/users.yaml) → AuditService(ES siem-audit-*)
+React 前端 → /api(Spring Security + BearerSessionFilter) → AuthService(角色权限) + PostgreSQL → 业务 Service → 审计记录(PostgreSQL)
 ```
 
 ### 5.1 组件与职责
 | 组件 | 职责 |
 | --- | --- |
-| AuthInterceptor | 全局鉴权:未登录 401、无权限 403;`auth.enabled=false` 时直通(单机过渡) |
-| UserService | 用户 CRUD/启停,写 infra/auth/users.yaml |
-| PolicyService | 加载角色矩阵(infra/auth/policy.yaml),提供 hasPermission(role, module, action) |
-| AuditService | 敏感写操作审计落库(ES `siem-audit-*`) |
+| `BearerSessionFilter` + `SecurityConfig` | 全局鉴权:未登录 401、无权限 403;HTTP 层无状态,会话事实由 PostgreSQL 保存 |
+| `AuthService` | 登录、用户 CRUD/启停、BCrypt 密码、登录失败限制和权限判断 |
+| `@PreAuthorize` | Controller 方法级角色授权,默认拒绝未认证请求 |
+| `JdbcControlPlaneStore` | 用户、会话、失败计数、角色、审计写入 PostgreSQL |
 
 ### 5.2 API 契约
 
@@ -148,38 +148,38 @@ GET /api/auth/me → 200 { "username": "analyst01", "role": "analyst",
 
 | 数据 | 存储 | 关键字段(mapping 形状) | infra 对应 | 已落地? |
 | --- | --- | --- | --- | --- |
-| 用户声明 | `infra/auth/users.yaml` | id / username / password_hash / role / status | 待本 story 建 | 本 story 建 |
-| 角色矩阵 | `infra/auth/policy.yaml` | module / action / roles[] | 待本 story 建 | 本 story 建 |
-| 审计日志 | ES `siem-audit-*`(按天) | operator(keyword) / action(keyword) / module(keyword) / time(date) / detail(text) | infra/elasticsearch/siem-audit-template.json | 本 story 建 |
+| 用户/角色 | PostgreSQL `users` / `roles` | id / username / password_hash / role / status | Flyway V1 | ✅ 已落地 |
+| 会话/失败计数 | PostgreSQL `auth_sessions` / `login_attempts` | token_hash / expires_at / attempts / locked_until | Flyway V2 | ✅ 已落地 |
+| 审计日志 | PostgreSQL `audit_logs` | actor / action / target / created_at | Flyway V1 | ✅ 已落地 |
 
 ### 5.4 配置同步与生效链路
 
-> console 读 infra/auth/*.yaml 做鉴权/用户数据;变更走 repo → deploy 同一链路,禁止另起通道。
+> PostgreSQL 是运行时控制面事实来源；旧 `infra/auth/users.yaml` 仅在空库首次启动时导入。数据源/规则等配置仍按各自 repo→deploy 链路生效。
 
 | 配置对象 | 写入位置 | 校验 | 生效动作 | 失败回滚 |
 | --- | --- | --- | --- | --- |
-| 用户/角色声明 | infra/auth/users.yaml, policy.yaml | YAML schema + 引用校验(角色存在 / 矩阵合法) | console 热加载(或 restart console) | 保留旧文件,操作=failed |
-| 审计索引模板 | infra/elasticsearch/siem-audit-template.json | 模板校验 | 重新应用模板 | 保留旧模板 |
+| 用户/角色/会话 | PostgreSQL | Flyway schema + Service 参数校验 | 事务提交后立即生效 | 事务回滚,不产生半写 |
+| 兼容用户声明 | infra/auth/users.yaml | YAML 解析 + 首次导入 | 应用首次启动导入 PostgreSQL | 保留旧文件,导入失败阻止启动 |
 
 ## 6. 数据流实现
 
 ```
-登录 → [AuthInterceptor 校验] → [PolicyService hasPermission] → [业务接口执行] → [AuditService 落审计]
-边界:auth.enabled=false → 直通;未授权 → 403 不执行业务、不落审计
+登录 → [BearerSessionFilter 查 PostgreSQL 会话] → [@PreAuthorize 角色校验] → [业务接口执行] → [控制面审计]
+边界:无 token/过期 → 401;角色无权 → 403,不执行业务
 ```
 
 | 环节 | 输入 | 处理 | 输出 | 异常处理 |
 | --- | --- | --- | --- | --- |
 | 鉴权 | token | 校验有效期 + 角色 | 用户上下文 | 无效/过期→401 |
-| 授权 | role + module + action | policy 矩阵查表 | allow/deny | deny→403 + 拒绝计数 |
-| 审计 | 业务写操作 | 记录 operator/time/变更字段 | ES siem-audit-* | 审计写失败不影响业务(仅告警日志) |
+| 授权 | role + endpoint/method | `@PreAuthorize` + AuthService 权限集合 | allow/deny | deny→403 |
+| 审计 | 业务写操作 | 记录 operator/time/action/target | PostgreSQL `audit_logs` | 与控制面事务保持一致 |
 
 ## 7. 验收标准(DoD)
 
 - **正常**:**Given** 已启用 RBAC 且有 admin/analyst 两用户 **When** admin 调用 `PATCH /api/detection-rules/r-01` 修改 enabled **Then** 返回 200,`infra/rules/r-01.yaml` 的 enabled 变更,审计记录出现 `operator=admin, action=rule_toggle`。
 - **异常**:**Given** 同一环境 **When** analyst(仅 read)调用上述启停 **Then** 返回 403,enabled 未变更,403 拒绝计数 +1。
-- **边界**:**Given** 未登录 **When** 调用 `GET /api/alerts` **Then** 返回 401;`auth.enabled=false` 时同一调用返回 200(单机直连过渡)。
-- **异常/回滚**:**Given** infra/auth/users.yaml 已有一份合法用户表 **When** 提交一份 role 不在字典的用户 **Then** 返回 400,旧文件字节不变,无部分生效。
+- **边界**:**Given** 未登录 **When** 调用 `GET /api/alerts` **Then** 返回 401;带有效 Bearer 会话且角色有读权限时返回 200。
+- **异常/回滚**:**Given** PostgreSQL 用户与角色记录有效 **When** 提交一份不存在角色的用户变更 **Then** 返回 400,数据库事务回滚,无部分生效。
 - **异常/并发**:**Given** 两名 admin 同时改同一用户角色 **When** 后者提交 **Then** 返回 409 提示刷新重试,不覆盖先到者写入。
 
 ## 8. 业界参考 / 最佳实践
@@ -192,18 +192,16 @@ GET /api/auth/me → 200 { "username": "analyst01", "role": "analyst",
 
 ## 9. 开放问题
 
-- ES 侧 `siem_ingest`/`siem_analyst` 与 console 四角色的映射(08 §12 已列):MVP 单 admin 直连时不需要;多用户前须收敛为「console 复用/代理 ES 认证」或独立用户体系。
+- ES 侧 `siem_ingest`/`siem_analyst` 与 console 四角色的映射:console 侧 RBAC 已完成；ES 请求当前由后端共享客户端代理，细粒度角色映射、多租户 FLS 后置。
 
 ## 10. 设计决策(ADR 式)
 
-### ADR-1 [用户/角色存储选型]
-- **背景**:用户/角色数据量小(个位数)、变更低频,需可审计可版本化;与 log-sources/rules 的「配置即代码」口径应一致。
-- **选项**:A. YAML + Git(`infra/auth/`)/ B. ES 索引 / C. 关系库(H2/Postgres)
-- **取舍**:A 复用既有 rsync 同步链路与 Git 审计,无新依赖,运维面最小;代价是并发写需文件锁/`_seq_no`(本项目单管理元可接受)。B/C 引入新依赖与登录体系,小团队不值当。
-- **决定**:A. 用户/角色声明存 `infra/auth/*.yaml`(文件 + Git),console 只读 + 启停,编辑走 Git/PR;infra 尚无落地(见 §5.3,本 story 建)。
+### ADR-1 [用户/会话/审计存储选型]
+- **背景**:运行时认证需要过期会话、登录失败限制、用户启停和审计查询；这些数据需要事务与并发安全。
+- **选项**:A. YAML + Git / B. ES 索引 / C. PostgreSQL 控制面。
+- **取舍**:YAML 适合声明配置但不适合会话和频繁状态更新；ES 不提供本项目所需的控制面关系约束；PostgreSQL 与阶段 4.1 控制面一致，Flyway 可迁移且便于事务回滚。
+- **决定**:采用 **C**。`infra/auth/users.yaml` 仅保留首次启动兼容导入，运行时用户、会话、失败计数和审计均由 PostgreSQL 管理。
 
-### ADR-2 [生效机制(写 infra 后如何生效)]
-- **背景**:console 进程持有用户/角色数据的启动快照;不重载则变更不生效。
-- **选项**:A. 热加载(监听文件变更 / 定期轮询)/ B. 重启 console 容器
-- **取舍**:A 免重启、失败可回滚(保留旧文件);B 简单但中断 console(登录/鉴权瞬断)。
-- **决定**:A. console 按文件变更热加载 auth 配置,加载失败保留旧配置、状态=failed;回滚口径与 §5.4 一致。
+### ADR-2 [运行时生效机制]
+- **背景**:用户角色或状态变更后，后续请求必须立即使用最新控制面数据。
+- **决定**:用户/角色变更以 PostgreSQL 事务提交为生效点；Bearer 会话按过期时间校验，disabled 用户不能继续登录。配置类数据源/规则仍走各自文件同步链路。

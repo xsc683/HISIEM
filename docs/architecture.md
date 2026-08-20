@@ -1,5 +1,7 @@
 # 系统架构
 
+> 当前实现分为两条链路：Elastic Stack + Kafka + Flink 组成数据面，Spring Boot + PostgreSQL/Flyway 组成控制面。数据面负责事件检测，控制面负责配置、处置、权限和运维状态。
+
 ## 1. 整体架构
 
 ```
@@ -37,6 +39,8 @@
 | Flink | 检测引擎:规则匹配、时间窗口关联、告警生成 | — |
 | Elasticsearch | 事件与告警的存储、检索、聚合 | — |
 | Kibana | 可视化 dashboard、索引模式 | — |
+| Spring Boot | 接入向导、告警/案件处置、认证授权、通知、任务与健康扫描 API | 不替代 Flink 检测引擎 |
+| PostgreSQL | 控制面事务数据：用户/会话、角色、案件关系、通知、审计、后台任务 | 不存储事件与告警正文 |
 
 ## 3. 数据流
 
@@ -50,7 +54,21 @@
    - 解析事件为扁平点分字段(`Event` POJO)
    - 单事件规则逐条匹配 → 每条命中生成一条告警
    - 时间窗口规则(事件时间窗口 + watermark)→ 窗口关闭时统计命中数,≥阈值生成关联告警
-6. 告警写入 ES `siem-alerts`;Kibana 展示
+6. 告警写入 ES `siem-alerts`;Kibana 与控制台展示/处置
+7. 控制台写操作通过 Spring Security 鉴权；案件处置状态、用户会话、通知、审计和后台任务写入 PostgreSQL，Flyway 负责 V1-V3 迁移。
+
+## 7. 控制面边界与接口
+
+控制面不参与实时日志消费，也不把事件/告警正文复制到 PostgreSQL。它通过 Elasticsearch Java API Client 检索事件、告警和实体风险，并在 PostgreSQL 中维护需要事务一致性的状态。
+
+| 能力 | 当前实现 | 主要接口/存储 |
+| --- | --- | --- |
+| 认证与 RBAC | Spring Security、Bearer 会话、登录失败限制 | `/api/auth/**`、`users`/`sessions` |
+| 数据源接入 | 模板预览、创建、生效、停用、删除与失败回滚 | `/api/log-sources/**`、`infra/log-sources/*.yaml` |
+| 告警与案件 | 告警状态/verdict、案件聚合、负责人/证据、时间线 | `/api/alerts/**`、`/api/cases/**`、案件关系表 + ES 镜像 |
+| 运维治理 | 六组件健康扫描、后台任务、指标、备份恢复演练 | `/api/ops/health-scan`、`/api/tasks/**`、Actuator |
+
+控制面默认连接 `localhost:5432/siem`；真实部署时先确认 PostgreSQL、ES、Kafka、Logstash、Flink、Kibana 均通过健康检查，再启动 Spring Boot。
 
 ## 4. 事件 Schema(摘要)
 
@@ -101,4 +119,4 @@ RuleRegistry(规则库)
 - 单事件规则:一条事件可命中多条规则,各生成一条告警
 - 窗口规则:事件时间 tumbling window + 有界乱序 watermark,窗口关闭时统计
 
-详见 [rule-engine.md](rule-engine.md)。
+详见 [rule-engine.md](rule-engine.md) 与 [deployment.md](deployment.md)。

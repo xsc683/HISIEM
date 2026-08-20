@@ -40,7 +40,7 @@
 | **事件 (event)** | 原始日志经解析与字段标准化后的结构化记录 | Logstash | 写入 `siem-events-*` 的 JSON 文档 |
 | **检测命中 (hit)** | 事件满足某条检测规则的条件,属于检测的中间结果 | Flink 规则引擎 | `Rule.getCondition().matches(...)` 返回 `true` |
 | **告警 (alert)** | 命中后生成的、供分析师处置的通知记录 | Flink | 写入 `siem-alerts` 的 JSON 文档 |
-| **案件 (incident)** | 一个或多个告警经归并后进入调查的处置单元 | 待实现(alert-service) | 尚未落地 |
+| **案件 (incident)** | 一个或多个告警经归并后进入调查的处置单元 | Spring Boot `CaseService` / `CaseAggregateJob` | 案件状态和案件—告警关系由 PostgreSQL 管理；ES 保留兼容镜像并提供事件检索 |
 
 **场景举例(完整术语链)**:攻击者对 `server03` 尝试 20 次 SSH 密码,产生 20 条认证失败**日志**;Logstash 将其解析为 20 条字段统一的**事件**;Flink 窗口规则识别出"5 分钟内 ≥5 次失败",产生一次**检测命中**;命中被渲染成一条暴力破解**告警**写入 `siem-alerts`;分析师确认后,该告警与后续相关告警被归并为一个**案件**展开调查。
 
@@ -109,9 +109,9 @@
 ```
 日志 ──Logstash──> 事件 ──Flink──> 命中 ──> 告警 ──ES/Kibana──> 分析师
  (log)           (event)        (hit)       (alert)               │
-                                     │                           │
-                          命中哪条规则?                      未来:incident
-                          rule_id                          (案件,未落地)
+                                     │                           ▼
+                          命中哪条规则?                 CaseService + PostgreSQL
+                          rule_id                              案件
 ```
 
 ## 5. 自测

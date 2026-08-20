@@ -1,17 +1,17 @@
 # Phase 3 设计 — 需求分析
 
-> 状态:设计稿 · 已实现基线见 §2.1(Phase 3.0-3.5,2026-08-16)
+> 状态:设计稿 · Phase 3.0-3.5 检测基线与 Phase 4.0-4.3 控制面能力已实现;后续能力仍按本文优先级管理
 > 本文档基于「成熟商业 SIEM 对标(Splunk ES / IBM QRadar / MS Sentinel / Elastic Security / Google SecOps / Wazuh)+ ES/Logstash/Kafka/Flink 组件最佳实践」研究产出,是 Phase 3 系统化设计的**需求层**。架构与落地见同目录 `02-architecture.md` / `03-component-best-practices.md` / `04-detection-engineering.md`,执行顺序见 `05-roadmap.md`。
 
 ## 1. 背景与目标
 
-当前系统已完成 Phase 1(管道 MVP)+ Phase 2(ECS schema、规则引擎、多规则、时间窗口关联、Kibana),端到端链路验证通过。下一步目标是:**对照业界成熟 SIEM 的能力模型,把"能跑通"升级为"符合业界标准做法的 SIEM"**,重点解决当前最突出的三个问题:
+当前系统的数据面已完成 Phase 1/2 管道与 Phase 3.0-3.5 检测基线，Phase 4.0-4.3 已补齐控制台、PostgreSQL 控制面、安全和运维闭环，端到端链路验证通过。下一步目标是:**对照业界成熟 SIEM 的能力模型,把"能跑通"继续升级为"符合业界标准做法的 SIEM"**,重点解决当前最突出的三个问题:
 
 1. **告警疲劳**:早期单事件规则是"1 事件 1 告警",告警会淹没分析师(业界数据:62% SOC 告警被直接无视);Phase 3 已通过告警抑制/风险评分/实体聚合减噪(见 §2.1),当前共 6 条规则。
 2. **可靠性边界**:Flink checkpoint 无持久化目录、ES sink 无确定性 `_id`(重启重放会重复告警)、窗口 watermark 无 idle 处理、无 ILM 留存策略 → 均已解决(见 §2.1)。
 3. **检测工程化缺失**:规则早期硬编码 Java 对象;Phase 3 已补 MITRE ATT&CK 标注(`rule.tags`/`attack.*` 全小写)、`rule.status` 与数值风险分(`alert.risk_score`)、规则 YAML 声明化与 lint 门禁(f1739e0/4c74f35);剩余缺口:rule.version 在窗口/CEP/基线的覆盖 + references 待补。
 
-## 2. 现状盘点(Phase 1+2 已实现)
+## 2. 现状盘点(数据面与控制面基线已实现)
 
 > Phase 3.0-3.5(2026-08-16)已把下表「局限」列的主要缺口落地,明细见 §2.1「已实现基线」。
 
@@ -120,7 +120,7 @@ Phase 3.0-3.5 检测引擎能力已全部实现并验证(commit `7e86478` / `b28
 
 - **是什么**:检测到之后的**自动处置**(隔离主机、封禁 IP、发工单)。与 SIEM 是两个产品但生态绑定。
 - **业界**:开源栈 TheHive(案件)+ Cortex(富化)+ MISP(威胁情报)+ Shuffle(编排);商业 Splunk SOAR、Sentinel automation。
-- **我们**:**明确不做**;实体风险聚合已由 entity-risk.py 落地,后续迁移 alert-service(Spring Boot 占位工程)。
+- **我们**:**明确不做 SOAR 平台**;实体风险聚合已由 `entity-risk.py` 落地,控制台负责展示与资产关键度配置。是否迁移为 Java 定时任务按后续收益评估,不影响当前闭环。
 
 #### ⑩ 部署弹性(Deployment Resilience)
 
@@ -193,7 +193,7 @@ Phase 3.0-3.5 检测引擎能力已全部实现并验证(commit `7e86478` / `b28
 ### 5.2 Must(Phase 3.1 — 减噪)
 
 - **F-R6 告警抑制**(✅ 已实现,`b284fa3`,实现口径):`AlertSuppressor` keyBy(rule_id + 实体(source.ip/user.name)) + 处理时间对齐 60min 桶((now/windowMillis)×windowMillis) + registerProcessingTimeTimer + onTimer 产最终告警。首个命中即发 count=1 的告警,窗口内后续命中累加 `alert.deduplicated_count` 不新建。已知边界:对齐桶跨窗口(11:59:59 与 12:00:01 归入不同桶);「首次命中时间起算的滑动抑制(TTL)」列为 P1 备选。
-- **F-R7 风险评分**(✅ 已实现,`c6fb407`):每条规则定数值 risk_score;Kibana 按 risk_score DESC 排序;实体风险聚合已由 `infra/elasticsearch/entity-risk.py`(entity-risk.py + asset-criticality.json)落地,alert-service(Spring Boot 占位工程)为后续迁移目标。
+- **F-R7 风险评分**(✅ 已实现,`c6fb407`):每条规则定数值 risk_score;Kibana 按 risk_score DESC 排序;实体风险聚合已由 `infra/elasticsearch/entity-risk.py`(entity-risk.py + asset-criticality.json)落地,控制台负责资产关键度配置与展示。
 
 ### 5.3 Should(Phase 3.2 — 检测工程化)
 
@@ -232,7 +232,7 @@ Phase 3.0-3.5 检测引擎能力已全部实现并验证(commit `7e86478` / `b28
 
 - ❌ 完整 UEBA / ML 平台(无 ML 基础设施,基线异常仅对高频信号做统计版)
 - ❌ 网络流分析(NetFlow/sFlow,需额外采集链)
-- ❌ SOAR 编排引擎(TheHive/Shuffle 等,告警→事件聚合由 entity-risk.py/后续 alert-service 承载)
+- ❌ SOAR 编排引擎(TheHive/Shuffle 等;当前案件聚合由 Spring Boot `CaseService`/`CaseAggregateJob` 承载)
 - ❌ 合规报表包(PCI/HIPAA/SOC2 模板)
 - ❌ 独立威胁情报平台(以轻量查表/feed 起步)
 - ❌ Schema Registry 引入(单生产者+单消费者+ECS+ES 模板已足够,出现第二生产者/消费者再评估)

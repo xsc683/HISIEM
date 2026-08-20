@@ -39,7 +39,7 @@
 | [story/story-04-alert-triage.md](story/story-04-alert-triage.md) | 告警三线处置 |
 | [story/story-05-data-health.md](story/story-05-data-health.md) | 数据源健康监控 |
 | [story/story-06-settings.md](story/story-06-settings.md) | 系统设置·资产关键度 |
-| [story/story-07-investigation.md](story/story-07-investigation.md) | 调查台·案件聚合(远期) |
+| [story/story-07-investigation.md](story/story-07-investigation.md) | 调查台·案件聚合(已实现) |
 | [story/story-08-rbac.md](story/story-08-rbac.md) | 用户与权限(RBAC) |
 | [story/story-09-parser-templates.md](story/story-09-parser-templates.md) | 预置解析模板扩充 |
 | [story/story-10-notification.md](story/story-10-notification.md) | 通知与告警路由(P1,原 Could) |

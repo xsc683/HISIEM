@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """实体风险聚合(Phase 3.5):把近 30 天 open 告警的 alert.risk_score 按实体(源 IP / 用户)聚合,
 叠加资产关键度权重,写出 siem-entity-risk 索引。复刻 Splunk RBA / Elastic 实体风险评分思路,
-是未来 alert-service(Spring Boot)定时 job 的雏形。
+当前由独立脚本定时/手工运行；Spring Boot 控制面负责配置与展示，是否迁移为 Java 定时 job 仍是后续架构选项。
 
 用法(在 WSL 内执行):
   python3 entity-risk.py              # 只打印,不写库
