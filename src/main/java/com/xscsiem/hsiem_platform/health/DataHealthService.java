@@ -1,6 +1,8 @@
 package com.xscsiem.hsiem_platform.health;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.xscsiem.hsiem_platform.search.ElasticsearchGateway;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -26,12 +28,21 @@ public class DataHealthService {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private final String esUrl;
+    private final ElasticsearchGateway gateway;
 
     @Value("${app.health.minimum-samples:20}")
     private int minimumSamples = 20;
 
-    public DataHealthService(@Value("${app.elasticsearch.url:http://localhost:9200}") String esUrl) {
+    @Autowired
+    public DataHealthService(@Value("${app.elasticsearch.url:http://localhost:9200}") String esUrl,
+                             ElasticsearchGateway gateway) {
         this.esUrl = esUrl;
+        this.gateway = gateway;
+    }
+
+    public DataHealthService(String esUrl) {
+        this.esUrl = esUrl;
+        this.gateway = null;
     }
 
     /**
@@ -157,6 +168,13 @@ public class DataHealthService {
     }
 
     private Map<String, Object> esPost(String path, String body) {
+        if (gateway != null) {
+            ElasticsearchGateway.Response response = gateway.request("POST", path, body);
+            if (response.code() / 100 != 2) {
+                throw new IllegalStateException("ES 请求失败 " + response.code() + ": " + path);
+            }
+            return response.body();
+        }
         try {
             HttpClient client = HttpClient.newBuilder()
                     .connectTimeout(Duration.ofSeconds(3)).build();

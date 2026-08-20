@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.security.access.prepost.PreAuthorize;
 
 import java.util.List;
 import java.util.Map;
@@ -29,6 +30,7 @@ public class CaseController {
 
     /** 案件列表(可按 status/entity 过滤)。 */
     @GetMapping
+    @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST', 'AUDIT')")
     public List<Map<String, Object>> list(@RequestParam(required = false) String status,
                                           @RequestParam(required = false) String entity,
                                           @RequestParam(defaultValue = "100") int size) {
@@ -37,12 +39,14 @@ public class CaseController {
 
     /** 案件详情(含 alert_ids/entities/状态)。 */
     @GetMapping("/{id}")
+    @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST', 'AUDIT')")
     public Map<String, Object> detail(@PathVariable String id) {
         return service.detail(id);
     }
 
     /** 手动聚合(≥2 条 open 告警)。 */
     @PostMapping
+    @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST')")
     public Map<String, Object> create(@RequestBody CreateRequest req,
                                       @RequestHeader(value = "Authorization", required = false) String authHeader) {
         return service.create(req.alertIds(), req.title(), operator(authHeader));
@@ -50,6 +54,7 @@ public class CaseController {
 
     /** 手动追加告警。 */
     @PostMapping("/{id}/alerts")
+    @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST')")
     public Map<String, Object> addAlerts(@PathVariable String id, @RequestBody AddAlertsRequest req,
                                          @RequestHeader(value = "Authorization", required = false) String authHeader) {
         return service.addAlerts(id, req.alertIds(), operator(authHeader));
@@ -57,12 +62,14 @@ public class CaseController {
 
     /** 手动移出告警。 */
     @DeleteMapping("/{id}/alerts/{alertId}")
+    @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST')")
     public void removeAlert(@PathVariable String id, @PathVariable String alertId) {
         service.removeAlert(id, alertId);
     }
 
     /** 状态流转(open→investigating→resolved);resolved 触发结案联动。 */
     @PostMapping("/{id}/status")
+    @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST')")
     public Map<String, Object> updateStatus(@PathVariable String id, @RequestBody StatusRequest req,
                                             @RequestHeader(value = "Authorization", required = false) String authHeader) {
         return service.updateStatus(id, req.status(), req.verdict(), operator(authHeader));
@@ -70,6 +77,7 @@ public class CaseController {
 
     /** 时间线(实时关联 siem-events)。 */
     @GetMapping("/{id}/timeline")
+    @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST', 'AUDIT')")
     public List<Map<String, Object>> timeline(@PathVariable String id,
                                               @RequestParam(defaultValue = "50") int size) {
         return service.timeline(id, size);
@@ -77,12 +85,14 @@ public class CaseController {
 
     /** 删除案件(移空后可删空案)。 */
     @DeleteMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
     public void delete(@PathVariable String id) {
         service.delete(id);
     }
 
     /** 手动触发一轮自动聚合(运维/测试用)。 */
     @PostMapping("/aggregate")
+    @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST')")
     public Map<String, Object> aggregate() {
         int created = service.aggregateAuto(30);
         return Map.of("created", created);

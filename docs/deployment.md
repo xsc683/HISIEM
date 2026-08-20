@@ -48,6 +48,7 @@ java -jar target/hsiem-platform-0.0.1-SNAPSHOT.jar
 ```
 
 Flyway 首次启动会创建控制面表并导入旧版本 `infra/auth/users.yaml` 用户；之后 PostgreSQL 是用户、角色和审计的唯一来源。
+登录 Token 只在响应中返回一次，数据库保存 SHA-256 后的会话值；默认会话 8 小时，连续 5 次失败后锁定 15 分钟。控制面 API 需要 `Authorization: Bearer <token>`。
 
 Logstash 的 healthcheck 同时检查 5000/5001/5002/5004/5005/5006 和 9600,
 避免出现“容器 healthy 但 pipeline 尚未监听”的假就绪。
@@ -108,6 +109,19 @@ bash /mnt/d/Project/SIEM/infra/validate-deployment.sh
 脚本以非 0 退出表示失败,检查 Compose 配置、7 个容器状态、健康检查、6 个 Logstash 输入端口、PostgreSQL/ES/Kibana/Flink API、Kafka topic 及检测作业 RUNNING。
 只启动数据面而未提交 Flink 作业时可用 `REQUIRE_DETECTION_JOB=0`。
 Spring Boot 启动并完成 Flyway 后，可追加 `REQUIRE_CONTROL_PLANE_SCHEMA=1` 检查 PostgreSQL 控制面 7 张表。
+
+应用接口自验证示例:
+
+```bash
+TOKEN=$(curl -s -X POST http://localhost:8080/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"admin123"}' | jq -r .token)
+curl -s http://localhost:8080/api/auth/me -H "Authorization: Bearer $TOKEN"
+curl -s http://localhost:8080/actuator/health
+curl -s http://localhost:8080/api/tasks -H "Authorization: Bearer $TOKEN"
+```
+
+`/actuator/health` 公开用于存活探针；`/actuator/metrics`、`/actuator/prometheus` 需要 admin 权限。
 
 ## 10. 验证链路
 

@@ -3,6 +3,8 @@ package com.xscsiem.hsiem_platform.alert;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.xscsiem.hsiem_platform.onboarding.ConflictException;
 import com.xscsiem.hsiem_platform.onboarding.NotFoundException;
+import com.xscsiem.hsiem_platform.search.ElasticsearchGateway;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -36,9 +38,19 @@ public class AlertService {
             .connectTimeout(Duration.ofSeconds(3)).build();
 
     private final String esUrl;
+    private final ElasticsearchGateway gateway;
 
-    public AlertService(@Value("${app.elasticsearch.url:http://localhost:9200}") String esUrl) {
+    @Autowired
+    public AlertService(@Value("${app.elasticsearch.url:http://localhost:9200}") String esUrl,
+                        ElasticsearchGateway gateway) {
         this.esUrl = esUrl;
+        this.gateway = gateway;
+    }
+
+    /** 纯逻辑单元测试构造器,生产由 Spring 注入 Java API Client 网关。 */
+    public AlertService(String esUrl) {
+        this.esUrl = esUrl;
+        this.gateway = null;
     }
 
     /** 告警列表(open 默认,按 risk_score DESC + 时间倒序)。 */
@@ -307,6 +319,10 @@ public class AlertService {
 
     /** 单次 ES 请求,返回(状态码, 解析 body)。 */
     private EsResponse esRequest(String method, String path, String body) {
+        if (gateway != null) {
+            ElasticsearchGateway.Response response = gateway.request(method, path, body);
+            return new EsResponse(response.code(), response.body());
+        }
         try {
             HttpRequest.Builder builder = HttpRequest.newBuilder().uri(URI.create(esUrl + path));
             if (body != null) {

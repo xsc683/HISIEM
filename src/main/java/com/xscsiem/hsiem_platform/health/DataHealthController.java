@@ -6,6 +6,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.security.access.prepost.PreAuthorize;
 
 import java.util.List;
 import java.util.Map;
@@ -24,6 +25,7 @@ public class DataHealthController {
     }
 
     @GetMapping("/sources")
+    @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST', 'OPS', 'AUDIT')")
     public List<Map<String, Object>> sources() {
         List<Map<String, Object>> sources = service.sources();
         // 健康异常 → 通知(频控:同源 1h 1 条,见 story-10)
@@ -37,11 +39,13 @@ public class DataHealthController {
     }
 
     @GetMapping("/sources/{id}/trend")
+    @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST', 'OPS', 'AUDIT')")
     public List<Map<String, Object>> trend(@PathVariable String id) {
         return service.trend(id);
     }
 
     @GetMapping("/sources/{id}/failures")
+    @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST', 'OPS', 'AUDIT')")
     public List<Map<String, Object>> failures(@PathVariable String id,
                                               @RequestParam(defaultValue = "50") int size) {
         return service.failures(id, size);

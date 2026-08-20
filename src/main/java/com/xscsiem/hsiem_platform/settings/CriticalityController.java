@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.access.prepost.PreAuthorize;
 
 import java.util.Map;
 
@@ -33,12 +34,14 @@ public class CriticalityController {
 
     /** 全量:按类型返回 {key: {level, weight}}。 */
     @GetMapping
+    @PreAuthorize("isAuthenticated()")
     public Map<String, Object> all() {
         return service.all();
     }
 
     /** 设置/更新某资产级别(PUT,level=low/medium/high/extreme)。 */
     @PutMapping("/{type}/{key}")
+    @PreAuthorize("hasRole('ADMIN')")
     public Map<String, Object> set(@PathVariable String type, @PathVariable String key,
                                    @RequestBody LevelRequest req) {
         return service.set(type, key, req.level());
@@ -46,6 +49,7 @@ public class CriticalityController {
 
     /** 删除某资产。 */
     @DeleteMapping("/{type}/{key}")
+    @PreAuthorize("hasRole('ADMIN')")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void delete(@PathVariable String type, @PathVariable String key) {
         service.delete(type, key);
@@ -53,6 +57,7 @@ public class CriticalityController {
 
     /** 触发实体风险重算(entity-risk.py 读最新权重,约数秒)。 */
     @PostMapping("/recalc")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<Map<String, Object>> recalc() {
         String output = deployer.recalcEntityRisk();
         notify.notify("criticality", "entity-risk", "实体风险已按最新资产关键度重算");

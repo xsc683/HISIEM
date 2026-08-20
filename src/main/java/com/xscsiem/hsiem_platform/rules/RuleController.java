@@ -8,6 +8,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.security.access.prepost.PreAuthorize;
 
 import java.util.List;
 import java.util.Map;
@@ -29,18 +30,21 @@ public class RuleController {
 
     /** 规则列表(infra/rules/*.yaml,含 enabled 状态)。 */
     @GetMapping
+    @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST', 'OPS', 'AUDIT')")
     public List<Map<String, Object>> list() {
         return rules.list();
     }
 
     /** 规则详情(元数据 + 条件/参数)。 */
     @GetMapping("/{id}")
+    @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST', 'OPS', 'AUDIT')")
     public Map<String, Object> detail(@PathVariable String id) {
         return rules.get(id);
     }
 
     /** 最近 range 内该规则命中数(ES 按 alert.rule_id 聚合)。 */
     @GetMapping("/{id}/hits")
+    @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST', 'AUDIT')")
     public Map<String, Object> hits(@PathVariable String id,
                                     @RequestParam(defaultValue = "7d") String range) {
         return Map.of("ruleId", id, "range", range, "count", rules.hits(id, range));
@@ -48,6 +52,7 @@ public class RuleController {
 
     /** 启停:翻转 enabled 写回 YAML(生效需调用 deploy → 重启检测 job)。 */
     @PostMapping("/{id}/toggle")
+    @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST')")
     public Map<String, Object> toggle(@PathVariable String id) {
         Map<String, Object> updated = rules.toggle(id);
         updated.put("deployed", false);
@@ -57,12 +62,14 @@ public class RuleController {
 
     /** MITRE 覆盖矩阵(由规则 tags 动态聚合;Blind 盲区见 mitre-coverage.md)。 */
     @GetMapping("/mitre")
+    @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST', 'AUDIT')")
     public Map<String, Object> mitre() {
         return rules.mitre();
     }
 
     /** 部署生效:同步规则到 Flink jobmanager + 重启检测 job(一次重部署成本,约 15-35s)。 */
     @PostMapping("/deploy")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<Map<String, Object>> deploy() {
         deployer.syncRules();
         String jobId = deployer.restartDetectionJob();

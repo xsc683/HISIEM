@@ -9,6 +9,7 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.security.access.prepost.PreAuthorize;
 
 import java.util.List;
 import java.util.Map;
@@ -28,6 +29,7 @@ public class AlertController {
 
     /** 告警列表(open 默认,risk_score DESC)。 */
     @GetMapping
+    @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST', 'AUDIT')")
     public List<Map<String, Object>> list(@RequestParam(required = false) String status,
                                           @RequestParam(defaultValue = "100") int size) {
         return service.list(status, size);
@@ -35,12 +37,14 @@ public class AlertController {
 
     /** 告警详情。 */
     @GetMapping("/{id}")
+    @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST', 'AUDIT')")
     public Map<String, Object> detail(@PathVariable String id) {
         return service.detail(id);
     }
 
     /** 三线流转(open→ack→investigating→resolved/closed)。 */
     @PostMapping("/{id}/status")
+    @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST')")
     public Map<String, Object> updateStatus(@PathVariable String id, @RequestBody StatusRequest req,
                                             @RequestHeader(value = "Authorization", required = false) String authHeader) {
         return service.update(id, req.status(), null, operator(authHeader));
@@ -48,6 +52,7 @@ public class AlertController {
 
     /** 打 verdict(true_positive/false_positive/duplicate)。 */
     @PostMapping("/{id}/verdict")
+    @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST')")
     public Map<String, Object> updateVerdict(@PathVariable String id, @RequestBody VerdictRequest req,
                                              @RequestHeader(value = "Authorization", required = false) String authHeader) {
         return service.update(id, null, req.verdict(), operator(authHeader));
@@ -55,6 +60,7 @@ public class AlertController {
 
     /** 批量状态(批量 close 前置已补 verdict)。 */
     @PostMapping("/batch-status")
+    @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST')")
     public Map<String, Object> batchStatus(@RequestBody BatchStatusRequest req,
                                            @RequestHeader(value = "Authorization", required = false) String authHeader) {
         return service.batch(req.ids(), req.status(), null, operator(authHeader));
@@ -62,6 +68,7 @@ public class AlertController {
 
     /** 批量 verdict。 */
     @PostMapping("/batch-verdict")
+    @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST')")
     public Map<String, Object> batchVerdict(@RequestBody BatchVerdictRequest req,
                                             @RequestHeader(value = "Authorization", required = false) String authHeader) {
         return service.batch(req.ids(), null, req.verdict(), operator(authHeader));
@@ -69,6 +76,7 @@ public class AlertController {
 
     /** 按规则 FP 率(FP/(TP+FP),>50% 高亮)。 */
     @GetMapping("/fp-rate")
+    @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST', 'AUDIT')")
     public List<Map<String, Object>> fpRate() {
         return service.fpRate();
     }

@@ -12,6 +12,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.sql.Timestamp;
 import java.sql.Types;
 import java.time.Instant;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -95,6 +96,90 @@ public class JdbcControlPlaneStore implements ControlPlaneStore {
         if (changed == 0) {
             throw new NotFoundException("用户不存在: " + username);
         }
+    }
+
+    @Override
+    public String findSessionUsername(String tokenHash, Instant now) {
+        List<String> usernames = jdbc.query("""
+                        SELECT username FROM auth_sessions
+                        WHERE token_hash = ? AND expires_at > ?
+                        """, (rs, rowNum) -> rs.getString("username"), tokenHash, timestamp(now.toString()));
+        if (usernames.isEmpty()) {
+            jdbc.update("DELETE FROM auth_sessions WHERE token_hash = ? OR expires_at <= ?",
+                    tokenHash, timestamp(now.toString()));
+            return null;
+        }
+        jdbc.update("UPDATE auth_sessions SET last_seen_at = CURRENT_TIMESTAMP WHERE token_hash = ?", tokenHash);
+        return usernames.get(0);
+    }
+
+    @Override
+    public void createSession(String tokenHash, String username, Instant expiresAt) {
+        jdbc.update("""
+                        INSERT INTO auth_sessions(token_hash, username, expires_at)
+                        VALUES (?, ?, ?)
+                        """, tokenHash, username, timestamp(expiresAt.toString()));
+    }
+
+    @Override
+    public void deleteSession(String tokenHash) {
+        jdbc.update("DELETE FROM auth_sessions WHERE token_hash = ?", tokenHash);
+    }
+
+    @Override
+    public void deleteSessionsForUser(String username) {
+        jdbc.update("DELETE FROM auth_sessions WHERE username = ?", username);
+    }
+
+    @Override
+    public void cleanupExpiredSessions(Instant now) {
+        jdbc.update("DELETE FROM auth_sessions WHERE expires_at <= ?", timestamp(now.toString()));
+    }
+
+    @Override
+    public boolean isLoginBlocked(String username, Instant now) {
+        Integer count = jdbc.queryForObject("""
+                        SELECT COUNT(*) FROM login_attempts
+                        WHERE username = ? AND locked_until > ?
+                        """, Integer.class, username, timestamp(now.toString()));
+        return count != null && count > 0;
+    }
+
+    @Override
+    @Transactional
+    public void recordLoginFailure(String username, Instant now, int maxFailures,
+                                   Duration window, Duration lockout) {
+        List<Map<String, Object>> rows = jdbc.query("""
+                        SELECT failure_count, first_failure_at FROM login_attempts
+                        WHERE username = ? FOR UPDATE
+                        """, (rs, rowNum) -> {
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    row.put("failureCount", rs.getInt("failure_count"));
+                    row.put("firstFailureAt", rs.getTimestamp("first_failure_at").toInstant());
+                    return row;
+                }, username);
+        if (rows.isEmpty()) {
+            jdbc.update("""
+                            INSERT INTO login_attempts(username, failure_count, first_failure_at, locked_until)
+                            VALUES (?, 1, ?, NULL)
+                            """, username, timestamp(now.toString()));
+            return;
+        }
+        Map<String, Object> row = rows.get(0);
+        Instant first = (Instant) row.get("firstFailureAt");
+        int failures = first.isBefore(now.minus(window)) ? 1 : ((Number) row.get("failureCount")).intValue() + 1;
+        Instant firstFailure = first.isBefore(now.minus(window)) ? now : first;
+        Instant lockedUntil = failures >= maxFailures ? now.plus(lockout) : null;
+        jdbc.update("""
+                        UPDATE login_attempts SET failure_count = ?, first_failure_at = ?,
+                            locked_until = ?, updated_at = CURRENT_TIMESTAMP WHERE username = ?
+                        """, failures, timestamp(firstFailure.toString()),
+                lockedUntil == null ? null : timestamp(lockedUntil.toString()), username);
+    }
+
+    @Override
+    public void resetLoginFailures(String username) {
+        jdbc.update("DELETE FROM login_attempts WHERE username = ?", username);
     }
 
     @Override
@@ -314,26 +399,38 @@ public class JdbcControlPlaneStore implements ControlPlaneStore {
     }
 
     @Override
+    public Map<String, Object> findTask(String id) {
+        List<Map<String, Object>> rows = jdbc.query("""
+                        SELECT id, task_type, resource_id, status, progress, message, error,
+                               started_at, finished_at, created_at, updated_at
+                        FROM background_tasks WHERE id = ?
+                        """, (rs, rowNum) -> taskRow(rs), id);
+        return rows.isEmpty() ? null : rows.get(0);
+    }
+
+    @Override
     public List<Map<String, Object>> listTasks(int size) {
         return jdbc.query("""
                         SELECT id, task_type, resource_id, status, progress, message, error,
                                started_at, finished_at, created_at, updated_at
                         FROM background_tasks ORDER BY updated_at DESC LIMIT ?
-                        """, (rs, rowNum) -> {
-                    Map<String, Object> row = new LinkedHashMap<>();
-                    row.put("id", rs.getString("id"));
-                    row.put("type", rs.getString("task_type"));
-                    row.put("resourceId", rs.getString("resource_id"));
-                    row.put("status", rs.getString("status"));
-                    row.put("progress", rs.getInt("progress"));
-                    row.put("message", rs.getString("message"));
-                    row.put("error", rs.getString("error"));
-                    row.put("startedAt", instant(rs.getTimestamp("started_at")));
-                    row.put("finishedAt", instant(rs.getTimestamp("finished_at")));
-                    row.put("createdAt", instant(rs.getTimestamp("created_at")));
-                    row.put("updatedAt", instant(rs.getTimestamp("updated_at")));
-                    return row;
-                }, Math.min(Math.max(size, 1), 200));
+                        """, (rs, rowNum) -> taskRow(rs), Math.min(Math.max(size, 1), 200));
+    }
+
+    private Map<String, Object> taskRow(java.sql.ResultSet rs) throws java.sql.SQLException {
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("id", rs.getString("id"));
+        row.put("type", rs.getString("task_type"));
+        row.put("resourceId", rs.getString("resource_id"));
+        row.put("status", rs.getString("status"));
+        row.put("progress", rs.getInt("progress"));
+        row.put("message", rs.getString("message"));
+        row.put("error", rs.getString("error"));
+        row.put("startedAt", instant(rs.getTimestamp("started_at")));
+        row.put("finishedAt", instant(rs.getTimestamp("finished_at")));
+        row.put("createdAt", instant(rs.getTimestamp("created_at")));
+        row.put("updatedAt", instant(rs.getTimestamp("updated_at")));
+        return row;
     }
 
     private void insertRelations(String caseId, List<String> alertIds) {

@@ -39,6 +39,16 @@ class AuthServiceTest {
     }
 
     @Test
+    void repeatedFailures_areThrottled() {
+        for (int i = 0; i < 5; i++) {
+            assertThrows(UnauthorizedException.class, () -> svc.login("admin", "wrong"));
+        }
+        UnauthorizedException blocked = assertThrows(UnauthorizedException.class,
+                () -> svc.login("admin", "admin123"));
+        assertTrue(blocked.getMessage().contains("15 分钟"));
+    }
+
+    @Test
     void createUser_loginWorks_andWeakPasswordRejected() {
         svc.createUser("alice", "secret1", "analyst");
         Map<String, Object> login = svc.login("alice", "secret1");

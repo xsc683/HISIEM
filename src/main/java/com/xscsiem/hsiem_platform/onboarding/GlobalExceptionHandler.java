@@ -2,12 +2,18 @@ package com.xscsiem.hsiem_platform.onboarding;
 
 import com.xscsiem.hsiem_platform.auth.ForbiddenException;
 import com.xscsiem.hsiem_platform.auth.UnauthorizedException;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.ConstraintViolationException;
+import org.springframework.http.ResponseEntity;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
-import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
-import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * 统一异常 → HTTP 状态码(对齐 story _template §5.2 4xx 约定):
@@ -18,38 +24,68 @@ import java.util.Map;
 public class GlobalExceptionHandler {
 
     @ExceptionHandler(NotFoundException.class)
-    @ResponseStatus(HttpStatus.NOT_FOUND)
-    public Map<String, Object> notFound(NotFoundException e) {
-        return Map.of("error", e.getMessage());
+    public ResponseEntity<ApiError> notFound(NotFoundException e, HttpServletRequest request) {
+        return error(HttpStatus.NOT_FOUND, "NOT_FOUND", e.getMessage(), request);
     }
 
     @ExceptionHandler(PortConflictException.class)
-    @ResponseStatus(HttpStatus.CONFLICT)
-    public Map<String, Object> conflict(PortConflictException e) {
-        return Map.of("error", e.getMessage());
+    public ResponseEntity<ApiError> conflict(PortConflictException e, HttpServletRequest request) {
+        return error(HttpStatus.CONFLICT, "PORT_CONFLICT", e.getMessage(), request);
     }
 
     @ExceptionHandler(IllegalArgumentException.class)
-    @ResponseStatus(HttpStatus.BAD_REQUEST)
-    public Map<String, Object> badRequest(IllegalArgumentException e) {
-        return Map.of("error", e.getMessage());
+    public ResponseEntity<ApiError> badRequest(IllegalArgumentException e, HttpServletRequest request) {
+        return error(HttpStatus.BAD_REQUEST, "INVALID_ARGUMENT", e.getMessage(), request);
     }
 
     @ExceptionHandler(ConflictException.class)
-    @ResponseStatus(HttpStatus.CONFLICT)
-    public Map<String, Object> conflict(ConflictException e) {
-        return Map.of("error", e.getMessage());
+    public ResponseEntity<ApiError> conflict(ConflictException e, HttpServletRequest request) {
+        return error(HttpStatus.CONFLICT, "CONFLICT", e.getMessage(), request);
     }
 
     @ExceptionHandler(UnauthorizedException.class)
-    @ResponseStatus(HttpStatus.UNAUTHORIZED)
-    public Map<String, Object> unauthorized(UnauthorizedException e) {
-        return Map.of("error", e.getMessage());
+    public ResponseEntity<ApiError> unauthorized(UnauthorizedException e, HttpServletRequest request) {
+        return error(HttpStatus.UNAUTHORIZED, "UNAUTHORIZED", e.getMessage(), request);
     }
 
     @ExceptionHandler(ForbiddenException.class)
-    @ResponseStatus(HttpStatus.FORBIDDEN)
-    public Map<String, Object> forbidden(ForbiddenException e) {
-        return Map.of("error", e.getMessage());
+    public ResponseEntity<ApiError> forbidden(ForbiddenException e, HttpServletRequest request) {
+        return error(HttpStatus.FORBIDDEN, "FORBIDDEN", e.getMessage(), request);
+    }
+
+    @ExceptionHandler(AccessDeniedException.class)
+    public ResponseEntity<ApiError> accessDenied(AccessDeniedException e, HttpServletRequest request) {
+        return error(HttpStatus.FORBIDDEN, "FORBIDDEN", "当前角色无权执行该操作", request);
+    }
+
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    public ResponseEntity<ApiError> validation(MethodArgumentNotValidException e, HttpServletRequest request) {
+        String message = e.getBindingResult().getFieldErrors().stream()
+                .map(field -> field.getField() + ": " + field.getDefaultMessage())
+                .collect(Collectors.joining("; "));
+        return error(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", message, request);
+    }
+
+    @ExceptionHandler(ConstraintViolationException.class)
+    public ResponseEntity<ApiError> constraintViolation(ConstraintViolationException e, HttpServletRequest request) {
+        return error(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", e.getMessage(), request);
+    }
+
+    @ExceptionHandler({HttpMessageNotReadableException.class, MethodArgumentTypeMismatchException.class})
+    public ResponseEntity<ApiError> malformedRequest(Exception e, HttpServletRequest request) {
+        return error(HttpStatus.BAD_REQUEST, "MALFORMED_REQUEST", "请求参数格式错误", request);
+    }
+
+    @ExceptionHandler(Exception.class)
+    public ResponseEntity<ApiError> internal(Exception e, HttpServletRequest request) {
+        return error(HttpStatus.INTERNAL_SERVER_ERROR, "INTERNAL_ERROR", "服务器内部错误", request);
+    }
+
+    private ResponseEntity<ApiError> error(HttpStatus status, String code, String message,
+                                           HttpServletRequest request) {
+        return ResponseEntity.status(status)
+                .body(new ApiError(java.time.Instant.now(), status.value(), code,
+                        message == null || message.isBlank() ? status.getReasonPhrase() : message,
+                        request.getRequestURI()));
     }
 }

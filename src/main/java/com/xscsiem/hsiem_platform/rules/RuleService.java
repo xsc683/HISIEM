@@ -3,6 +3,8 @@ package com.xscsiem.hsiem_platform.rules;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import com.xscsiem.hsiem_platform.onboarding.NotFoundException;
+import com.xscsiem.hsiem_platform.search.ElasticsearchGateway;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -29,11 +31,22 @@ public class RuleService {
     private final ObjectMapper yamlMapper = new ObjectMapper(new YAMLFactory());
     private final String rulesDir;
     private final String esUrl;
+    private final ElasticsearchGateway gateway;
 
+    @Autowired
     public RuleService(@Value("${app.rules-dir:infra/rules}") String rulesDir,
-                       @Value("${app.elasticsearch.url:http://localhost:9200}") String esUrl) {
+                       @Value("${app.elasticsearch.url:http://localhost:9200}") String esUrl,
+                       ElasticsearchGateway gateway) {
         this.rulesDir = rulesDir;
         this.esUrl = esUrl;
+        this.gateway = gateway;
+    }
+
+    /** 纯逻辑单元测试构造器。 */
+    public RuleService(String rulesDir, String esUrl) {
+        this.rulesDir = rulesDir;
+        this.esUrl = esUrl;
+        this.gateway = null;
     }
 
     public List<Map<String, Object>> list() {
@@ -86,6 +99,14 @@ public class RuleService {
         String body = "{\"query\":{\"bool\":{\"filter\":[{\"term\":{\"alert.rule_id\":\""
                 + id + "\"}},{\"range\":{\"@timestamp\":{\"gte\":\"now-" + range + "\"}}}]}}}";
         try {
+            if (gateway != null) {
+                ElasticsearchGateway.Response response = gateway.request("POST", "/siem-alerts/_count", body);
+                if (response.code() / 100 != 2) {
+                    return -1;
+                }
+                Object count = response.body().get("count");
+                return count instanceof Number n ? n.longValue() : 0L;
+            }
             HttpClient client = HttpClient.newBuilder()
                     .connectTimeout(Duration.ofSeconds(3)).build();
             HttpRequest req = HttpRequest.newBuilder()

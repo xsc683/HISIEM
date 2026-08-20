@@ -3,6 +3,7 @@ package com.xscsiem.hsiem_platform.control;
 import com.xscsiem.hsiem_platform.auth.AuthUser;
 
 import java.time.Instant;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 
@@ -21,6 +22,23 @@ public interface ControlPlaneStore {
     void updateUser(AuthUser user);
 
     void deleteUser(String username);
+
+    String findSessionUsername(String tokenHash, Instant now);
+
+    void createSession(String tokenHash, String username, Instant expiresAt);
+
+    void deleteSession(String tokenHash);
+
+    void deleteSessionsForUser(String username);
+
+    void cleanupExpiredSessions(Instant now);
+
+    boolean isLoginBlocked(String username, Instant now);
+
+    void recordLoginFailure(String username, Instant now, int maxFailures,
+                            Duration window, Duration lockout);
+
+    void resetLoginFailures(String username);
 
     List<Map<String, Object>> listRoles();
 
@@ -56,6 +74,8 @@ public interface ControlPlaneStore {
     String createTask(String type, String resourceId, String message);
 
     void updateTask(String id, String status, int progress, String message, String error);
+
+    Map<String, Object> findTask(String id);
 
     List<Map<String, Object>> listTasks(int size);
 }

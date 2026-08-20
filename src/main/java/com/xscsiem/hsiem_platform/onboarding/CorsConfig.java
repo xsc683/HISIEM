@@ -1,20 +1,12 @@
 package com.xscsiem.hsiem_platform.onboarding;
 
-import com.xscsiem.hsiem_platform.auth.AuthInterceptor;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.CorsRegistry;
-import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
-/** 允许前端开发服务器(web/ Vite,localhost:5173)跨域访问 API;注册控制台鉴权拦截器(story-08)。 */
+/** 允许前端开发服务器(web/ Vite,localhost:5173)跨域访问 API;鉴权由 Spring Security 统一处理。 */
 @Configuration
 public class CorsConfig implements WebMvcConfigurer {
-
-    private final AuthInterceptor authInterceptor;
-
-    public CorsConfig(AuthInterceptor authInterceptor) {
-        this.authInterceptor = authInterceptor;
-    }
 
     @Override
     public void addCorsMappings(CorsRegistry registry) {
@@ -24,8 +16,4 @@ public class CorsConfig implements WebMvcConfigurer {
                 .allowedHeaders("*");
     }
 
-    @Override
-    public void addInterceptors(InterceptorRegistry registry) {
-        registry.addInterceptor(authInterceptor).addPathPatterns("/api/**");
-    }
 }

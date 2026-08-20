@@ -1,6 +1,9 @@
 package com.xscsiem.hsiem_platform.auth;
 
 import org.springframework.http.HttpStatus;
+import org.springframework.security.access.prepost.PreAuthorize;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -27,7 +30,7 @@ public class AuthController {
     }
 
     @PostMapping("/login")
-    public Map<String, Object> login(@RequestBody LoginRequest req) {
+    public Map<String, Object> login(@Valid @RequestBody LoginRequest req) {
         return auth.login(req.username(), req.password());
     }
 
@@ -38,6 +41,7 @@ public class AuthController {
     }
 
     @GetMapping("/me")
+    @PreAuthorize("isAuthenticated()")
     public Map<String, Object> me(@RequestHeader(value = "Authorization", required = false) String authHeader) {
         AuthUser u = auth.me(extractToken(authHeader));
         return Map.of("username", u.username, "role", u.role, "status", u.status);
@@ -46,33 +50,39 @@ public class AuthController {
     // ---- 用户/角色/审计(admin-only,AuthInterceptor 拦截) ----
 
     @GetMapping("/users")
+    @PreAuthorize("hasRole('ADMIN')")
     public List<AuthUser> users() {
         return auth.listUsers();
     }
 
     @PostMapping("/users")
+    @PreAuthorize("hasRole('ADMIN')")
     @ResponseStatus(HttpStatus.CREATED)
     public AuthUser createUser(@RequestBody UserRequest req) {
         return auth.createUser(req.username(), req.password(), req.role());
     }
 
     @DeleteMapping("/users/{username}")
+    @PreAuthorize("hasRole('ADMIN')")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void deleteUser(@PathVariable String username) {
         auth.deleteUser(username);
     }
 
     @PutMapping("/users/{username}/role")
+    @PreAuthorize("hasRole('ADMIN')")
     public AuthUser updateRole(@PathVariable String username, @RequestBody RoleRequest req) {
         return auth.updateRole(username, req.role());
     }
 
     @GetMapping("/roles")
+    @PreAuthorize("hasAnyRole('ADMIN', 'AUDIT')")
     public List<Map<String, Object>> roles() {
         return auth.roles();
     }
 
     @GetMapping("/audit-logs")
+    @PreAuthorize("hasRole('ADMIN')")
     public List<Map<String, String>> auditLogs() {
         return auth.auditLogs();
     }
@@ -81,7 +91,7 @@ public class AuthController {
         return header != null && header.startsWith("Bearer ") ? header.substring(7) : "";
     }
 
-    public record LoginRequest(String username, String password) {
+    public record LoginRequest(@NotBlank String username, @NotBlank String password) {
     }
 
     public record UserRequest(String username, String password, String role) {

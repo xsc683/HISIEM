@@ -18,4 +18,6 @@
 Spring Boot 控制面默认连接 `localhost:5432/siem`，Flyway 在应用启动时执行 `src/main/resources/db/migration`。
 用户、角色、案件关系、通知、审计和后台任务进入 PostgreSQL；事件、告警正文和实体风险仍进入 Elasticsearch。
 
+阶段 4.2 后，Spring Security 负责 `/api/**` 鉴权和方法级 RBAC；登录会话与失败计数持久化在 PostgreSQL，ES 请求由 Elasticsearch Java API Client 共享连接池承载。后台生效任务可通过 `GET /api/tasks` 或 `GET /api/tasks/{id}` 查询。
+
 > 新机器完整部署步骤见 [docs/deployment.md](../docs/deployment.md)。

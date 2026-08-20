@@ -5,6 +5,7 @@ import com.xscsiem.hsiem_platform.alert.AlertService;
 import com.xscsiem.hsiem_platform.control.ControlPlaneStore;
 import com.xscsiem.hsiem_platform.onboarding.ConflictException;
 import com.xscsiem.hsiem_platform.onboarding.NotFoundException;
+import com.xscsiem.hsiem_platform.search.ElasticsearchGateway;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -46,19 +47,25 @@ public class CaseService {
     private final String esUrl;
     private final AlertService alerts;
     private final ControlPlaneStore control;
+    private final ElasticsearchGateway gateway;
 
     @Autowired
     public CaseService(@Value("${app.elasticsearch.url:http://localhost:9200}") String esUrl,
-                       AlertService alerts, ControlPlaneStore control) {
+                       AlertService alerts, ControlPlaneStore control,
+                       ElasticsearchGateway gateway) {
         this.esUrl = esUrl;
         this.alerts = alerts;
         this.control = control;
+        this.gateway = gateway;
     }
 
     /** 轻量构造器仅供不启动 Spring/数据库的状态机单元测试使用。 */
     public CaseService(@Value("${app.elasticsearch.url:http://localhost:9200}") String esUrl,
                        AlertService alerts) {
-        this(esUrl, alerts, null);
+        this.esUrl = esUrl;
+        this.alerts = alerts;
+        this.control = null;
+        this.gateway = null;
     }
 
     /** 案件列表(按 updated_at 倒序;可按 status/entity 过滤)。 */
@@ -608,6 +615,10 @@ public class CaseService {
     }
 
     private EsResponse esRequest(String method, String path, String body) {
+        if (gateway != null) {
+            ElasticsearchGateway.Response response = gateway.request(method, path, body);
+            return new EsResponse(response.code(), response.body());
+        }
         try {
             HttpRequest.Builder builder = HttpRequest.newBuilder().uri(URI.create(esUrl + path));
             if (body != null) {

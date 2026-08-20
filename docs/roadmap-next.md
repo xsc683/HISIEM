@@ -18,11 +18,13 @@
 - `src/main/resources/db/migration/V1__control_plane.sql` 创建控制面表、角色种子和案件—告警唯一关联约束。
 - Spring JDBC 存储接入认证、审计、通知、案件和异步数据源生效任务；旧 `users.yaml` 仅在首次启动时导入。
 - 案件保留 ES 兼容镜像，历史 ES 案件在首次查询时惰性导入控制面，避免一次性迁移阻断服务启动。
-- 验收：Flyway/H2 集成测试、59 个 Spring 测试通过；Compose 配置和 PostgreSQL 容器定义已校验。真实 PostgreSQL 拉取验证受 Docker Hub 匿名鉴权网络错误阻断，待镜像可用后补跑。
+- 验收：Flyway/H2 集成测试、真实 PostgreSQL 16.4 启动迁移、接口读写和部署自验证均通过；阶段 4.1 的 7 张控制面表、Flyway v1 记录和 Flink RUNNING 已实机确认。
 
-### 阶段 4.2：安全与工程化
+### 阶段 4.2：安全与工程化（已完成）
 
-以 Spring Security 替换自定义拦截器，补接口级权限、会话持久化、登录失败限制、统一 DTO/错误码；再引入 Elasticsearch Java Client、Testcontainers、Actuator、Micrometer 和部署任务状态。
+以 Spring Security 替换自定义拦截器，补接口级权限、PostgreSQL 会话持久化、登录失败限制和统一错误 DTO；生产 ES 请求统一经过 Elasticsearch Java API Client，Testcontainers 覆盖空 PostgreSQL 的 Flyway v2 迁移，Actuator/Micrometer 暴露 health/metrics/prometheus，后台任务支持列表和按 ID 查询。
+
+- 验收：根项目 59 个原有测试 + 新增安全/失败限制/容器迁移测试通过；真实运行态验证登录、重启后 Token、角色 403、Actuator 和 ES 搜索/计数均通过。
 
 ### 阶段 4.3：产品与运维增强
 
