@@ -166,11 +166,13 @@ public class CaseService {
         doc.put("case.status", "open");
         doc.put("case.aggregation", aggregation == null ? "manual" : aggregation);
         doc.put("case.operator", operator == null ? "anonymous" : operator);
+        doc.put("case.owner", operator == null ? "anonymous" : operator);
         doc.put("case.created_at", now);
         doc.put("case.updated_at", now);
         List<String> uniqueAlertIds = alertIds.stream().distinct().toList();
         doc.put("alert_ids", uniqueAlertIds);
         doc.put("entities", new ArrayList<>(entities));
+        doc.put("evidence", List.of());
         boolean controlCreated = false;
         try {
             if (control != null) {
@@ -341,6 +343,25 @@ public class CaseService {
         doc.put("case.updated_at", now);
         doc.put("case.operator", operator == null ? "anonymous" : operator);
         return optimisticUpdate(caseId, null, doc, operator);
+    }
+
+    /** 更新负责人和证据。ES 作为兼容镜像，控制面保存可查询事实。 */
+    public Map<String, Object> updateMetadata(String caseId, String owner,
+                                              List<Map<String, Object>> evidence, String operator) {
+        detail(caseId);
+        if (owner != null && owner.isBlank()) {
+            throw new IllegalArgumentException("负责人不能为空字符串");
+        }
+        List<Map<String, Object>> safeEvidence = evidence == null ? List.of() : evidence.stream()
+                .limit(100)
+                .map(item -> item == null ? Map.<String, Object>of() : new LinkedHashMap<>(item))
+                .toList();
+        Map<String, Object> extra = new LinkedHashMap<>();
+        if (owner != null) {
+            extra.put("case.owner", owner);
+        }
+        extra.put("evidence", safeEvidence);
+        return optimisticUpdate(caseId, null, extra, operator);
     }
 
     /** 服务层案件状态机:允许结案后重开,禁止从调查中直接回到 open。 */

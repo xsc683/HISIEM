@@ -13,8 +13,13 @@
 set -euo pipefail
 
 SNAP="siem-$(date +%Y%m%d-%H%M%S)"
+echo "==> 确认快照仓库 siem-backups"
+curl -fsS -X PUT "http://localhost:9200/_snapshot/siem-backups" \
+  -H 'Content-Type: application/json' \
+  -d '{"type":"fs","settings":{"location":"/usr/share/elasticsearch/backups","compress":true}}'
+echo
 echo "==> 创建快照 $SNAP"
-curl -s -X PUT "http://localhost:9200/_snapshot/siem-backups/$SNAP?wait_for_completion=true" \
+curl -fsS -X PUT "http://localhost:9200/_snapshot/siem-backups/$SNAP?wait_for_completion=true" \
   -H 'Content-Type: application/json' \
   -d '{"indices": "siem-events-*,siem-alerts"}'
 echo

@@ -281,8 +281,8 @@ public class JdbcControlPlaneStore implements ControlPlaneStore {
     @Override
     public Map<String, Object> findCase(String id) {
         List<Map<String, Object>> rows = jdbc.query("""
-                        SELECT id, title, status, aggregation, operator, verdict,
-                               created_at, updated_at, closed_at, alert_ids_json, entities_json, version
+                        SELECT id, title, status, aggregation, operator, owner, verdict,
+                               created_at, updated_at, closed_at, alert_ids_json, entities_json, evidence_json, version
                         FROM cases WHERE id = ?
                         """, (rs, rowNum) -> caseRow(rs, id), id);
         if (rows.isEmpty()) {
@@ -302,15 +302,16 @@ public class JdbcControlPlaneStore implements ControlPlaneStore {
     @Transactional
     public void createCase(Map<String, Object> document, List<String> alertIds) {
         jdbc.update("""
-                        INSERT INTO cases(id, title, status, aggregation, operator, verdict,
-                            created_at, updated_at, closed_at, alert_ids_json, entities_json, version)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+                        INSERT INTO cases(id, title, status, aggregation, operator, owner, verdict,
+                            created_at, updated_at, closed_at, alert_ids_json, entities_json, evidence_json, version)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
                         """, value(document, "case.id"), value(document, "case.title"),
                 valueOr(document, "case.status", "open"), valueOr(document, "case.aggregation", "manual"),
-                valueOr(document, "case.operator", "anonymous"), value(document, "case.verdict"),
+                valueOr(document, "case.operator", "anonymous"), value(document, "case.owner"), value(document, "case.verdict"),
                 timestamp(value(document, "case.created_at")), timestamp(value(document, "case.updated_at")),
                 timestamp(value(document, "case.closed_at")), writeJson(alertIds),
-                writeJson(document.getOrDefault("entities", List.of())));
+                writeJson(document.getOrDefault("entities", List.of())),
+                writeJson(document.getOrDefault("evidence", List.of())));
         insertRelations(value(document, "case.id"), alertIds);
     }
 
@@ -346,19 +347,21 @@ public class JdbcControlPlaneStore implements ControlPlaneStore {
         String status = valueOr(document, "case.status", value(current, "case.status"));
         String aggregation = valueOr(document, "case.aggregation", value(current, "case.aggregation"));
         String operator = valueOr(document, "case.operator", value(current, "case.operator"));
+        String owner = valueOr(document, "case.owner", value(current, "case.owner"));
         String verdict = document.containsKey("case.verdict") ? value(document, "case.verdict") : value(current, "case.verdict");
         String createdAt = valueOr(document, "case.created_at", value(current, "case.created_at"));
         String updatedAt = valueOr(document, "case.updated_at", value(current, "case.updated_at"));
         String closedAt = document.containsKey("case.closed_at") ? value(document, "case.closed_at") : value(current, "case.closed_at");
         List<String> finalAlertIds = alertIds == null ? stringList(current.get("alert_ids")) : alertIds;
         Object entities = document.containsKey("entities") ? document.get("entities") : current.get("entities");
+        Object evidence = document.containsKey("evidence") ? document.get("evidence") : current.get("evidence");
         int changed = jdbc.update("""
-                        UPDATE cases SET title = ?, status = ?, aggregation = ?, operator = ?, verdict = ?,
-                            created_at = ?, updated_at = ?, closed_at = ?, alert_ids_json = ?, entities_json = ?,
+                        UPDATE cases SET title = ?, status = ?, aggregation = ?, operator = ?, owner = ?, verdict = ?,
+                            created_at = ?, updated_at = ?, closed_at = ?, alert_ids_json = ?, entities_json = ?, evidence_json = ?,
                             version = version + 1
                         WHERE id = ? AND version = ?
-                        """, title, status, aggregation, operator, verdict, timestamp(createdAt), timestamp(updatedAt),
-                timestamp(closedAt), writeJson(finalAlertIds), writeJson(entities), id, expectedVersion);
+                        """, title, status, aggregation, operator, owner, verdict, timestamp(createdAt), timestamp(updatedAt),
+                timestamp(closedAt), writeJson(finalAlertIds), writeJson(entities), writeJson(evidence), id, expectedVersion);
         if (changed == 0) {
             throw new IllegalStateException("案件已被其他请求更新,请刷新后重试: " + id);
         }
@@ -447,12 +450,14 @@ public class JdbcControlPlaneStore implements ControlPlaneStore {
         row.put("case.status", rs.getString("status"));
         row.put("case.aggregation", rs.getString("aggregation"));
         row.put("case.operator", rs.getString("operator"));
+        row.put("case.owner", rs.getString("owner"));
         row.put("case.verdict", rs.getString("verdict"));
         row.put("case.created_at", instant(rs.getTimestamp("created_at")));
         row.put("case.updated_at", instant(rs.getTimestamp("updated_at")));
         row.put("case.closed_at", instant(rs.getTimestamp("closed_at")));
         row.put("alert_ids", readStringList(rs.getString("alert_ids_json")));
         row.put("entities", readMapList(rs.getString("entities_json")));
+        row.put("evidence", readMapList(rs.getString("evidence_json")));
         row.put("_control_version", rs.getLong("version"));
         return row;
     }

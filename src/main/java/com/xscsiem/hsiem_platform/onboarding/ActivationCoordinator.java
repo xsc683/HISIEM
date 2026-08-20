@@ -6,6 +6,8 @@ import org.springframework.stereotype.Component;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * 生效协调(Story 01 FR-3):把数据源落成 Logstash per-source pipeline 并同步生效。
@@ -82,6 +84,82 @@ public class ActivationCoordinator {
         } catch (RuntimeException e) {
             rollback(confFile, pipelines, pipelinesBackup, compose, composeBackup);
             throw new ActivationFailedException("生效失败(同步/重启): " + e.getMessage(), e);
+        }
+    }
+
+    /** 停用数据源并移除 pipeline、端口映射；任一步失败都恢复原文件。 */
+    public void deactivate(LogSource s) {
+        Path confFile = Path.of(pipelineDir, "log-sources", s.id + ".conf");
+        Path pipelines = Path.of(configDir, "pipelines.yml");
+        Path compose = Path.of(composeFile);
+        boolean confExisted = false;
+        String confBackup = null;
+        String pipelinesBackup = null;
+        String composeBackup = null;
+        try {
+            confExisted = Files.exists(confFile);
+            if (confExisted) {
+                confBackup = Files.readString(confFile);
+            }
+            pipelinesBackup = Files.exists(pipelines) ? Files.readString(pipelines) : null;
+            composeBackup = Files.exists(compose) ? Files.readString(compose) : null;
+
+            Files.deleteIfExists(confFile);
+            if (pipelinesBackup != null) {
+                Files.writeString(pipelines, removePipelineEntry(pipelinesBackup, s.id));
+            }
+            if (composeBackup != null) {
+                Files.writeString(compose, removePortFromCompose(composeBackup, s.port));
+            }
+            deployer.syncLogstash();
+            deployer.restartLogstash();
+        } catch (IOException | RuntimeException e) {
+            restoreDeactivation(confFile, confExisted, confBackup, pipelines, pipelinesBackup,
+                    compose, composeBackup);
+            throw new ActivationFailedException("停用失败(" + s.id + "),已回滚: " + e.getMessage(), e);
+        }
+    }
+
+    private static String removePipelineEntry(String original, String pipelineId) {
+        String[] lines = original.split("\\R", -1);
+        List<String> kept = new ArrayList<>();
+        boolean removing = false;
+        for (String line : lines) {
+            if (line.startsWith("- pipeline.id: ")) {
+                removing = line.substring("- pipeline.id: ".length()).trim().equals(pipelineId);
+            }
+            if (!removing) {
+                kept.add(line);
+            }
+        }
+        return String.join("\n", kept);
+    }
+
+    private static String removePortFromCompose(String original, int port) {
+        if (port <= 0) return original;
+        String line = "      - \"" + port + ":" + port + "\"";
+        return original.replace(line + "\r\n", "").replace(line + "\n", "");
+    }
+
+    private static void restoreDeactivation(Path confFile, boolean confExisted, String confBackup,
+                                            Path pipelines, String pipelinesBackup,
+                                            Path compose, String composeBackup) {
+        try {
+            if (confExisted) {
+                Files.createDirectories(confFile.getParent());
+                Files.writeString(confFile, confBackup);
+            } else {
+                Files.deleteIfExists(confFile);
+            }
+            if (pipelinesBackup != null) {
+                Files.createDirectories(pipelines.getParent());
+                Files.writeString(pipelines, pipelinesBackup);
+            }
+            if (composeBackup != null) {
+                Files.writeString(compose, composeBackup);
+            }
+        } catch (IOException rollback) {
+            System.err.println("[ActivationCoordinator] 停用回滚失败: " + rollback.getMessage());
         }
     }
 

@@ -119,9 +119,18 @@ TOKEN=$(curl -s -X POST http://localhost:8080/api/auth/login \
 curl -s http://localhost:8080/api/auth/me -H "Authorization: Bearer $TOKEN"
 curl -s http://localhost:8080/actuator/health
 curl -s http://localhost:8080/api/tasks -H "Authorization: Bearer $TOKEN"
+curl -s http://localhost:8080/api/ops/health-scan -H "Authorization: Bearer $TOKEN"
 ```
 
 `/actuator/health` 公开用于存活探针；`/actuator/metrics`、`/actuator/prometheus` 需要 admin 权限。
+
+运行态扫描会检查 PostgreSQL、Elasticsearch、Kafka、Logstash、Flink 和 Kibana；Logstash 按 9600 TCP 监听判定，避免 monitoring API reset 被误报。备份恢复演练只操作临时索引：
+
+```bash
+bash /mnt/d/Project/SIEM/infra/elasticsearch/backup-restore-rehearsal.sh
+```
+
+案件处置可用 `PATCH /api/cases/{id}/metadata` 保存负责人和证据引用；数据源停用使用 `POST /api/log-sources/{id}/deactivate`，完成后可通过 `GET /api/tasks/{id}` 查看阶段进度。
 
 ## 10. 验证链路
 

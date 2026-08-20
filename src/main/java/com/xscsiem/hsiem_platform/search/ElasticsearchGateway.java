@@ -57,7 +57,7 @@ public class ElasticsearchGateway {
                 return delete(index, segments[2]);
             }
             if ("_update".equals(operation) && "POST".equalsIgnoreCase(method) && segments.length >= 3) {
-                return update(index, segments[2], path, body);
+                return update(index, segments[2].split("\\?", 2)[0], path, body);
             }
             throw new UnsupportedOperationException("ES 动词暂未接入 Java Client: " + method + " " + path);
         } catch (ElasticsearchException e) {

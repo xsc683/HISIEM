@@ -73,14 +73,18 @@ class ControlPlaneStoreTest {
         document.put("case.status", "open");
         document.put("case.aggregation", "manual");
         document.put("case.operator", "test");
+        document.put("case.owner", "analyst-1");
         document.put("case.created_at", now);
         document.put("case.updated_at", now);
         document.put("entities", List.of(Map.of("type", "ip", "value", "198.51.100.10")));
+        document.put("evidence", List.of(Map.of("type", "reference", "title", "ticket-1", "uri", "https://example.test/1")));
         store.createCase(document, List.of(alertId));
 
         Map<String, Object> stored = store.findCase(caseId);
         assertNotNull(stored);
         assertEquals(List.of(alertId), stored.get("alert_ids"));
+        assertEquals("analyst-1", stored.get("case.owner"));
+        assertEquals(1, ((List<?>) stored.get("evidence")).size());
         assertTrue(store.hasAlert(alertId));
 
         Map<String, Object> update = new LinkedHashMap<>();

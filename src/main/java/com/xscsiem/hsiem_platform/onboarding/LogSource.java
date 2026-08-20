@@ -33,6 +33,9 @@ public class LogSource {
     public String sourceId;
     public String createdAt;
     public String updatedAt;
+    /** 最近一次异步生命周期任务,供前端轮询 /api/tasks/{id}。 */
+    public String taskId;
+    public String lastError;
 
     public LogSource() {
     }

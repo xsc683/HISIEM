@@ -87,6 +87,14 @@ if [ "$REQUIRE_CONTROL_PLANE_SCHEMA" = "1" ]; then
     else
         fail "PostgreSQL 控制面表不完整(检测到 $control_tables/7),请先启动 Spring Boot 应用执行 Flyway"
     fi
+    flyway_version="$(docker exec siem-postgres psql -U siem -d siem -tAc \
+        "SELECT version FROM flyway_schema_history WHERE success = TRUE ORDER BY installed_rank DESC LIMIT 1" \
+        2>/dev/null | tr -d '[:space:]' || true)"
+    if [ "$flyway_version" = "3" ]; then
+        echo "  [ok] Flyway V3 案件负责人/证据迁移"
+    else
+        fail "Flyway 当前版本为 ${flyway_version:-unknown},预期 V3"
+    fi
 fi
 if curl -fsS "$ES/_cluster/health?filter_path=status" | grep -qE 'green|yellow'; then
     echo "  [ok] Elasticsearch API"

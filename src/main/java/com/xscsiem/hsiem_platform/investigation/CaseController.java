@@ -2,6 +2,7 @@ package com.xscsiem.hsiem_platform.investigation;
 
 import com.xscsiem.hsiem_platform.auth.AuthService;
 import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -75,6 +76,14 @@ public class CaseController {
         return service.updateStatus(id, req.status(), req.verdict(), operator(authHeader));
     }
 
+    /** 更新案件负责人和证据清单。证据项建议包含 type、title、uri、note。 */
+    @PatchMapping("/{id}/metadata")
+    @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST')")
+    public Map<String, Object> updateMetadata(@PathVariable String id, @RequestBody MetadataRequest req,
+                                              @RequestHeader(value = "Authorization", required = false) String authHeader) {
+        return service.updateMetadata(id, req.owner(), req.evidence(), operator(authHeader));
+    }
+
     /** 时间线(实时关联 siem-events)。 */
     @GetMapping("/{id}/timeline")
     @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST', 'AUDIT')")
@@ -115,5 +124,8 @@ public class CaseController {
     }
 
     public record StatusRequest(String status, String verdict) {
+    }
+
+    public record MetadataRequest(String owner, List<Map<String, Object>> evidence) {
     }
 }

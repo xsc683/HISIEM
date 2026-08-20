@@ -102,4 +102,17 @@ class ActivationCoordinatorTest {
         assertThrows(ActivationFailedException.class, () -> coordinator.activate(source, template));
         assertFalse(Files.exists(temp.resolve("pipeline/log-sources/ls-abc12345.conf")), "重启失败也应回滚");
     }
+
+    @Test
+    void deactivate_removesPipelinePortAndConfig() throws Exception {
+        when(deployer.validateConfig(anyString())).thenReturn(true);
+        coordinator.activate(source, template);
+        coordinator.deactivate(source);
+
+        assertFalse(Files.exists(temp.resolve("pipeline/log-sources/ls-abc12345.conf")));
+        assertFalse(Files.readString(temp.resolve("config/pipelines.yml")).contains("ls-abc12345"));
+        assertFalse(Files.readString(temp.resolve("docker-compose.yml")).contains("5001:5001"));
+        verify(deployer, org.mockito.Mockito.times(2)).syncLogstash();
+        verify(deployer, org.mockito.Mockito.times(2)).restartLogstash();
+    }
 }

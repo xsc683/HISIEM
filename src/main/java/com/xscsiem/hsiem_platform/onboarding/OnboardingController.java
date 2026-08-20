@@ -103,6 +103,12 @@ public class OnboardingController {
         return ResponseEntity.accepted().body(s);
     }
 
+    @PostMapping("/log-sources/{id}/deactivate")
+    @PreAuthorize("hasAnyRole('ADMIN', 'OPS')")
+    public ResponseEntity<LogSource> deactivateSource(@PathVariable String id) {
+        return ResponseEntity.accepted().body(logSources.deactivateAsync(id));
+    }
+
     /** 删除数据源(文件移除;Logstash input 清理列 P1)。 */
     @DeleteMapping("/log-sources/{id}")
     @PreAuthorize("hasAnyRole('ADMIN', 'OPS')")

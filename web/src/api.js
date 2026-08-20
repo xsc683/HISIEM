@@ -66,6 +66,14 @@ export function activateLogSource(id) {
   return request(`/log-sources/${id}/activate`, { method: 'POST' })
 }
 
+export function deactivateLogSource(id) {
+  return request(`/log-sources/${id}/deactivate`, { method: 'POST' })
+}
+
+export function deleteLogSource(id) {
+  return request(`/log-sources/${id}`, { method: 'DELETE' })
+}
+
 // ---- 模板保存(Story 02) ----
 
 export function saveTemplate(template) {
@@ -299,4 +307,25 @@ export function deleteCase(id) {
 
 export function aggregateCases() {
   return request('/cases/aggregate', { method: 'POST' })
+}
+
+export function updateCaseMetadata(id, payload) {
+  return request(`/cases/${id}/metadata`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+}
+
+// ---- 运维扫描与后台任务 ----
+
+export function healthScan() {
+  return request('/ops/health-scan')
+}
+
+export function listTasks(size) {
+  return request(`/tasks?size=${size || 50}`)
+}
+
+export function getTask(id) {
+  return request(`/tasks/${id}`)
 }

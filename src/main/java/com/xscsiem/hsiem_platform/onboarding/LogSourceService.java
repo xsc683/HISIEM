@@ -79,15 +79,19 @@ public class LogSourceService {
         }
         String taskId = control == null ? null
                 : control.createTask("log_source_activate", id, "等待数据源配置生效");
+        s.taskId = taskId;
+        s.lastError = null;
+        store.save(s);
         ACTIVATOR.execute(() -> {
             if (taskId != null) {
-                control.updateTask(taskId, "running", 10, "正在生成并校验 Logstash 配置", null);
+                control.updateTask(taskId, "running", 10, "正在生成 Logstash 配置", null);
             }
+            if (taskId != null) control.updateTask(taskId, "running", 40, "正在校验并同步 Logstash 配置", null);
             LogSource result = activateSync(id);
             if (taskId != null) {
                 boolean success = "active".equals(result.status);
                 control.updateTask(taskId, success ? "succeeded" : "failed", success ? 100 : 100,
-                        success ? "数据源已生效" : "数据源生效失败", success ? null : "Logstash 配置链路失败");
+                        success ? "数据源已生效" : "数据源生效失败", success ? null : result.lastError);
             }
         });
         return s;
@@ -102,6 +106,7 @@ public class LogSourceService {
             s.status = "active";
         } catch (Exception e) {
             s.status = "failed";
+            s.lastError = e.getMessage();
             System.err.println("[LogSourceService] 数据源 " + id + " 生效失败: " + e.getMessage());
         } finally {
             s.updatedAt = Instant.now().toString();
@@ -111,8 +116,37 @@ public class LogSourceService {
     }
 
     public void delete(String id) {
-        store.find(id);
-        // TODO(P1,story-01 FR):停用/删除需重新生成不含该 input 的配置并释放端口(重启 Logstash)
+        LogSource s = store.find(id);
+        if ("active".equals(s.status)) {
+            coordinator.deactivate(s);
+        }
         store.delete(id);
+    }
+
+    /** 异步停用但保留声明，失败可重试，成功后状态为 stopped。 */
+    public LogSource deactivateAsync(String id) {
+        LogSource s = store.find(id);
+        if (!"active".equals(s.status)) return s;
+        String taskId = control == null ? null
+                : control.createTask("log_source_deactivate", id, "等待数据源停用");
+        s.taskId = taskId;
+        s.lastError = null;
+        store.save(s);
+        ACTIVATOR.execute(() -> {
+            if (taskId != null) control.updateTask(taskId, "running", 20, "正在移除 Logstash pipeline", null);
+            try {
+                coordinator.deactivate(s);
+                s.status = "stopped";
+                s.updatedAt = Instant.now().toString();
+                store.save(s);
+                if (taskId != null) control.updateTask(taskId, "succeeded", 100, "数据源已停用", null);
+            } catch (Exception e) {
+                s.lastError = e.getMessage();
+                s.updatedAt = Instant.now().toString();
+                store.save(s);
+                if (taskId != null) control.updateTask(taskId, "failed", 100, "数据源停用失败", e.getMessage());
+            }
+        });
+        return s;
     }
 }

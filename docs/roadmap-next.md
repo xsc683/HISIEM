@@ -24,11 +24,17 @@
 
 以 Spring Security 替换自定义拦截器，补接口级权限、PostgreSQL 会话持久化、登录失败限制和统一错误 DTO；生产 ES 请求统一经过 Elasticsearch Java API Client，Testcontainers 覆盖空 PostgreSQL 的 Flyway v2 迁移，Actuator/Micrometer 暴露 health/metrics/prometheus，后台任务支持列表和按 ID 查询。
 
-- 验收：根项目 59 个原有测试 + 新增安全/失败限制/容器迁移测试通过；真实运行态验证登录、重启后 Token、角色 403、Actuator 和 ES 搜索/计数均通过。
+- 验收：根项目 64 个测试（含安全/失败限制/容器迁移）通过；真实运行态验证登录、重启后 Token、角色 403、Actuator 和 ES 搜索/计数均通过。
 
-### 阶段 4.3：产品与运维增强
+### 阶段 4.3：产品与运维增强（已完成）
 
-完善数据源删除/回滚、后台任务进度、案件负责人和证据；将前端 `App.jsx` 按 URL 路由拆分，补健康扫描、指标和备份恢复演练。Redis、CI/CD 和更多接入协议按实际需求后置。
+完善数据源删除/回滚、后台任务进度、案件负责人和证据；前端增加 URL 路由表和运行态扫描页面；补充 PostgreSQL/ES/Kafka/Logstash/Flink/Kibana 健康扫描、Micrometer 扫描指标以及 ES 临时索引备份恢复演练脚本。Redis、CI/CD 和更多接入协议按实际需求后置。
+
+- `POST /api/log-sources/{id}/deactivate` 异步移除 Logstash pipeline、端口映射和配置文件；同步删除失败会恢复原文件。
+- `PATCH /api/cases/{id}/metadata` 持久化 `case.owner` 和 `evidence`，案件详情支持编辑负责人和证据引用。
+- `GET /api/ops/health-scan` 返回六个运行组件及延迟；`siem.health.scans` 和 `siem.health.scan.duration` 可从 Actuator 查询。
+- `infra/elasticsearch/backup-restore-rehearsal.sh` 只操作临时索引，完成快照、删除、恢复、校验和自动清理。
+- 验收：根项目 65 个测试、Flink 30 个测试、前端构建、真实 PostgreSQL V3、健康扫描、案件元数据接口、备份恢复演练和 Docker 部署自验证均通过。
 
 ## 二、项目结合学习主线
 

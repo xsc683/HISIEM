@@ -8,6 +8,7 @@ import {
 import {
   listTemplates, testParse, previewLogSource,
   listLogSources, createLogSource, activateLogSource, getLogSource,
+  deactivateLogSource, deleteLogSource,
   listDetectionRules, toggleRule, deployRules, ruleMitre,
   dataHealthSources, dataHealthTrend, dataHealthFailures,
   listCriticality, setCriticality, deleteCriticality, recalcCriticality,
@@ -17,7 +18,9 @@ import {
   batchAlertStatus, batchAlertVerdict, fpRate,
   listCases, getCase, createCase, addCaseAlerts, removeCaseAlert,
   updateCaseStatus, caseTimeline, deleteCase, aggregateCases,
+  updateCaseMetadata, healthScan, listTasks,
 } from './api.js'
+import { pathFromRouteKey, routeKeyFromPath } from './routes.js'
 
 const { Header, Sider, Content } = Layout
 
@@ -41,6 +44,7 @@ const MENU_ITEMS = [
   { key: 'alerts', icon: <AlertOutlined />, label: '告警台' },
   { key: 'cases', icon: <SafetyCertificateOutlined />, label: '调查台' },
   { key: 'health', icon: <BarChartOutlined />, label: '数据健康' },
+  { key: 'ops-health', icon: <ThunderboltOutlined />, label: '运行态扫描' },
   { key: 'criticality', icon: <TagOutlined />, label: '资产关键度' },
   { key: 'notify', icon: <BellOutlined />, label: '通知中心' },
   { key: 'rbac', icon: <TeamOutlined />, label: '用户与权限' },
@@ -99,10 +103,27 @@ export default function App() {
   const [detailCase, setDetailCase] = useState(null)
   const [caseTitle, setCaseTitle] = useState('')
   const [caseTimeline_, setCaseTimeline_] = useState([])
+  const [opsHealth, setOpsHealth] = useState(null)
+  const [tasks, setTasks] = useState([])
+  const [caseOwner, setCaseOwner] = useState('')
+  const [evidenceTitle, setEvidenceTitle] = useState('')
+  const [evidenceUri, setEvidenceUri] = useState('')
 
-  const [activeKey, setActiveKey] = useState('wizard')
+  const [activeKey, setActiveKey] = useState(() => routeKeyFromPath())
   const [collapsed, setCollapsed] = useState(false)
   const [wizardStep, setWizardStep] = useState(0)
+
+  function navigate(key) {
+    setActiveKey(key)
+    const path = pathFromRouteKey(key)
+    if (window.location.pathname !== path) window.history.pushState({}, '', path)
+  }
+
+  useEffect(() => {
+    const onPopState = () => setActiveKey(routeKeyFromPath())
+    window.addEventListener('popstate', onPopState)
+    return () => window.removeEventListener('popstate', onPopState)
+  }, [])
 
   useEffect(() => {
     listAlerts(alertFilter).then(setAlerts).catch(() => {})
@@ -117,6 +138,13 @@ export default function App() {
     authMe().then(setUser).catch(() => setUser(null))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  useEffect(() => {
+    if (user && activeKey === 'ops-health') {
+      healthScan().then(setOpsHealth).catch((e) => message.error(e.message))
+      listTasks(50).then(setTasks).catch(() => {})
+    }
+  }, [user, activeKey])
 
   useEffect(() => {
     if (user && user.role === 'admin') {
@@ -282,15 +310,30 @@ export default function App() {
       .catch((e) => { setActivating((prev) => ({ ...prev, [id]: false })); message.error(e.message) })
   }
 
-  function pollSource(id) {
+  function handleDeactivate(id) {
+    setActivating((prev) => ({ ...prev, [id]: true }))
+    deactivateLogSource(id)
+      .then(() => pollSource(id, ['stopped']))
+      .catch((e) => { setActivating((prev) => ({ ...prev, [id]: false })); message.error(e.message) })
+  }
+
+  async function handleDeleteSource(id) {
+    try {
+      await deleteLogSource(id)
+      setSources((prev) => prev.filter((s) => s.id !== id))
+      message.success(`数据源 ${id} 已删除`)
+    } catch (e) { message.error(e.message) }
+  }
+
+  function pollSource(id, terminalStatuses = ['active', 'failed']) {
     const timer = setInterval(async () => {
       try {
         const s = await getLogSource(id)
         setSources((prev) => prev.map((x) => (x.id === id ? s : x)))
-        if (s.status === 'active' || s.status === 'failed') {
+        if (terminalStatuses.includes(s.status)) {
           clearInterval(timer)
           setActivating((prev) => ({ ...prev, [id]: false }))
-          message.success(s.status === 'active' ? `数据源 ${id} 已生效` : `数据源 ${id} 生效失败`)
+          message.success(s.status === 'active' ? `数据源 ${id} 已生效` : s.status === 'stopped' ? `数据源 ${id} 已停用` : `数据源 ${id} 生效失败`)
         }
       } catch {
         clearInterval(timer)
@@ -367,7 +410,23 @@ export default function App() {
   async function openCaseDetail(id) {
     const c = await getCase(id).catch(() => null)
     setDetailCase(c)
-    if (c) setCaseTimeline_(await caseTimeline(id, 30).catch(() => []))
+    if (c) {
+      setCaseOwner(c['case.owner'] || '')
+      setCaseTimeline_(await caseTimeline(id, 30).catch(() => []))
+    }
+  }
+
+  async function handleUpdateCaseMetadata(id) {
+    try {
+      const evidence = evidenceTitle.trim() || evidenceUri.trim()
+        ? [{ type: 'reference', title: evidenceTitle.trim(), uri: evidenceUri.trim() }]
+        : (detailCase?.evidence || [])
+      const updated = await updateCaseMetadata(id, { owner: caseOwner.trim() || null, evidence })
+      setDetailCase(updated)
+      setEvidenceTitle(''); setEvidenceUri('')
+      await reloadCases()
+      message.success('负责人/证据已保存')
+    } catch (e) { message.error(e.message) }
   }
 
   async function handleResolveCase(id, verdict) {
@@ -495,7 +554,7 @@ export default function App() {
             <SafetyCertificateOutlined /> {!collapsed && 'HISIEM'}
           </div>
           <Menu theme="dark" mode="inline" selectedKeys={[activeKey]} items={menuItems}
-            onClick={({ key }) => setActiveKey(key)} />
+            onClick={({ key }) => navigate(key)} />
         </Sider>
 
         <Layout>
@@ -509,8 +568,8 @@ export default function App() {
               <Typography.Text strong style={{ fontSize: 16 }}>{MENU_ITEMS.find((m) => m.key === activeKey)?.label}</Typography.Text>
             </Space>
             <Space size="middle">
-              <Badge count={openAlertCount} size="small"><Button icon={<AlertOutlined />} onClick={() => setActiveKey('alerts')}>告警</Button></Badge>
-              <Badge count={unreadCount} size="small"><Button icon={<BellOutlined />} onClick={() => setActiveKey('notify')}>通知</Button></Badge>
+              <Badge count={openAlertCount} size="small"><Button icon={<AlertOutlined />} onClick={() => navigate('alerts')}>告警</Button></Badge>
+              <Badge count={unreadCount} size="small"><Button icon={<BellOutlined />} onClick={() => navigate('notify')}>通知</Button></Badge>
               <Space>
                 <AvatarUser username={user.username} role={user.role} />
                 <Button icon={<LogoutOutlined />} onClick={handleLogout}>退出</Button>
@@ -531,6 +590,7 @@ export default function App() {
                 srcName={srcName} setSrcName={setSrcName} srcPort={srcPort} setSrcPort={setSrcPort}
                 handleCreateSource={handleCreateSource}
                 sources={sources} activating={activating} handleActivate={handleActivate}
+                handleDeactivate={handleDeactivate} handleDeleteSource={handleDeleteSource}
               />
             )}
 
@@ -650,7 +710,10 @@ export default function App() {
                 handleCreateCase={handleCreateCase} handleAggregate={handleAggregate}
                 handleInvestigateCase={handleInvestigateCase} handleResolveCase={handleResolveCase}
                 handleAddToCase={handleAddToCase} handleRemoveFromCase={handleRemoveFromCase}
-                handleDeleteCase={handleDeleteCase}
+                handleDeleteCase={handleDeleteCase} caseOwner={caseOwner} setCaseOwner={setCaseOwner}
+                evidenceTitle={evidenceTitle} setEvidenceTitle={setEvidenceTitle}
+                evidenceUri={evidenceUri} setEvidenceUri={setEvidenceUri}
+                handleUpdateCaseMetadata={handleUpdateCaseMetadata}
               />
             )}
 
@@ -708,6 +771,30 @@ export default function App() {
                     </Card>
                   ))}
                 </Space>
+              </Card>
+            )}
+
+            {activeKey === 'ops-health' && (
+              <Card title="运行态健康扫描" extra={<Button onClick={() => {
+                healthScan().then(setOpsHealth).catch((e) => message.error(e.message))
+                listTasks(50).then(setTasks).catch(() => {})
+              }}>重新扫描</Button>}>
+                {!opsHealth && <Empty description="点击重新扫描检查 PostgreSQL、ES、Kafka、Logstash、Flink 和 Kibana" />}
+                {opsHealth && <>
+                  <Alert type={opsHealth.status === 'UP' ? 'success' : 'error'} showIcon
+                    message={`${opsHealth.status} · 扫描时间 ${opsHealth.scannedAt}`} style={{ marginBottom: 12 }} />
+                  <Table rowKey="name" size="small" pagination={false}
+                    dataSource={Object.values(opsHealth.components || {})}
+                    columns={[{ title: '组件', dataIndex: 'name' },
+                      { title: '状态', dataIndex: 'status', render: (v) => <Tag color={v === 'UP' ? 'green' : 'red'}>{v}</Tag> },
+                      { title: '延迟', dataIndex: 'latencyMs', render: (v) => `${v} ms` },
+                      { title: '错误', dataIndex: 'error' }]} />
+                  <Divider>后台任务进度</Divider>
+                  <Table rowKey="id" size="small" pagination={{ pageSize: 8 }} dataSource={tasks}
+                    columns={[{ title: '任务', dataIndex: 'type' }, { title: '资源', dataIndex: 'resourceId' },
+                      { title: '状态', dataIndex: 'status' }, { title: '进度', dataIndex: 'progress', render: (v) => `${v}%` },
+                      { title: '消息', dataIndex: 'message' }, { title: '更新时间', dataIndex: 'updatedAt' }]} />
+                </>}
               </Card>
             )}
 
@@ -841,7 +928,8 @@ export default function App() {
 // ================= 子组件:接入向导 =================
 function WizardView({ step, setStep, templates, selectedId, setSelectedId, selected, sample, setSample,
   testResult, handleTest, busy, name, setName, port, setPort, config, handlePreview,
-  srcName, setSrcName, srcPort, setSrcPort, handleCreateSource, sources, activating, handleActivate }) {
+  srcName, setSrcName, srcPort, setSrcPort, handleCreateSource, sources, activating, handleActivate,
+  handleDeactivate, handleDeleteSource }) {
 
   const steps = [
     { title: '选模板', description: '选择日志类型' },
@@ -943,8 +1031,13 @@ function WizardView({ step, setStep, templates, selectedId, setSelectedId, selec
                   { title: '模板', dataIndex: 'templateId' },
                   { title: '端口', dataIndex: 'port' },
                   { title: '状态', dataIndex: 'status', render: (v) => <Tag color={v === 'active' ? 'green' : v === 'failed' ? 'red' : 'orange'}>{v}</Tag> },
-                  { title: '操作', render: (_, s) => activating[s.id] ? <Tag color="processing">生效中…</Tag>
-                    : (s.status === 'creating' || s.status === 'failed') && <Button size="small" type="primary" onClick={() => handleActivate(s.id)}>生效</Button> },
+                  { title: '操作', render: (_, s) => activating[s.id] ? <Tag color="processing">处理中…</Tag> : (
+                    <Space size="small">
+                      {(s.status === 'creating' || s.status === 'failed' || s.status === 'stopped') && <Button size="small" type="primary" onClick={() => handleActivate(s.id)}>生效</Button>}
+                      {s.status === 'active' && <Button size="small" onClick={() => handleDeactivate(s.id)}>停用</Button>}
+                      {s.status !== 'active' && <Button size="small" danger onClick={() => handleDeleteSource(s.id)}>删除</Button>}
+                    </Space>
+                  ) },
                 ]} />
             )}
           </Space>
@@ -965,7 +1058,9 @@ function WizardView({ step, setStep, templates, selectedId, setSelectedId, selec
 // ================= 子组件:调查台 =================
 function CasesView({ cases, setCases, caseFilter, setCaseFilter, selAlerts, setSelAlerts, caseTitle, setCaseTitle,
   detailCase, setDetailCase, caseTimeline_, openCaseDetail, handleCreateCase, handleAggregate,
-  handleInvestigateCase, handleResolveCase, handleAddToCase, handleRemoveFromCase, handleDeleteCase }) {
+  handleInvestigateCase, handleResolveCase, handleAddToCase, handleRemoveFromCase, handleDeleteCase,
+  caseOwner, setCaseOwner, evidenceTitle, setEvidenceTitle, evidenceUri, setEvidenceUri,
+  handleUpdateCaseMetadata }) {
 
   return (
     <div>
@@ -999,7 +1094,7 @@ function CasesView({ cases, setCases, caseFilter, setCaseFilter, selAlerts, setS
                   <Tag>{c['case.aggregation'] === 'auto' ? '自动聚合' : '手动聚合'}</Tag>
                 </Space>
                 <div style={{ marginTop: 4, fontSize: 12, color: '#888' }}>
-                  {c['alert_ids']?.length} 告警 · 操作者 {c['case.operator'] || '-'} · 更新 {c['case.updated_at']}
+                  {c['alert_ids']?.length} 告警 · 负责人 {c['case.owner'] || '-'} · 更新 {c['case.updated_at']}
                 </div>
               </div>
               <Space>
@@ -1032,6 +1127,7 @@ function CasesView({ cases, setCases, caseFilter, setCaseFilter, selAlerts, setS
               <Descriptions.Item label="案件 ID"><code>{detailCase['case.id']}</code></Descriptions.Item>
               <Descriptions.Item label="聚合来源">{detailCase['case.aggregation']}</Descriptions.Item>
               <Descriptions.Item label="操作者">{detailCase['case.operator']}</Descriptions.Item>
+              <Descriptions.Item label="负责人">{detailCase['case.owner'] || '—'}</Descriptions.Item>
               <Descriptions.Item label="实体">{(detailCase['entities'] || []).map((e) => <Tag key={e.type + e.value}>{e.type}:{e.value}</Tag>)}</Descriptions.Item>
               <Descriptions.Item label="创建时间">{detailCase['case.created_at']}</Descriptions.Item>
               <Descriptions.Item label="结案时间">{detailCase['case.closed_at'] || '—'}</Descriptions.Item>
@@ -1045,6 +1141,19 @@ function CasesView({ cases, setCases, caseFilter, setCaseFilter, selAlerts, setS
               )}
               <Button onClick={() => handleAddToCase(detailCase['case.id'])}>追加勾选告警</Button>
             </Space>
+
+            <Divider style={{ margin: '12px 0' }}>处置负责人和证据</Divider>
+            <Space wrap>
+              <Input style={{ width: 180 }} value={caseOwner} onChange={(e) => setCaseOwner(e.target.value)} placeholder="负责人用户名" />
+              <Input style={{ width: 180 }} value={evidenceTitle} onChange={(e) => setEvidenceTitle(e.target.value)} placeholder="证据标题" />
+              <Input style={{ width: 260 }} value={evidenceUri} onChange={(e) => setEvidenceUri(e.target.value)} placeholder="证据 URI/链接" />
+              <Button type="primary" onClick={() => handleUpdateCaseMetadata(detailCase['case.id'])}>保存</Button>
+            </Space>
+            {(detailCase.evidence || []).length > 0 && (
+              <div style={{ marginTop: 8, fontSize: 12 }}>
+                {(detailCase.evidence || []).map((e, i) => <div key={i}><Tag color="blue">{e.type || 'evidence'}</Tag>{e.title || '未命名'} {e.uri && <code>{e.uri}</code>}</div>)}
+              </div>
+            )}
 
             <Divider style={{ margin: '12px 0' }}>案内告警({(detailCase['alert_ids'] || []).length})</Divider>
             <Space wrap>
