@@ -1,4 +1,22 @@
 services:
+  postgres:
+    image: postgres:16.4
+    container_name: siem-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: siem
+      POSTGRES_USER: siem
+      POSTGRES_PASSWORD: siem_dev_only
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U siem -d siem"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
   elasticsearch:
     image: elasticsearch:8.14.0
     container_name: siem-elasticsearch
@@ -128,3 +146,4 @@ volumes:
   es-data:
   flink-checkpoints:
   logstash-data:
+  postgres-data:

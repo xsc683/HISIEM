@@ -11,6 +11,7 @@ set -euo pipefail
 
 DEPLOY="${SIEM_DEPLOY_DIR:-$HOME/projects/mini-siem}"
 REQUIRE_DETECTION_JOB="${REQUIRE_DETECTION_JOB:-1}"
+REQUIRE_CONTROL_PLANE_SCHEMA="${REQUIRE_CONTROL_PLANE_SCHEMA:-0}"
 ES="${SIEM_ES_URL:-http://localhost:9200}"
 KIBANA="${SIEM_KIBANA_URL:-http://localhost:5601}"
 FLINK="${SIEM_FLINK_URL:-http://localhost:8081}"
@@ -59,10 +60,10 @@ else
 fi
 
 echo "==> 2) 容器状态"
-for container in siem-elasticsearch siem-kafka siem-logstash siem-flink-jobmanager siem-flink-taskmanager siem-kibana; do
+for container in siem-postgres siem-elasticsearch siem-kafka siem-logstash siem-flink-jobmanager siem-flink-taskmanager siem-kibana; do
     check_running "$container"
 done
-for container in siem-elasticsearch siem-kafka siem-logstash siem-flink-jobmanager siem-kibana; do
+for container in siem-postgres siem-elasticsearch siem-kafka siem-logstash siem-flink-jobmanager siem-kibana; do
     check_healthy "$container"
 done
 
@@ -72,6 +73,21 @@ for port in 5000 5001 5002 5004 5005 5006; do
 done
 
 echo "==> 4) 组件 API"
+if docker exec siem-postgres pg_isready -U siem -d siem >/dev/null 2>&1; then
+    echo "  [ok] PostgreSQL API"
+else
+    fail "PostgreSQL 不可用"
+fi
+if [ "$REQUIRE_CONTROL_PLANE_SCHEMA" = "1" ]; then
+    control_tables="$(docker exec siem-postgres psql -U siem -d siem -tAc \
+        "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('roles','users','audit_logs','cases','case_alerts','notifications','background_tasks')" \
+        2>/dev/null | tr -d '[:space:]' || true)"
+    if [ "$control_tables" = "7" ]; then
+        echo "  [ok] PostgreSQL 控制面 7 张表已由 Flyway 创建"
+    else
+        fail "PostgreSQL 控制面表不完整(检测到 $control_tables/7),请先启动 Spring Boot 应用执行 Flyway"
+    fi
+fi
 if curl -fsS "$ES/_cluster/health?filter_path=status" | grep -qE 'green|yellow'; then
     echo "  [ok] Elasticsearch API"
 else

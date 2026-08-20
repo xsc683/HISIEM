@@ -7,7 +7,7 @@
 #   或在 WSL 内执行:         bash /mnt/d/Project/SIEM/infra/deploy.sh
 #
 # 说明:
-#   - compose up 会按健康状态等待 ES/Kafka/Flink,Logstash healthcheck 会检查全部 TCP pipeline。
+#   - compose up 会按健康状态等待 PostgreSQL/ES/Kafka/Flink,Logstash healthcheck 会检查全部 TCP pipeline。
 #   - --start-job 只在检测作业不存在时提交,重复执行不会启动第二个作业。
 #   - 更新运行中的 Flink job 前,先 cancel 旧 job 再重新提交,避免旧 JAR 继续运行。
 #
@@ -106,6 +106,7 @@ if [ -n "$JM_BEFORE" ] && [ -n "$JM_AFTER" ] && [ "$JM_BEFORE" != "$JM_AFTER" ];
     echo "==> JobManager 已重建,同步重建 TaskManager 以避免旧 RPC 连接"
     (cd "$DEPLOY" && docker compose up -d --force-recreate flink-taskmanager)
 fi
+wait_for_health siem-postgres
 wait_for_health siem-elasticsearch
 wait_for_health siem-kafka
 wait_for_health siem-logstash

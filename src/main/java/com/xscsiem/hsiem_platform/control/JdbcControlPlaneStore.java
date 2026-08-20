@@ -1,0 +1,432 @@
+package com.xscsiem.hsiem_platform.control;
+
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.xscsiem.hsiem_platform.auth.AuthUser;
+import com.xscsiem.hsiem_platform.onboarding.NotFoundException;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.context.annotation.DependsOn;
+import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.sql.Timestamp;
+import java.sql.Types;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+
+/** PostgreSQL 控制面实现。所有跨表案件操作都在同一事务中完成。 */
+@Repository
+@DependsOn("flyway")
+public class JdbcControlPlaneStore implements ControlPlaneStore {
+
+    private static final TypeReference<List<String>> STRING_LIST = new TypeReference<>() {};
+    private static final TypeReference<List<Map<String, Object>>> MAP_LIST = new TypeReference<>() {};
+
+    private final JdbcTemplate jdbc;
+    private final ObjectMapper mapper = new ObjectMapper();
+
+    public JdbcControlPlaneStore(JdbcTemplate jdbc) {
+        this.jdbc = jdbc;
+    }
+
+    @Override
+    public List<AuthUser> listUsers() {
+        return jdbc.query("""
+                        SELECT id, username, password_hash, role_name, status, created_at
+                        FROM users ORDER BY username
+                        """,
+                (rs, rowNum) -> {
+                    AuthUser u = new AuthUser();
+                    u.id = rs.getString("id");
+                    u.username = rs.getString("username");
+                    u.passwordHash = rs.getString("password_hash");
+                    u.role = rs.getString("role_name");
+                    u.status = rs.getString("status");
+                    u.createdAt = rs.getTimestamp("created_at").toInstant().toString();
+                    return u;
+                });
+    }
+
+    @Override
+    public AuthUser findUser(String username) {
+        List<AuthUser> users = jdbc.query("""
+                        SELECT id, username, password_hash, role_name, status, created_at
+                        FROM users WHERE username = ?
+                        """, (rs, rowNum) -> {
+                    AuthUser u = new AuthUser();
+                    u.id = rs.getString("id");
+                    u.username = rs.getString("username");
+                    u.passwordHash = rs.getString("password_hash");
+                    u.role = rs.getString("role_name");
+                    u.status = rs.getString("status");
+                    u.createdAt = rs.getTimestamp("created_at").toInstant().toString();
+                    return u;
+                }, username);
+        return users.isEmpty() ? null : users.get(0);
+    }
+
+    @Override
+    public void insertUser(AuthUser user) {
+        jdbc.update("""
+                        INSERT INTO users(id, username, password_hash, role_name, status, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                        """, user.id, user.username, user.passwordHash, user.role,
+                user.status == null ? "active" : user.status, timestamp(user.createdAt));
+    }
+
+    @Override
+    public void updateUser(AuthUser user) {
+        int changed = jdbc.update("""
+                        UPDATE users SET role_name = ?, status = ?, password_hash = ?, updated_at = CURRENT_TIMESTAMP
+                        WHERE username = ?
+                        """, user.role, user.status, user.passwordHash, user.username);
+        if (changed == 0) {
+            throw new NotFoundException("用户不存在: " + user.username);
+        }
+    }
+
+    @Override
+    public void deleteUser(String username) {
+        int changed = jdbc.update("DELETE FROM users WHERE username = ?", username);
+        if (changed == 0) {
+            throw new NotFoundException("用户不存在: " + username);
+        }
+    }
+
+    @Override
+    public List<Map<String, Object>> listRoles() {
+        return jdbc.query("SELECT name, description, permissions_json FROM roles ORDER BY name", (rs, rowNum) -> {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("name", rs.getString("name"));
+            row.put("description", rs.getString("description"));
+            row.put("permissions", readStringList(rs.getString("permissions_json")));
+            return row;
+        });
+    }
+
+    @Override
+    public void audit(String actor, String action, String target) {
+        jdbc.update("INSERT INTO audit_logs(actor, action, target) VALUES (?, ?, ?)",
+                actor == null ? "system" : actor, action, target);
+    }
+
+    @Override
+    public List<Map<String, String>> listAuditLogs() {
+        return jdbc.query("""
+                        SELECT actor, action, target, created_at
+                        FROM audit_logs ORDER BY created_at DESC, id DESC LIMIT 500
+                        """, (rs, rowNum) -> {
+                    Map<String, String> row = new LinkedHashMap<>();
+                    row.put("timestamp", rs.getTimestamp("created_at").toInstant().toString());
+                    row.put("actor", rs.getString("actor"));
+                    row.put("action", rs.getString("action"));
+                    row.put("target", rs.getString("target"));
+                    return row;
+                });
+    }
+
+    @Override
+    public List<Map<String, Object>> listNotifications(Boolean unread) {
+        String sql = "SELECT id, type, target, message, is_read, created_at FROM notifications";
+        if (Boolean.TRUE.equals(unread)) {
+            sql += " WHERE is_read = FALSE";
+        }
+        sql += " ORDER BY created_at DESC";
+        return jdbc.query(sql, (rs, rowNum) -> notificationRow(rs.getString("id"), rs.getString("type"),
+                rs.getString("target"), rs.getString("message"), rs.getBoolean("is_read"),
+                rs.getTimestamp("created_at").toInstant()));
+    }
+
+    @Override
+    @Transactional
+    public boolean createNotificationIfAllowed(String type, String target, String message, Instant notBefore) {
+        Integer existing = jdbc.queryForObject("""
+                        SELECT COUNT(*) FROM notifications
+                        WHERE type = ? AND target = ? AND created_at >= ?
+                        """, Integer.class, type, target, timestamp(notBefore.toString()));
+        if (existing != null && existing > 0) {
+            return false;
+        }
+        jdbc.update("""
+                        INSERT INTO notifications(id, type, target, message, is_read, created_at)
+                        VALUES (?, ?, ?, ?, FALSE, CURRENT_TIMESTAMP)
+                        """, "ntf-" + UUID.randomUUID(), type, target, message);
+        return true;
+    }
+
+    @Override
+    public boolean markNotificationRead(String id) {
+        return jdbc.update("UPDATE notifications SET is_read = TRUE WHERE id = ?", id) > 0;
+    }
+
+    @Override
+    public void markAllNotificationsRead() {
+        jdbc.update("UPDATE notifications SET is_read = TRUE WHERE is_read = FALSE");
+    }
+
+    @Override
+    public boolean deleteNotification(String id) {
+        return jdbc.update("DELETE FROM notifications WHERE id = ?", id) > 0;
+    }
+
+    @Override
+    public List<Map<String, Object>> listCases(String status, String entity, int size) {
+        String sql = "SELECT id FROM cases";
+        List<Object> args = new ArrayList<>();
+        if (status != null && !status.isBlank()) {
+            sql += " WHERE status = ?";
+            args.add(status);
+        }
+        sql += " ORDER BY updated_at DESC LIMIT ?";
+        args.add(Math.min(Math.max(size, 1), 200));
+        List<Map<String, Object>> rows = jdbc.query(sql, (rs, rowNum) -> findCase(rs.getString("id")), args.toArray());
+        if (entity == null || entity.isBlank()) {
+            return rows;
+        }
+        String[] parts = entity.split(":", 2);
+        String type = parts.length > 1 ? parts[0] : "ip";
+        String value = parts.length > 1 ? parts[1] : parts[0];
+        return rows.stream().filter(row -> entitiesContain(row.get("entities"), type, value)).toList();
+    }
+
+    @Override
+    public Map<String, Object> findCase(String id) {
+        List<Map<String, Object>> rows = jdbc.query("""
+                        SELECT id, title, status, aggregation, operator, verdict,
+                               created_at, updated_at, closed_at, alert_ids_json, entities_json, version
+                        FROM cases WHERE id = ?
+                        """, (rs, rowNum) -> caseRow(rs, id), id);
+        if (rows.isEmpty()) {
+            return null;
+        }
+        Map<String, Object> row = rows.get(0);
+        List<String> relationIds = jdbc.query("""
+                        SELECT alert_id FROM case_alerts WHERE case_id = ? ORDER BY created_at, alert_id
+                        """, (rs, rowNum) -> rs.getString("alert_id"), id);
+        if (!relationIds.isEmpty()) {
+            row.put("alert_ids", relationIds);
+        }
+        return row;
+    }
+
+    @Override
+    @Transactional
+    public void createCase(Map<String, Object> document, List<String> alertIds) {
+        jdbc.update("""
+                        INSERT INTO cases(id, title, status, aggregation, operator, verdict,
+                            created_at, updated_at, closed_at, alert_ids_json, entities_json, version)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+                        """, value(document, "case.id"), value(document, "case.title"),
+                valueOr(document, "case.status", "open"), valueOr(document, "case.aggregation", "manual"),
+                valueOr(document, "case.operator", "anonymous"), value(document, "case.verdict"),
+                timestamp(value(document, "case.created_at")), timestamp(value(document, "case.updated_at")),
+                timestamp(value(document, "case.closed_at")), writeJson(alertIds),
+                writeJson(document.getOrDefault("entities", List.of())));
+        insertRelations(value(document, "case.id"), alertIds);
+    }
+
+    @Override
+    @Transactional
+    public Map<String, Object> importCaseDocument(Map<String, Object> document) {
+        String id = value(document, "case.id");
+        Map<String, Object> existing = findCase(id);
+        if (existing != null) {
+            return existing;
+        }
+        List<String> ids = stringList(document.get("alert_ids"));
+        try {
+            createCase(document, ids);
+        } catch (RuntimeException e) {
+            // 老 ES 案件可能与已导入案件共享告警;不覆盖关系库已有事实。
+            if (findCase(id) == null) {
+                throw e;
+            }
+        }
+        return findCase(id);
+    }
+
+    @Override
+    @Transactional
+    public Map<String, Object> updateCase(String id, long expectedVersion,
+                                           Map<String, Object> document, List<String> alertIds) {
+        Map<String, Object> current = findCase(id);
+        if (current == null) {
+            throw new NotFoundException("案件不存在: " + id);
+        }
+        String title = valueOr(document, "case.title", value(current, "case.title"));
+        String status = valueOr(document, "case.status", value(current, "case.status"));
+        String aggregation = valueOr(document, "case.aggregation", value(current, "case.aggregation"));
+        String operator = valueOr(document, "case.operator", value(current, "case.operator"));
+        String verdict = document.containsKey("case.verdict") ? value(document, "case.verdict") : value(current, "case.verdict");
+        String createdAt = valueOr(document, "case.created_at", value(current, "case.created_at"));
+        String updatedAt = valueOr(document, "case.updated_at", value(current, "case.updated_at"));
+        String closedAt = document.containsKey("case.closed_at") ? value(document, "case.closed_at") : value(current, "case.closed_at");
+        List<String> finalAlertIds = alertIds == null ? stringList(current.get("alert_ids")) : alertIds;
+        Object entities = document.containsKey("entities") ? document.get("entities") : current.get("entities");
+        int changed = jdbc.update("""
+                        UPDATE cases SET title = ?, status = ?, aggregation = ?, operator = ?, verdict = ?,
+                            created_at = ?, updated_at = ?, closed_at = ?, alert_ids_json = ?, entities_json = ?,
+                            version = version + 1
+                        WHERE id = ? AND version = ?
+                        """, title, status, aggregation, operator, verdict, timestamp(createdAt), timestamp(updatedAt),
+                timestamp(closedAt), writeJson(finalAlertIds), writeJson(entities), id, expectedVersion);
+        if (changed == 0) {
+            throw new IllegalStateException("案件已被其他请求更新,请刷新后重试: " + id);
+        }
+        jdbc.update("DELETE FROM case_alerts WHERE case_id = ?", id);
+        insertRelations(id, finalAlertIds);
+        return findCase(id);
+    }
+
+    @Override
+    public boolean deleteCase(String id) {
+        return jdbc.update("DELETE FROM cases WHERE id = ?", id) > 0;
+    }
+
+    @Override
+    public boolean hasAlert(String alertId) {
+        Integer count = jdbc.queryForObject("SELECT COUNT(*) FROM case_alerts WHERE alert_id = ?", Integer.class, alertId);
+        return count != null && count > 0;
+    }
+
+    @Override
+    public String createTask(String type, String resourceId, String message) {
+        String id = "task-" + UUID.randomUUID();
+        jdbc.update("""
+                        INSERT INTO background_tasks(id, task_type, resource_id, status, progress, message)
+                        VALUES (?, ?, ?, 'queued', 0, ?)
+                        """, id, type, resourceId, message);
+        return id;
+    }
+
+    @Override
+    public void updateTask(String id, String status, int progress, String message, String error) {
+        jdbc.update("""
+                        UPDATE background_tasks SET status = ?, progress = ?, message = ?, error = ?,
+                            started_at = CASE WHEN ? = 'running' AND started_at IS NULL THEN CURRENT_TIMESTAMP ELSE started_at END,
+                            finished_at = CASE WHEN ? IN ('succeeded', 'failed', 'cancelled') THEN CURRENT_TIMESTAMP ELSE finished_at END,
+                            updated_at = CURRENT_TIMESTAMP WHERE id = ?
+                        """, status, Math.max(0, Math.min(progress, 100)), message, error, status, status, id);
+    }
+
+    @Override
+    public List<Map<String, Object>> listTasks(int size) {
+        return jdbc.query("""
+                        SELECT id, task_type, resource_id, status, progress, message, error,
+                               started_at, finished_at, created_at, updated_at
+                        FROM background_tasks ORDER BY updated_at DESC LIMIT ?
+                        """, (rs, rowNum) -> {
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    row.put("id", rs.getString("id"));
+                    row.put("type", rs.getString("task_type"));
+                    row.put("resourceId", rs.getString("resource_id"));
+                    row.put("status", rs.getString("status"));
+                    row.put("progress", rs.getInt("progress"));
+                    row.put("message", rs.getString("message"));
+                    row.put("error", rs.getString("error"));
+                    row.put("startedAt", instant(rs.getTimestamp("started_at")));
+                    row.put("finishedAt", instant(rs.getTimestamp("finished_at")));
+                    row.put("createdAt", instant(rs.getTimestamp("created_at")));
+                    row.put("updatedAt", instant(rs.getTimestamp("updated_at")));
+                    return row;
+                }, Math.min(Math.max(size, 1), 200));
+    }
+
+    private void insertRelations(String caseId, List<String> alertIds) {
+        for (String alertId : alertIds.stream().distinct().toList()) {
+            jdbc.update("INSERT INTO case_alerts(case_id, alert_id) VALUES (?, ?)", caseId, alertId);
+        }
+    }
+
+    private Map<String, Object> caseRow(java.sql.ResultSet rs, String id) throws java.sql.SQLException {
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("_id", id);
+        row.put("case.id", rs.getString("id"));
+        row.put("case.title", rs.getString("title"));
+        row.put("case.status", rs.getString("status"));
+        row.put("case.aggregation", rs.getString("aggregation"));
+        row.put("case.operator", rs.getString("operator"));
+        row.put("case.verdict", rs.getString("verdict"));
+        row.put("case.created_at", instant(rs.getTimestamp("created_at")));
+        row.put("case.updated_at", instant(rs.getTimestamp("updated_at")));
+        row.put("case.closed_at", instant(rs.getTimestamp("closed_at")));
+        row.put("alert_ids", readStringList(rs.getString("alert_ids_json")));
+        row.put("entities", readMapList(rs.getString("entities_json")));
+        row.put("_control_version", rs.getLong("version"));
+        return row;
+    }
+
+    private Map<String, Object> notificationRow(String id, String type, String target, String message,
+                                                 boolean read, Instant timestamp) {
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("id", id);
+        row.put("type", type);
+        row.put("target", target);
+        row.put("message", message);
+        row.put("timestamp", timestamp.toString());
+        row.put("read", read);
+        return row;
+    }
+
+    private boolean entitiesContain(Object raw, String type, String value) {
+        if (!(raw instanceof List<?> list)) {
+            return false;
+        }
+        return list.stream().anyMatch(item -> item instanceof Map<?, ?> m
+                && type.equals(String.valueOf(m.get("type")))
+                && value.equals(String.valueOf(m.get("value"))));
+    }
+
+    private String writeJson(Object value) {
+        try {
+            return mapper.writeValueAsString(value == null ? List.of() : value);
+        } catch (Exception e) {
+            throw new IllegalStateException("控制面 JSON 序列化失败", e);
+        }
+    }
+
+    private List<String> readStringList(String value) {
+        try {
+            return value == null || value.isBlank() ? new ArrayList<>() : mapper.readValue(value, STRING_LIST);
+        } catch (Exception e) {
+            throw new IllegalStateException("控制面字符串列表解析失败", e);
+        }
+    }
+
+    private List<Map<String, Object>> readMapList(String value) {
+        try {
+            return value == null || value.isBlank() ? new ArrayList<>() : mapper.readValue(value, MAP_LIST);
+        } catch (Exception e) {
+            throw new IllegalStateException("控制面实体列表解析失败", e);
+        }
+    }
+
+    private List<String> stringList(Object value) {
+        if (value instanceof List<?> list) {
+            return list.stream().map(String::valueOf).toList();
+        }
+        return readStringList(value == null ? null : String.valueOf(value));
+    }
+
+    private static String value(Map<String, Object> map, String key) {
+        Object value = map.get(key);
+        return value == null ? null : String.valueOf(value);
+    }
+
+    private static String valueOr(Map<String, Object> map, String key, String fallback) {
+        String value = value(map, key);
+        return value == null ? fallback : value;
+    }
+
+    private static Timestamp timestamp(String value) {
+        return value == null ? null : Timestamp.from(Instant.parse(value));
+    }
+
+    private static Instant instant(Timestamp timestamp) {
+        return timestamp == null ? null : timestamp.toInstant();
+    }
+}

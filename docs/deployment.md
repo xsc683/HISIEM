@@ -8,6 +8,7 @@
 | --- | --- | --- |
 | Windows | 10/11 | 宿主系统 |
 | WSL2 + Docker Desktop | — | 给 WSL 分配足够内存(建议 ≥16G,ES 占 4G heap) |
+| PostgreSQL | 16 | Compose 提供 `localhost:5432/siem`，控制面由 Flyway 自动建表 |
 | Java | 21 | 构建 Spring Boot / Flink |
 | Maven | 3.9+ | 构建(或用仓库 `./mvnw`) |
 | Python3 | 3.10+ | 跑 Kibana 创建脚本 |
@@ -35,9 +36,18 @@ MSYS_NO_PATHCONV=1 wsl bash /mnt/d/Project/SIEM/infra/deploy.sh --start-job
 1. 同步 `infra/docker-compose.yml` → `~/projects/mini-siem/`
 2. 同步 `infra/logstash/` → `~/projects/mini-siem/logstash/`(rsync 原地同步,**不可 rm -rf**,见设计决策)
 3. 同步 `flink/` → `~/projects/mini-siem/flink/`
-4. `docker compose config` 校验并启动服务,按 healthcheck 等待 ES/Kafka/Logstash/Flink/Kibana
+4. `docker compose config` 校验并启动服务,按 healthcheck 等待 PostgreSQL/ES/Kafka/Logstash/Flink/Kibana
 5. WSL 内 `mvn clean package` 构建 jar,拷贝到 JobManager,并原地重建规则目录
 6. `--start-job` 下仅当检测作业不存在时提交,避免重复运行
+
+Spring Boot 应用启动时默认读取 PostgreSQL:
+
+```bash
+java -jar target/hsiem-platform-0.0.1-SNAPSHOT.jar
+# 可用 SIEM_DB_URL / SIEM_DB_USERNAME / SIEM_DB_PASSWORD 覆盖连接
+```
+
+Flyway 首次启动会创建控制面表并导入旧版本 `infra/auth/users.yaml` 用户；之后 PostgreSQL 是用户、角色和审计的唯一来源。
 
 Logstash 的 healthcheck 同时检查 5000/5001/5002/5004/5005/5006 和 9600,
 避免出现“容器 healthy 但 pipeline 尚未监听”的假就绪。
@@ -95,8 +105,9 @@ docker exec siem-flink-jobmanager flink run -d /opt/flink/detection-job-1.0.jar
 bash /mnt/d/Project/SIEM/infra/validate-deployment.sh
 ```
 
-脚本以非 0 退出表示失败,检查 Compose 配置、6 个容器状态、健康检查、6 个 Logstash 输入端口、ES/Kibana/Flink API、Kafka topic 及检测作业 RUNNING。
+脚本以非 0 退出表示失败,检查 Compose 配置、7 个容器状态、健康检查、6 个 Logstash 输入端口、PostgreSQL/ES/Kibana/Flink API、Kafka topic 及检测作业 RUNNING。
 只启动数据面而未提交 Flink 作业时可用 `REQUIRE_DETECTION_JOB=0`。
+Spring Boot 启动并完成 Flyway 后，可追加 `REQUIRE_CONTROL_PLANE_SCHEMA=1` 检查 PostgreSQL 控制面 7 张表。
 
 ## 10. 验证链路
 

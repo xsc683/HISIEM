@@ -1,5 +1,7 @@
 package com.xscsiem.hsiem_platform.onboarding;
 
+import com.xscsiem.hsiem_platform.control.ControlPlaneStore;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -23,12 +25,21 @@ public class LogSourceService {
     private final LogSourceStore store;
     private final ParserTemplateService templates;
     private final ActivationCoordinator coordinator;
+    private final ControlPlaneStore control;
 
+    @Autowired
     public LogSourceService(LogSourceStore store, ParserTemplateService templates,
-                            ActivationCoordinator coordinator) {
+                            ActivationCoordinator coordinator, ControlPlaneStore control) {
         this.store = store;
         this.templates = templates;
         this.coordinator = coordinator;
+        this.control = control;
+    }
+
+    /** 轻量构造器仅供不启动 Spring/数据库的单元测试使用。 */
+    public LogSourceService(LogSourceStore store, ParserTemplateService templates,
+                            ActivationCoordinator coordinator) {
+        this(store, templates, coordinator, null);
     }
 
     public List<LogSource> list() {
@@ -66,7 +77,19 @@ public class LogSourceService {
         if ("active".equals(s.status) || "stopped".equals(s.status)) {
             return s;
         }
-        ACTIVATOR.execute(() -> activateSync(id));
+        String taskId = control == null ? null
+                : control.createTask("log_source_activate", id, "等待数据源配置生效");
+        ACTIVATOR.execute(() -> {
+            if (taskId != null) {
+                control.updateTask(taskId, "running", 10, "正在生成并校验 Logstash 配置", null);
+            }
+            LogSource result = activateSync(id);
+            if (taskId != null) {
+                boolean success = "active".equals(result.status);
+                control.updateTask(taskId, success ? "succeeded" : "failed", success ? 100 : 100,
+                        success ? "数据源已生效" : "数据源生效失败", success ? null : "Logstash 配置链路失败");
+            }
+        });
         return s;
     }
 

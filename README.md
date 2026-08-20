@@ -23,7 +23,7 @@ Linux 日志 ──> Logstash (Grok 解析 + ECS 标准化)
                                                           └──> Kibana (SIEM 总览 dashboard)
 ```
 
-**组件职责**:Logstash 只做解析/标准化,不做检测;Kafka 是事件总线,解耦生产与消费;Flink 是检测引擎;ES 负责存储与检索;Kibana 负责可视化。
+**组件职责**:Logstash 只做解析/标准化,不做检测;Kafka 是事件总线,解耦生产与消费;Flink 是检测引擎;ES 负责事件/告警存储与检索;Kibana 负责可视化;PostgreSQL 负责控制面事务数据。
 
 ## 仓库结构
 
@@ -34,7 +34,7 @@ SIEM/
 │   ├── pom.xml             Flink 2.1,shade 打 jar,mainClass com.siem.DetectionJob
 │   └── src/{main,test}/    规则引擎代码 + JUnit 测试
 ├── infra/                  基础设施配置(唯一来源,deploy.sh 同步到部署环境)
-│   ├── docker-compose.yml  ES/Kibana/Logstash/Kafka/Flink 编排
+│   ├── docker-compose.yml  PostgreSQL/ES/Kibana/Logstash/Kafka/Flink 编排
 │   ├── logstash/           Grok 解析规则
 │   ├── elasticsearch/      索引模板 + 应用脚本
 │   ├── kibana/             dashboard 创建脚本 + NDJSON 导出

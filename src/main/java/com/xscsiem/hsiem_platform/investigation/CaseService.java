@@ -2,9 +2,12 @@ package com.xscsiem.hsiem_platform.investigation;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.xscsiem.hsiem_platform.alert.AlertService;
+import com.xscsiem.hsiem_platform.control.ControlPlaneStore;
 import com.xscsiem.hsiem_platform.onboarding.ConflictException;
 import com.xscsiem.hsiem_platform.onboarding.NotFoundException;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 
 import java.net.URI;
@@ -42,15 +45,44 @@ public class CaseService {
 
     private final String esUrl;
     private final AlertService alerts;
+    private final ControlPlaneStore control;
 
+    @Autowired
     public CaseService(@Value("${app.elasticsearch.url:http://localhost:9200}") String esUrl,
-                       AlertService alerts) {
+                       AlertService alerts, ControlPlaneStore control) {
         this.esUrl = esUrl;
         this.alerts = alerts;
+        this.control = control;
+    }
+
+    /** 轻量构造器仅供不启动 Spring/数据库的状态机单元测试使用。 */
+    public CaseService(@Value("${app.elasticsearch.url:http://localhost:9200}") String esUrl,
+                       AlertService alerts) {
+        this(esUrl, alerts, null);
     }
 
     /** 案件列表(按 updated_at 倒序;可按 status/entity 过滤)。 */
     public List<Map<String, Object>> list(String status, String entity, int size) {
+        if (control != null) {
+            List<Map<String, Object>> rows = control.listCases(status, entity, size);
+            if (!rows.isEmpty()) {
+                return rows;
+            }
+            // 兼容阶段 4.1 之前已写入 ES 的案件:首次查询时惰性导入控制面。
+            List<Map<String, Object>> legacy = esList(status, entity, size);
+            for (Map<String, Object> row : legacy) {
+                try {
+                    control.importCaseDocument(row);
+                } catch (RuntimeException ignored) {
+                    // 关系库已有告警归属时保留 ES 查询结果,不覆盖控制面事实。
+                }
+            }
+            return legacy;
+        }
+        return esList(status, entity, size);
+    }
+
+    private List<Map<String, Object>> esList(String status, String entity, int size) {
         StringBuilder q = new StringBuilder();
         List<String> must = new ArrayList<>();
         if (status != null && !status.isBlank()) {
@@ -73,9 +105,25 @@ public class CaseService {
 
     /** 案件详情(含 alert_ids/entities/状态)。 */
     public Map<String, Object> detail(String id) {
+        if (control != null) {
+            Map<String, Object> stored = control.findCase(id);
+            if (stored != null) {
+                return stored;
+            }
+        }
         Map<String, Object> doc = esGet("/siem-cases/_doc/" + id);
         if (doc == null) {
             throw new NotFoundException("案件不存在: " + id);
+        }
+        if (control != null) {
+            try {
+                Map<String, Object> imported = control.importCaseDocument(doc);
+                if (imported != null) {
+                    return imported;
+                }
+            } catch (RuntimeException ignored) {
+                // ES 仍是兼容镜像;关系库冲突时不丢失已有 ES 详情。
+            }
         }
         return doc;
     }
@@ -113,23 +161,38 @@ public class CaseService {
         doc.put("case.operator", operator == null ? "anonymous" : operator);
         doc.put("case.created_at", now);
         doc.put("case.updated_at", now);
-        doc.put("alert_ids", alertIds.stream().distinct().toList());
+        List<String> uniqueAlertIds = alertIds.stream().distinct().toList();
+        doc.put("alert_ids", uniqueAlertIds);
         doc.put("entities", new ArrayList<>(entities));
+        boolean controlCreated = false;
         try {
+            if (control != null) {
+                control.createCase(doc, uniqueAlertIds);
+                controlCreated = true;
+            }
             esCall("POST", "/siem-cases/_doc/" + caseId + "?refresh=wait_for",
                     MAPPER.writeValueAsString(doc));
         } catch (Exception e) {
+            if (controlCreated) {
+                control.deleteCase(caseId);
+            }
+            if (e instanceof DataIntegrityViolationException) {
+                throw new ConflictException("告警已归属其他案件,案件创建被拒绝");
+            }
             throw new IllegalStateException("案件序列化失败", e);
         }
         // 给案内告警写 alert.case_id 标记(聚合幂等根基:同批告警只入一案)
         try {
-            markAlertsInCase(alertIds.stream().distinct().toList(), caseId);
+            markAlertsInCase(uniqueAlertIds, caseId);
         } catch (RuntimeException e) {
             // ES 没有跨索引事务:关联失败时删除已创建的空壳案件,并尽力清理已写入的标记。
             try {
                 esCallCode("DELETE", "/siem-cases/_doc/" + caseId, null);
             } catch (Exception cleanup) {
                 e.addSuppressed(cleanup);
+            }
+            if (control != null) {
+                control.deleteCase(caseId);
             }
             throw e;
         }
@@ -306,6 +369,9 @@ public class CaseService {
         if (code / 100 != 2) {
             throw new IllegalStateException("案件删除失败 " + code);
         }
+        if (control != null) {
+            control.deleteCase(caseId);
+        }
     }
 
     /** 自动聚合(供 CaseAggregateJob 调用):近 30min open 告警按实体聚类,组 ≥2 建案。幂等可重跑。 */
@@ -398,6 +464,9 @@ public class CaseService {
 
     /** 任一告警已存在于某案件(无论案件状态)→ 防重复聚合。 */
     private boolean anyAlertInCase(List<String> ids) {
+        if (control != null) {
+            return ids.stream().anyMatch(control::hasAlert);
+        }
         String terms = ids.stream().map(i -> "\"" + i + "\"").reduce((a, b) -> a + "," + b).orElse("");
         String body = """
                 {"size":1,"query":{"terms":{"alert_ids":[%s]}}}
@@ -408,6 +477,9 @@ public class CaseService {
     }
 
     private boolean entityHasOpenCase(String entityKey) {
+        if (control != null) {
+            return !control.listCases("open", entityKey, 1).isEmpty();
+        }
         String[] parts = entityKey.split(":", 2);
         String type = parts[0];
         String value = parts[1];
@@ -500,7 +572,23 @@ public class CaseService {
         if (code / 100 != 2) {
             throw new IllegalStateException("案件更新失败 " + code + ": " + caseId);
         }
-        return detail(caseId);
+        Map<String, Object> updated = esGet("/siem-cases/_doc/" + caseId);
+        if (control != null) {
+            Map<String, Object> controlCurrent = control.findCase(caseId);
+            if (controlCurrent == null) {
+                controlCurrent = control.importCaseDocument(cur);
+            }
+            long version = controlCurrent.get("_control_version") instanceof Number n
+                    ? n.longValue() : 0L;
+            List<String> finalAlertIds = alertIds == null
+                    ? strList(updated.get("alert_ids")) : alertIds;
+            try {
+                return control.updateCase(caseId, version, updated, finalAlertIds);
+            } catch (IllegalStateException e) {
+                throw new ConflictException("案件控制面更新冲突,请刷新后重试: " + caseId);
+            }
+        }
+        return updated;
     }
 
     private List<Map<String, Object>> extractHits(Map<String, Object> resp) {

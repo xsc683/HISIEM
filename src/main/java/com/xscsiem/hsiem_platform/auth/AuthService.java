@@ -1,7 +1,9 @@
 package com.xscsiem.hsiem_platform.auth;
 
 import com.xscsiem.hsiem_platform.onboarding.NotFoundException;
+import com.xscsiem.hsiem_platform.control.ControlPlaneStore;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -32,16 +34,33 @@ public class AuthService {
 
     private final BCryptPasswordEncoder encoder = new BCryptPasswordEncoder();
     private final UserStore store;
+    private final ControlPlaneStore control;
     private final Map<String, String> sessions = new ConcurrentHashMap<>();       // token -> username
     private final List<Map<String, String>> auditLogs = new CopyOnWriteArrayList<>();
 
-    public AuthService(UserStore store) {
+    /** 生产构造器:用户、角色、审计均落 PostgreSQL。 */
+    @Autowired
+    public AuthService(UserStore store, ControlPlaneStore control) {
         this.store = store;
+        this.control = control;
         bootstrap();
     }
 
+    /** 轻量构造器仅供不启动 Spring/数据库的单元测试使用。 */
+    public AuthService(UserStore store) {
+        this(store, null);
+    }
+
     private void bootstrap() {
-        if (store.list().isEmpty()) {
+        if (control != null && control.listUsers().isEmpty()) {
+            List<AuthUser> legacy = store.list();
+            if (!legacy.isEmpty()) {
+                legacy.forEach(control::insertUser);
+                audit("migration_users", "users.yaml");
+                return;
+            }
+        }
+        if (listUsersInternal().isEmpty()) {
             AuthUser admin = new AuthUser();
             admin.id = "admin";
             admin.username = "admin";
@@ -49,7 +68,11 @@ public class AuthService {
             admin.role = "admin";
             admin.status = "active";
             admin.createdAt = Instant.now().toString();
-            store.save(new ArrayList<>(List.of(admin)));
+            if (control == null) {
+                store.save(new ArrayList<>(List.of(admin)));
+            } else {
+                control.insertUser(admin);
+            }
             audit("bootstrap_admin", "admin");
         }
     }
@@ -84,7 +107,7 @@ public class AuthService {
     }
 
     public List<AuthUser> listUsers() {
-        return store.list();
+        return listUsersInternal();
     }
 
     public AuthUser createUser(String username, String password, String role) {
@@ -107,14 +130,23 @@ public class AuthService {
         u.role = role;
         u.status = "active";
         u.createdAt = Instant.now().toString();
-        List<AuthUser> users = store.list();
-        users.add(u);
-        store.save(users);
+        if (control == null) {
+            List<AuthUser> users = store.list();
+            users.add(u);
+            store.save(users);
+        } else {
+            control.insertUser(u);
+        }
         audit("create_user", username + "(" + role + ")");
         return u;
     }
 
     public void deleteUser(String username) {
+        if (control != null) {
+            control.deleteUser(username);
+            audit("delete_user", username);
+            return;
+        }
         List<AuthUser> users = store.list();
         boolean removed = users.removeIf(x -> x.username.equals(username));
         if (!removed) {
@@ -128,17 +160,27 @@ public class AuthService {
         if (!ROLE_PERMS.containsKey(role)) {
             throw new IllegalArgumentException("角色非法(admin/analyst/ops/audit): " + role);
         }
-        List<AuthUser> users = store.list();
-        AuthUser u = users.stream().filter(x -> x.username.equals(username)).findFirst()
-                .orElseThrow(() -> new NotFoundException("用户不存在: " + username));
+        AuthUser u = findOrNull(username);
+        if (u == null) {
+            throw new NotFoundException("用户不存在: " + username);
+        }
         u.role = role;
-        store.save(users);
+        if (control == null) {
+            List<AuthUser> users = store.list();
+            users.stream().filter(x -> x.username.equals(username)).findFirst().ifPresent(x -> x.role = role);
+            store.save(users);
+        } else {
+            control.updateUser(u);
+        }
         audit("update_role", username + "->" + role);
         return u;
     }
 
     /** 角色与权限矩阵(前端展示)。 */
     public List<Map<String, Object>> roles() {
+        if (control != null) {
+            return control.listRoles();
+        }
         List<Map<String, Object>> out = new ArrayList<>();
         for (Map.Entry<String, Set<String>> e : ROLE_PERMS.entrySet()) {
             Map<String, Object> row = new LinkedHashMap<>();
@@ -150,7 +192,7 @@ public class AuthService {
     }
 
     public List<Map<String, String>> auditLogs() {
-        return auditLogs;
+        return control == null ? auditLogs : control.listAuditLogs();
     }
 
     public boolean isAdmin(AuthUser u) {
@@ -158,6 +200,10 @@ public class AuthService {
     }
 
     private void audit(String action, String target) {
+        if (control != null) {
+            control.audit("system", action, target);
+            return;
+        }
         Map<String, String> entry = new LinkedHashMap<>();
         entry.put("timestamp", Instant.now().toString());
         entry.put("action", action);
@@ -166,16 +212,24 @@ public class AuthService {
     }
 
     private AuthUser find(String username) {
-        return store.list().stream()
-                .filter(x -> x.username.equals(username))
-                .findFirst()
-                .orElseThrow(() -> new UnauthorizedException("用户名或密码错误"));
+        AuthUser user = findOrNull(username);
+        if (user == null) {
+            throw new UnauthorizedException("用户名或密码错误");
+        }
+        return user;
     }
 
     private AuthUser findOrNull(String username) {
+        if (control != null) {
+            return control.findUser(username);
+        }
         return store.list().stream()
                 .filter(x -> x.username.equals(username))
                 .findFirst()
                 .orElse(null);
+    }
+
+    private List<AuthUser> listUsersInternal() {
+        return control == null ? store.list() : control.listUsers();
     }
 }
