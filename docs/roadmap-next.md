@@ -24,7 +24,7 @@
 
 以 Spring Security 替换自定义拦截器，补接口级权限、PostgreSQL 会话持久化、登录失败限制和统一错误 DTO；生产 ES 请求统一经过 Elasticsearch Java API Client，Testcontainers 覆盖空 PostgreSQL 的 Flyway v2 迁移，Actuator/Micrometer 暴露 health/metrics/prometheus，后台任务支持列表和按 ID 查询。
 
-- 验收：根项目 64 个测试（含安全/失败限制/容器迁移）通过；真实运行态验证登录、重启后 Token、角色 403、Actuator 和 ES 搜索/计数均通过。
+- 验收：根项目当前 69 个测试（含安全/失败限制/容器迁移）通过；真实运行态验证登录、重启后 Token、角色 403、Actuator 和 ES 搜索/计数均通过。
 
 ### 阶段 4.3：产品与运维增强（已完成）
 
@@ -34,7 +34,19 @@
 - `PATCH /api/cases/{id}/metadata` 持久化 `case.owner` 和 `evidence`，案件详情支持编辑负责人和证据引用。
 - `GET /api/ops/health-scan` 返回六个运行组件及延迟；`siem.health.scans` 和 `siem.health.scan.duration` 可从 Actuator 查询。
 - `infra/elasticsearch/backup-restore-rehearsal.sh` 只操作临时索引，完成快照、删除、恢复、校验和自动清理。
-- 验收：根项目 65 个测试、Flink 30 个测试、前端构建、真实 PostgreSQL V3、健康扫描、案件元数据接口、备份恢复演练和 Docker 部署自验证均通过。
+- 验收：根项目当前 69 个测试、Flink 32 个测试、前端构建、真实 PostgreSQL V5、健康扫描、案件元数据接口、备份恢复演练和 Docker 部署自验证均通过。
+
+### 阶段 4.4：可靠性与能力补全（已完成）
+
+本阶段把优先级清单中的五项后续工作落到代码、测试和运行态验证：
+
+- **Flink checkpoint**：新增 `RuntimeTuning`，统一 checkpoint 与 ES Sink 的批量、并发、缓冲和超时参数；部署脚本先幂等创建 Kafka topic。真实负载发送 2000 条事件后，作业保持 `RUNNING`，新增 5 次 checkpoint 完成，耗时 7–85ms。
+- **数据源接入**：preview 复用端口范围/冲突校验，API 样例限制 1MiB；支持 `tcp`、`syslog`、`file`，文件源通过 Logstash HUP 热加载，TCP/Syslog 端口变更按重启生效。
+- **通知治理**：实现 `NotificationScanner`、`IngestFailedListener`、高 FP/健康扫描和 30 天已读通知清理，保留 1 小时 `type + target` 频控。
+- **资产关键度**：支持批量导入、前缀搜索、严格 key 校验、原子替换、审计、后台任务状态和保存后自动重算。
+- **调查台**：告警台可直接建案；聚合支持窗口、阈值和按规则分组；案件支持最多 20 个协作者。
+
+验收命令：`mvnw.cmd test`、`mvnw.cmd -f flink/pom.xml clean package`、`npm --prefix web run build`；运行态使用 `infra/docker-compose.yml`、`infra/simulator/checkpoint-load-test.sh` 和接口/ES/Flink 查询复核。失败时保留旧配置、旧风险分和已有运行数据，部署脚本与运行参数均可回滚。
 
 ## 二、项目结合学习主线
 

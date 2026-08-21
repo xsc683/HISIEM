@@ -68,11 +68,7 @@ public class LogstashConfigGenerator {
         StringBuilder sb = new StringBuilder();
         // input:注入数据源标识(story-01 FR-6 / story-05 聚合)
         sb.append("input {\n");
-        sb.append("  tcp {\n");
-        sb.append("    port => ").append(s.port).append("\n");
-        sb.append("    add_field => { \"log.source_id\" => \"").append(s.sourceId).append("\" ")
-                .append("\"log.source_name\" => \"").append(escape(s.name)).append("\" }\n");
-        sb.append("  }\n");
+        sb.append(indent(generateInput(s), 2));
         sb.append("}\n\n");
 
         // filter:模板片段(缩进 2 格) + 规范化 + geoip
@@ -114,6 +110,20 @@ public class LogstashConfigGenerator {
         sb.append("  }\n");
         sb.append("}\n");
         return sb.toString();
+    }
+
+    /** 生成 input 块内容，供预览和正式 pipeline 共用。 */
+    public String generateInput(LogSource s) {
+        String protocol = s.protocol == null ? "tcp" : s.protocol.toLowerCase();
+        String input = switch (protocol) {
+            case "syslog" -> "syslog {\n    port => " + s.port + "\n";
+            case "file" -> "file {\n    path => [\"" + escape(s.path) + "\"]\n"
+                    + "    start_position => \"beginning\"\n"
+                    + "    sincedb_path => \"/dev/null\"\n";
+            default -> "tcp {\n    port => " + s.port + "\n";
+        };
+        return input + "    add_field => { \"log.source_id\" => \"" + escape(s.sourceId) + "\" "
+                + "\"log.source_name\" => \"" + escape(s.name) + "\" }\n  }\n";
     }
 
     /** 每行缩进 n 个空格(用于把 filter 片段嵌入 filter {} 块)。空行不缩进。 */

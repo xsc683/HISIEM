@@ -17,8 +17,8 @@ import {
   listAlerts, getAlert, updateAlertStatus, updateAlertVerdict,
   batchAlertStatus, batchAlertVerdict, fpRate,
   listCases, getCase, createCase, addCaseAlerts, removeCaseAlert,
-  updateCaseStatus, caseTimeline, deleteCase, aggregateCases,
-  updateCaseMetadata, healthScan, listTasks,
+  updateCaseStatus, caseTimeline, deleteCase, aggregateCasesWithOptions,
+  updateCaseMetadata, updateCaseCollaborators, healthScan, listTasks,
 } from './api.js'
 import { pathFromRouteKey, routeKeyFromPath } from './routes.js'
 
@@ -57,12 +57,16 @@ export default function App() {
   const [testResult, setTestResult] = useState(null)
   const [name, setName] = useState('')
   const [port, setPort] = useState(5001)
+  const [protocol, setProtocol] = useState('tcp')
+  const [sourcePath, setSourcePath] = useState('')
   const [config, setConfig] = useState('')
   const [busy, setBusy] = useState(false)
 
   const [sources, setSources] = useState([])
   const [srcName, setSrcName] = useState('')
   const [srcPort, setSrcPort] = useState(5001)
+  const [srcProtocol, setSrcProtocol] = useState('tcp')
+  const [srcPath, setSrcPath] = useState('')
   const [activating, setActivating] = useState({})
 
   const [detRules, setDetRules] = useState([])
@@ -102,12 +106,16 @@ export default function App() {
   const [caseFilter, setCaseFilter] = useState('')
   const [detailCase, setDetailCase] = useState(null)
   const [caseTitle, setCaseTitle] = useState('')
+  const [caseWindow, setCaseWindow] = useState(30)
+  const [caseThreshold, setCaseThreshold] = useState(2)
+  const [caseGroupByRule, setCaseGroupByRule] = useState(false)
   const [caseTimeline_, setCaseTimeline_] = useState([])
   const [opsHealth, setOpsHealth] = useState(null)
   const [tasks, setTasks] = useState([])
   const [caseOwner, setCaseOwner] = useState('')
   const [evidenceTitle, setEvidenceTitle] = useState('')
   const [evidenceUri, setEvidenceUri] = useState('')
+  const [caseCollaborators, setCaseCollaborators] = useState('')
 
   const [activeKey, setActiveKey] = useState(() => routeKeyFromPath())
   const [collapsed, setCollapsed] = useState(false)
@@ -230,11 +238,11 @@ export default function App() {
   }
 
   async function handleRecalc() {
-    setRecalcMsg('重算中(约数秒)…')
+    setRecalcMsg('重算任务已排队…')
     try {
       const r = await recalcCriticality()
-      setRecalcMsg(r.output.split('\n').filter((l) => l.trim()).slice(-3).join(' / '))
-      message.success('实体风险已重算')
+      setRecalcMsg('任务 ' + r.taskId + ' 已排队，可在运行态扫描查看状态')
+      message.success('实体风险重算已排队')
     } catch (e) { setRecalcMsg(`重算失败: ${e.message}`) }
   }
 
@@ -276,6 +284,10 @@ export default function App() {
 
   async function handleTest() {
     if (!selectedId || !sample.trim()) { message.warning('先选模板并粘贴样例日志'); return }
+    if (new TextEncoder().encode(sample).length > 8 * 1024) {
+      message.warning('样例日志不能超过 8 KiB')
+      return
+    }
     setBusy(true)
     try {
       setTestResult(await testParse(selectedId, sample.trim()))
@@ -286,7 +298,8 @@ export default function App() {
     if (!selectedId) { message.warning('先选模板'); return }
     setBusy(true)
     try {
-      const r = await previewLogSource({ name, protocol: 'tcp', templateId: selectedId, port: Number(port) })
+      const r = await previewLogSource({ name, protocol, templateId: selectedId,
+        port: protocol === 'file' ? 0 : Number(port), path: protocol === 'file' ? sourcePath : null })
       setConfig(`# 数据源:${name || '未命名'} (${r.template})\ninput {\n  ${r.input}\n}\n\nfilter {\n${r.config}}`)
     } catch (e) { message.error(e.message) } finally { setBusy(false) }
   }
@@ -296,7 +309,8 @@ export default function App() {
     if (!srcName.trim()) { message.warning('填数据源名称'); return }
     setBusy(true)
     try {
-      const s = await createLogSource({ name: srcName.trim(), protocol: 'tcp', templateId: selectedId, port: Number(srcPort) })
+      const s = await createLogSource({ name: srcName.trim(), protocol: srcProtocol, templateId: selectedId,
+        port: srcProtocol === 'file' ? 0 : Number(srcPort), path: srcProtocol === 'file' ? srcPath : null })
       setSources([...sources, s])
       setSrcName('')
       message.success(`数据源 ${s.id} 已创建,点「生效」接入`)
@@ -412,6 +426,7 @@ export default function App() {
     setDetailCase(c)
     if (c) {
       setCaseOwner(c['case.owner'] || '')
+      setCaseCollaborators((c['case.collaborators'] || []).join(', '))
       setCaseTimeline_(await caseTimeline(id, 30).catch(() => []))
     }
   }
@@ -436,6 +451,14 @@ export default function App() {
       await reloadCases()
       openCaseDetail(id)
       message.success('案件已结案,内部告警批量 closed')
+    } catch (e) { message.error(e.message) }
+  }
+
+  async function handleUpdateCollaborators(id) {
+    try {
+      const updated = await updateCaseCollaborators(id, caseCollaborators.split(',').map((v) => v.trim()).filter(Boolean))
+      setDetailCase(updated)
+      message.success('协作负责人已保存')
     } catch (e) { message.error(e.message) }
   }
 
@@ -475,7 +498,9 @@ export default function App() {
 
   async function handleAggregate() {
     try {
-      const r = await aggregateCases()
+      const r = await aggregateCasesWithOptions({
+        windowMinutes: Number(caseWindow), threshold: Number(caseThreshold), groupByRule: caseGroupByRule,
+      })
       await reloadCases()
       message.success(`自动聚合完成,新建 ${r.created} 个案件`)
     } catch (e) { message.error(e.message) }
@@ -586,8 +611,10 @@ export default function App() {
                 selected={selected} sample={sample} setSample={setSample}
                 testResult={testResult} handleTest={handleTest} busy={busy}
                 name={name} setName={setName} port={port} setPort={setPort}
+                protocol={protocol} setProtocol={setProtocol} sourcePath={sourcePath} setSourcePath={setSourcePath}
                 config={config} handlePreview={handlePreview}
                 srcName={srcName} setSrcName={setSrcName} srcPort={srcPort} setSrcPort={setSrcPort}
+                srcProtocol={srcProtocol} setSrcProtocol={setSrcProtocol} srcPath={srcPath} setSrcPath={setSrcPath}
                 handleCreateSource={handleCreateSource}
                 sources={sources} activating={activating} handleActivate={handleActivate}
                 handleDeactivate={handleDeactivate} handleDeleteSource={handleDeleteSource}
@@ -643,6 +670,7 @@ export default function App() {
                   <Space wrap>
                     <Select value={alertFilter} style={{ width: 160 }} onChange={(v) => { setAlertFilter(v); listAlerts(v).then(setAlerts) }}
                       options={['open', 'acknowledged', 'investigating', 'resolved', 'closed'].map((s) => ({ value: s, label: s }))} />
+                    <Button type="primary" onClick={handleCreateCase}>选中直接建案</Button>
                     <Button onClick={() => handleBatchStatus('acknowledged')}>批量 ack</Button>
                     <Button danger onClick={() => handleBatchStatus('closed')}>批量 close</Button>
                     <Select placeholder="批量 verdict…" style={{ width: 180 }} onChange={(v) => v && handleBatchVerdict(v)}
@@ -706,6 +734,8 @@ export default function App() {
               <CasesView
                 cases={cases} setCases={setCases} caseFilter={caseFilter} setCaseFilter={setCaseFilter}
                 selAlerts={selAlerts} setSelAlerts={setSelAlerts} caseTitle={caseTitle} setCaseTitle={setCaseTitle}
+                caseWindow={caseWindow} setCaseWindow={setCaseWindow} caseThreshold={caseThreshold} setCaseThreshold={setCaseThreshold}
+                caseGroupByRule={caseGroupByRule} setCaseGroupByRule={setCaseGroupByRule}
                 detailCase={detailCase} setDetailCase={setDetailCase} caseTimeline_={caseTimeline_} openCaseDetail={openCaseDetail}
                 handleCreateCase={handleCreateCase} handleAggregate={handleAggregate}
                 handleInvestigateCase={handleInvestigateCase} handleResolveCase={handleResolveCase}
@@ -713,7 +743,8 @@ export default function App() {
                 handleDeleteCase={handleDeleteCase} caseOwner={caseOwner} setCaseOwner={setCaseOwner}
                 evidenceTitle={evidenceTitle} setEvidenceTitle={setEvidenceTitle}
                 evidenceUri={evidenceUri} setEvidenceUri={setEvidenceUri}
-                handleUpdateCaseMetadata={handleUpdateCaseMetadata}
+                handleUpdateCaseMetadata={handleUpdateCaseMetadata} caseCollaborators={caseCollaborators}
+                setCaseCollaborators={setCaseCollaborators} handleUpdateCollaborators={handleUpdateCollaborators}
               />
             )}
 
@@ -927,8 +958,8 @@ export default function App() {
 
 // ================= 子组件:接入向导 =================
 function WizardView({ step, setStep, templates, selectedId, setSelectedId, selected, sample, setSample,
-  testResult, handleTest, busy, name, setName, port, setPort, config, handlePreview,
-  srcName, setSrcName, srcPort, setSrcPort, handleCreateSource, sources, activating, handleActivate,
+  testResult, handleTest, busy, name, setName, port, setPort, protocol, setProtocol, sourcePath, setSourcePath, config, handlePreview,
+  srcName, setSrcName, srcPort, setSrcPort, srcProtocol, setSrcProtocol, srcPath, setSrcPath, handleCreateSource, sources, activating, handleActivate,
   handleDeactivate, handleDeleteSource }) {
 
   const steps = [
@@ -967,7 +998,7 @@ function WizardView({ step, setStep, templates, selectedId, setSelectedId, selec
       {step === 1 && (
         <Card title="② 解析测试(粘贴样例日志)">
           <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-            <Input.TextArea rows={3} value={sample} onChange={(e) => setSample(e.target.value)}
+            <Input.TextArea rows={3} maxLength={8192} showCount value={sample} onChange={(e) => setSample(e.target.value)}
               placeholder="粘贴一条日志样例,如:Aug 1 10:20:00 server03 sshd[9999]: Failed password for test from 172.16.1.20" />
             <Button type="primary" loading={busy} onClick={handleTest}>测试解析</Button>
             {testResult && (
@@ -998,9 +1029,14 @@ function WizardView({ step, setStep, templates, selectedId, setSelectedId, selec
                 <Input style={{ width: 200 }} value={name} onChange={(e) => setName(e.target.value)} placeholder="如 ssh-auth-web-01" />
               </div>
               <div>
-                <div style={{ marginBottom: 4, fontSize: 12, color: '#666' }}>采集端口(tcp)</div>
-                <Input style={{ width: 140 }} type="number" value={port} onChange={(e) => setPort(e.target.value)} />
+                <div style={{ marginBottom: 4, fontSize: 12, color: '#666' }}>协议</div>
+                <Select style={{ width: 120 }} value={protocol} onChange={setProtocol}
+                  options={['tcp', 'syslog', 'file'].map((v) => ({ value: v, label: v }))} />
               </div>
+              {protocol === 'file'
+                ? <Input style={{ width: 300 }} value={sourcePath} onChange={(e) => setSourcePath(e.target.value)} placeholder="/var/log/auth.log" />
+                : <div><div style={{ marginBottom: 4, fontSize: 12, color: '#666' }}>采集端口</div>
+                  <Input style={{ width: 140 }} type="number" value={port} onChange={(e) => setPort(e.target.value)} /></div>}
             </Space>
             <Button loading={busy} onClick={handlePreview}>生成配置</Button>
             {config && <pre style={{ background: '#0f1d33', color: '#a8d4ff', padding: 14, borderRadius: 8, fontSize: 12, whiteSpace: 'pre-wrap' }}>{config}</pre>}
@@ -1017,9 +1053,14 @@ function WizardView({ step, setStep, templates, selectedId, setSelectedId, selec
                 <Input style={{ width: 200 }} value={srcName} onChange={(e) => setSrcName(e.target.value)} placeholder="如 ssh-web-01" />
               </div>
               <div>
-                <div style={{ marginBottom: 4, fontSize: 12, color: '#666' }}>端口(tcp)</div>
-                <Input style={{ width: 140 }} type="number" value={srcPort} onChange={(e) => setSrcPort(e.target.value)} />
+                <div style={{ marginBottom: 4, fontSize: 12, color: '#666' }}>协议</div>
+                <Select style={{ width: 120 }} value={srcProtocol} onChange={setSrcProtocol}
+                  options={['tcp', 'syslog', 'file'].map((v) => ({ value: v, label: v }))} />
               </div>
+              {srcProtocol === 'file'
+                ? <Input style={{ width: 300 }} value={srcPath} onChange={(e) => setSrcPath(e.target.value)} placeholder="/var/log/auth.log" />
+                : <div><div style={{ marginBottom: 4, fontSize: 12, color: '#666' }}>采集端口</div>
+                  <Input style={{ width: 140 }} type="number" value={srcPort} onChange={(e) => setSrcPort(e.target.value)} /></div>}
             </Space>
             <Button type="primary" loading={busy} onClick={handleCreateSource}>创建数据源</Button>
             {sources.length > 0 && (
@@ -1029,7 +1070,8 @@ function WizardView({ step, setStep, templates, selectedId, setSelectedId, selec
                   { title: 'ID', dataIndex: 'id', render: (v) => <code>{v}</code> },
                   { title: '名称', dataIndex: 'name' },
                   { title: '模板', dataIndex: 'templateId' },
-                  { title: '端口', dataIndex: 'port' },
+                  { title: '协议', dataIndex: 'protocol' },
+                  { title: '端口/路径', render: (_, s) => s.protocol === 'file' ? s.path : s.port },
                   { title: '状态', dataIndex: 'status', render: (v) => <Tag color={v === 'active' ? 'green' : v === 'failed' ? 'red' : 'orange'}>{v}</Tag> },
                   { title: '操作', render: (_, s) => activating[s.id] ? <Tag color="processing">处理中…</Tag> : (
                     <Space size="small">
@@ -1057,10 +1099,11 @@ function WizardView({ step, setStep, templates, selectedId, setSelectedId, selec
 
 // ================= 子组件:调查台 =================
 function CasesView({ cases, setCases, caseFilter, setCaseFilter, selAlerts, setSelAlerts, caseTitle, setCaseTitle,
+  caseWindow, setCaseWindow, caseThreshold, setCaseThreshold, caseGroupByRule, setCaseGroupByRule,
   detailCase, setDetailCase, caseTimeline_, openCaseDetail, handleCreateCase, handleAggregate,
   handleInvestigateCase, handleResolveCase, handleAddToCase, handleRemoveFromCase, handleDeleteCase,
   caseOwner, setCaseOwner, evidenceTitle, setEvidenceTitle, evidenceUri, setEvidenceUri,
-  handleUpdateCaseMetadata }) {
+  handleUpdateCaseMetadata, caseCollaborators, setCaseCollaborators, handleUpdateCollaborators }) {
 
   return (
     <div>
@@ -1070,6 +1113,12 @@ function CasesView({ cases, setCases, caseFilter, setCaseFilter, selAlerts, setS
             onChange={(v) => { setCaseFilter(v || ''); listCases(v || '').then(setCases).catch(() => {}) }}
             options={['open', 'investigating', 'resolved'].map((s) => ({ value: s, label: s }))} />
           <Button type="primary" onClick={handleAggregate}>触发一轮自动聚合</Button>
+          <Input type="number" min={1} max={1440} style={{ width: 110 }} value={caseWindow}
+            onChange={(e) => setCaseWindow(e.target.value)} addonBefore="窗口" addonAfter="分" />
+          <Input type="number" min={2} max={1000} style={{ width: 110 }} value={caseThreshold}
+            onChange={(e) => setCaseThreshold(e.target.value)} addonBefore="阈值" />
+          <Select value={caseGroupByRule} onChange={setCaseGroupByRule} style={{ width: 140 }}
+            options={[{ value: false, label: '按实体分组' }, { value: true, label: '按规则+实体' }]} />
           <Button onClick={() => setSelAlerts(new Set())}>清空告警勾选</Button>
           <Input style={{ width: 220 }} value={caseTitle} onChange={(e) => setCaseTitle(e.target.value)} placeholder="案件标题(可选)" />
           <Button type="primary" onClick={handleCreateCase}>手动聚合勾选告警为案件</Button>
@@ -1145,9 +1194,11 @@ function CasesView({ cases, setCases, caseFilter, setCaseFilter, selAlerts, setS
             <Divider style={{ margin: '12px 0' }}>处置负责人和证据</Divider>
             <Space wrap>
               <Input style={{ width: 180 }} value={caseOwner} onChange={(e) => setCaseOwner(e.target.value)} placeholder="负责人用户名" />
+              <Input style={{ width: 260 }} value={caseCollaborators} onChange={(e) => setCaseCollaborators(e.target.value)} placeholder="协作人(逗号分隔)" />
               <Input style={{ width: 180 }} value={evidenceTitle} onChange={(e) => setEvidenceTitle(e.target.value)} placeholder="证据标题" />
               <Input style={{ width: 260 }} value={evidenceUri} onChange={(e) => setEvidenceUri(e.target.value)} placeholder="证据 URI/链接" />
               <Button type="primary" onClick={() => handleUpdateCaseMetadata(detailCase['case.id'])}>保存</Button>
+              <Button onClick={() => handleUpdateCollaborators(detailCase['case.id'])}>保存协作人</Button>
             </Space>
             {(detailCase.evidence || []).length > 0 && (
               <div style={{ marginTop: 8, fontSize: 12 }}>

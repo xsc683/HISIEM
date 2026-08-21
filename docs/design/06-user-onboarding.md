@@ -51,7 +51,7 @@
 | `tests` | 正负样本(样例 + 期望字段)——模板质量门槛 |
 | `status` | experimental / stable |
 
-> **当前能力边界**:预览/生成器(`LogstashConfigGenerator` + `/api/log-sources/preview`)仅支持 **tcp** input;`tcp`/`syslog`/`file` 多协议为 **P1**(story-01 范围),届时按协议生成不同 input 片段。
+> **当前能力**:预览与生成器(`LogstashConfigGenerator` + `/api/log-sources/preview`)支持 `tcp`、`syslog`、`file` 三种 input。preview 与创建共用端口范围/冲突及文件路径校验；文件源通过 Logstash HUP 热加载，TCP/Syslog 端口变更仍走容器重启。
 
 ### 3.2 数据源(Log Source)
 
@@ -76,7 +76,7 @@
 - Logstash input(按协议)
 - Logstash filter(grok + date + mutate,由模板生成)
 
-> **当前能力边界**:现有 preview/生成器仅实现 **tcp** input(`"tcp { port => ... }"`);`syslog`/`file` 多协议为 **P1**(story-01 范围),届时按协议生成对应 input 片段。
+> **当前能力**:preview/生成器按协议输出 `tcp`、`syslog` 或 `file` input；文件协议要求非空路径并使用 `/dev/null` sincedb，便于容器内首次读取和配置热加载。
 
 ### 4.3 自定义 / 筛选解析规则
 
@@ -209,8 +209,8 @@ status: stable
 
 **异常契约 / 校验(当前状态)**:
 - **模板不存在 → 404**:已由 `NotFoundException` + `GlobalExceptionHandler` 统一返回 404；其他非法参数返回统一 `ApiError` 400。
-- **端口校验**:创建数据源已校验 `1-65535` 和端口冲突；`/api/log-sources/preview` 尚未复用同一校验，列为后续补强项。
-- **样例大小**:UI 单条 ≤ **8KB**、API 单条 ≤ **1MB** 仍是产品约束，当前后端未硬限制，列为后续防御性校验项。
+- **端口校验**:创建和 `/api/log-sources/preview` 共用 `1-65535` 及端口冲突校验；文件源不占用端口。
+- **样例大小**:UI 限制单条 ≤ **8KB**，API 按 UTF-8 字节限制 ≤ **1MiB**，超限统一返回 400。
 - **鉴权**:console API 已由 Spring Security + PostgreSQL 会话 + 方法级 RBAC 保护；ES 侧最小权限与 console 四角色映射、多租户 FLS 仍后置。
 
 ### 5.5 与现有数据流的关系
@@ -239,7 +239,7 @@ status: stable
 | 4.1 数据源声明 | `infra/log-sources/*.yaml` + 异步生效/失败回滚 | ✅ 已完成 |
 | 4.2 模板库扩充 | 预置 nginx/windows-security/firewall 模板,正负样本门禁 | ✅ 已完成 |
 | 4.3 API/UI | 接入向导、任务进度、停用/删除、URL 路由与健康扫描 | ✅ 已完成 |
-| 后置 | 解析编辑器、syslog/file 多协议、preview/样例大小防御性校验 | P2 |
+| 后置 | 解析编辑器、HTTP input 及可视化字段编排 | P2 |
 
 ## 8. 参考来源
 

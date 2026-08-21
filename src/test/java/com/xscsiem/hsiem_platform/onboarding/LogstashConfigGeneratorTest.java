@@ -53,4 +53,18 @@ class LogstashConfigGeneratorTest {
         assertFalse(c.contains("\", ]"), "数组不应有尾逗号");
         assertTrue(c.contains("\"MMM  d HH:mm:ss\" ]"), "date match 末项后应直接闭括号(无尾逗号)");
     }
+
+    @Test
+    void syslogAndFileInputsUseProtocolSpecificConfiguration() {
+        LogSource syslog = LogSource.creating("syslog", "syslog", "ssh-auth", 5514);
+        String syslogConfig = generator.generatePipeline(syslog, sshTemplate());
+        assertTrue(syslogConfig.contains("syslog {"));
+        assertTrue(syslogConfig.contains("port => 5514"));
+
+        LogSource file = LogSource.creating("auth-file", "file", "ssh-auth", 0, "/var/log/auth.log");
+        String fileConfig = generator.generatePipeline(file, sshTemplate());
+        assertTrue(fileConfig.contains("file {"));
+        assertTrue(fileConfig.contains("path => [\"/var/log/auth.log\"]"));
+        assertTrue(fileConfig.contains("sincedb_path => \"/dev/null\""));
+    }
 }

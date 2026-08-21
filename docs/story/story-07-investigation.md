@@ -3,7 +3,7 @@
 > **元信息**
 > - 关联模块:08 产品设计 §5.7 调查台([08](../design/08-product-design.md) §5.7)
 > - 优先级:Phase 4.0 已交付(原“远期”设计项)
-> - 状态:✅ 已实现(2026-08-16:自动/手动聚合、追加移出、结案联动、时间线、负责人/证据均已验证)
+> - 状态:✅ 已实现(自动/手动聚合、直接建案、可配置聚合、追加移出、时间线、负责人/协作者/证据均已验证)
 > - 依赖:告警三线(Story 04,`AlertService`/siem-alerts status+verdict);控制面 PostgreSQL;ES 负责事件/告警检索与案件兼容镜像
 
 ---
@@ -28,13 +28,13 @@
 ### 2.3 非目标 / 分工
 - 不做 SOAR 自动化处置、不做完整取证(镜像/链式保全)。
 - **不对外对接 TheHive / 工单系统**(开放问题,见 §9,留方向)。
-- 不做多人协作编排或多租户隔离；当前使用单一 `case.owner`/`case.operator`，并由 Story 08 的 RBAC 保护案件写操作。多负责人、转派与 FLS 仍后置。
+- 不做完整协作编排或多租户隔离；案件支持 `case.owner`、`case.collaborators` 和 `case.operator`，并由 Story 08 的 RBAC 保护写操作。协作锁、转派工作流与 FLS 仍后置。
 - **与 Kibana 深度调查衔接(08 §1)**:调查台是控制台模块;案件内时间线条目/原始事件可跳 Kibana Discover(`siem-events-*`,带时间+实体过滤),Kibana 检测看板可加 drilldown 跳回控制台案件页。案件聚合(自动化)归调查台,事件自由检索归 Kibana,二者互跳不重复实现。
 
 ## 3. 用户旅程
 
 ```
-① 案件列表/告警台 → ② 聚合(自动:同实体30min≥2条open;手动:告警台多选"聚合为案件") → ③ 案件详情(时间线/关联告警/实体/原始事件) → ④ 追加/移出告警 → ⑤ 调查(open→investigating) → ⑥ 结案(resolved,批量closed+verdict)
+① 案件列表/告警台 → ② 聚合(自动或告警台直接建案;窗口/阈值/规则可选) → ③ 案件详情(时间线/关联告警/实体/原始事件) → ④ 追加/移出告警与维护协作者 → ⑤ 调查(open→investigating) → ⑥ 结案(resolved,批量closed+verdict)
 ```
 
 | 步骤 | 用户操作 | 界面反馈 | 异常/边界 |
@@ -53,7 +53,7 @@
 | ID | 需求 | 优先级 | 说明 |
 | --- | --- | --- | --- |
 | FR-1 | 自动聚合:同实体(source.ip 或 user.name)30min 内 ≥2 条 open 告警自动并入一案 | 已实现 | 聚合 job 每 5min 扫描;实体键取 `source.ip` 优先,无 IP 退 `user.name`;组内告警数 <2 不建案;已入他案告警跳过 |
-| FR-2 | 手动聚合:告警台勾选 ≥2 条 open 告警 → "聚合为案件"(可自定义标题) | 已实现 | 当前告警台与调查台跨页签衔接仍有体验遗留点,功能链路已验证 |
+| FR-2 | 手动聚合:告警台勾选 ≥2 条 open 告警 → "聚合为案件"(可自定义标题) | 已实现 | 告警台提供直接建案入口，成功后打开案件详情，不再要求切换页签 |
 | FR-3 | 案件详情:时间线 + 关联告警 + 关联实体 + 原始事件下钻 | 已实现 | 时间线实时关联 `siem-events-*`;实体信息查 `siem-entity-risk` |
 | FR-4 | 手动追加/移出告警 | 已实现 | 追加需告警 open 且未入他案;移出后同步案件关系和告警标记 |
 | FR-5 | 案件生命周期 open/investigating/resolved | 已实现 | 状态机由 `CaseService` 校验;resolved 触发结案联动 |
@@ -61,6 +61,8 @@
 | FR-7 | 案件列表/检索 | 已实现 | 按 status/实体/时间筛选;优先读取 PostgreSQL,兼容查询 ES 镜像 |
 | FR-8 | 负责人和证据 | 已实现 | `case.owner` 与 `evidence` 由 V3 控制面迁移持久化;操作人仍记录为 `case.operator` |
 | FR-9 | 并发更新保护 | 已实现 | ES 镜像更新使用乐观锁，控制面更新使用版本校验;冲突返回 409 |
+| FR-10 | 可配置自动聚合 | 已实现 | 支持窗口 1–1440 分钟、阈值 2–1000、按规则分组及规则筛选 |
+| FR-11 | 多负责人协作 | 已实现 | 案件详情可维护最多 20 个去重协作者，更新写入控制面并保留审计 |
 
 ### 4.2 非功能需求
 
@@ -105,6 +107,8 @@ POST   /api/cases   {title, alertIds:[...], operator}   → 201 {id}(手动聚�
 POST   /api/cases/{id}/alerts   {alertIds:[...], operator} → 200 {added:[...]}(手动追加;含非法告警→400 部分拒绝)
 DELETE /api/cases/{id}/alerts/{alertId}                 → 204(手动移出;不在案内→404)
 POST   /api/cases/{id}/status  {status:open|investigating|resolved, verdict, operator} → 200(结案必带 verdict,否则 400;resolved 触发批量联动;冲突→409)
+POST   /api/cases/{id}/collaborators {usernames:[...]} → 200(最多 20 个去重协作者)
+POST   /api/cases/aggregate?windowMinutes=30&groupByRule=false&threshold=2&ruleId=... → 200 {created}
 GET    /api/cases/{id}/timeline?refresh=true            → 200 时间线(实时关联 siem-events;refresh 写回 case.timeline 缓存)
 GET    /api/siem-events/{eventId}                       → 200 事件原文(复用 Story 04;未命中→404)
 ```
@@ -198,8 +202,7 @@ POST /api/cases/case-20260801-0001/status
 
 > 存储选型 / 时间线来源 / 聚合阈值 / 负责人等已收敛为 §10 决定;以下仅留真正未决。
 
-- **是否支持"按规则分组"二次聚类、自定义聚合时间窗/阈值**:MVP 聚合阈值已定(§10 ADR-3:同实体 30min ≥2 条 open);按规则二次聚类、自定义时间窗/阈值列 P2。
-- **多人分工 / RBAC**:当前 `case.owner` 支持单一负责人,案件写操作由 Story 08 RBAC 保护；多负责人转派、协作锁和多租户 FLS 后置。
+- **多人协作编排 / RBAC**:当前 `case.owner`、`case.collaborators` 支持负责人和协作者维护，案件写操作由 Story 08 RBAC 保护；转派审批、协作锁和多租户 FLS 后置。
 - **外部工单 / SOAR 对接**:本期明确不做(§2.3 非目标);若未来要做,方向=抽象 `CaseExporter` 接口对接 TheHive/工单,不做即不展开。
 
 ## 10. 设计决策(ADR 式)
@@ -220,10 +223,10 @@ POST /api/cases/case-20260801-0001/status
 - **背景**:何时把多条 open 告警归并成一案,避免误聚与漏聚。
 - **选项**:A. 同实体(source.ip 优先,无 IP 退 user.name)30min 内 ≥2 条 open / B. 按规则分组、更长窗口 / C. 全部人工聚合。
 - **取舍**:A 与告警关联时间窗口径一致、误聚低、MVP 可闭环;自定义窗口/按规则二次聚类列 P2(§9)。
-- **决定**:采用 **A**——自动聚合 job 每 5min 扫描近 30min open 告警,按实体分组,组内 ≥2 条建案;组内 <2 不建案;已入他案告警跳过(防重复聚合)。
+- **决定**:默认采用 **A**——自动聚合 job 每 5min 扫描近 30min open 告警,按实体分组,组内 ≥2 条建案;控制台可覆盖窗口、阈值并按规则二次分组;已入他案告警跳过(防重复聚合)。
 
-### ADR-4 [负责人模型:owner + operator]
+### ADR-4 [负责人模型:owner + collaborators + operator]
 - **背景**:案件需要区分当前负责人和执行具体操作的用户；Story 08 已提供控制台 RBAC,但尚未引入多人协作编排。
-- **选项**:A. 仅 `case.operator` / B. `case.owner` + 操作人审计 / C. 多负责人协作模型。
-- **取舍**:B 能满足当前分派和审计,且 V3 只需增加 owner/evidence；C 需要转派、锁定和通知等更大范围的协作设计。
-- **决定**:采用 **B**——`case.owner` 持久化负责人,`case.operator` 记录最近/当前操作人；多负责人协作后置。
+- **选项**:A. 仅 `case.operator` / B. `case.owner` + 操作人审计 / C. owner + collaborators 协作模型。
+- **取舍**:C 满足调查台的多人查看与分工需求，同时不引入协作锁、转派审批等复杂编排。
+- **决定**:采用 **C**——`case.owner` 持久化主负责人，`case.collaborators` 持久化去重协作者，`case.operator` 记录最近/当前操作人。

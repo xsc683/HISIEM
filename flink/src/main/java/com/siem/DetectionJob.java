@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.siem.config.RuleBuilder;
 import com.siem.config.RuleConfigLoader;
 import com.siem.config.RuleDecl;
+import com.siem.config.RuntimeTuning;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.api.common.functions.FilterFunction;
 import org.apache.flink.api.common.serialization.SimpleStringSchema;
@@ -71,6 +72,7 @@ public class DetectionJob {
 
         StreamExecutionEnvironment env =
                 StreamExecutionEnvironment.getExecutionEnvironment(conf);
+        RuntimeTuning tuning = RuntimeTuning.fromEnvironment();
 
         // 并行度(Phase 3.0-K1):与 2-slot taskmanager 匹配,
         // KafkaSource 以 2 个并行消费者分摊 3 分区的 siem-events。
@@ -79,11 +81,12 @@ public class DetectionJob {
         // 可靠性基线(Phase 3.0-F3):
         // 1) EXACTLY_ONCE + 明确 timeout/min-pause/max-concurrent,避免 checkpoint 风暴;
         // 2) tolerable-failed-checkpoints=3,单次失败不杀 job。
-        env.enableCheckpointing(60_000, CheckpointingMode.EXACTLY_ONCE);
-        env.getCheckpointConfig().setCheckpointTimeout(5 * 60_000);
-        env.getCheckpointConfig().setMinPauseBetweenCheckpoints(30_000);
+        env.enableCheckpointing(tuning.checkpointIntervalMs(), CheckpointingMode.EXACTLY_ONCE);
+        env.getCheckpointConfig().setCheckpointTimeout(tuning.checkpointTimeoutMs());
+        env.getCheckpointConfig().setMinPauseBetweenCheckpoints(tuning.minPauseBetweenCheckpointsMs());
         env.getCheckpointConfig().setMaxConcurrentCheckpoints(1);
-        env.getCheckpointConfig().setTolerableCheckpointFailureNumber(3);
+        env.getCheckpointConfig().setTolerableCheckpointFailureNumber(tuning.tolerableCheckpointFailures());
+        System.out.println("[DetectionJob] runtime tuning=" + tuning);
 
         // 规则加载(检测即代码):解析目录,enabled 才注册
         String rulesDir = args.length > 0 ? args[0]
@@ -243,10 +246,10 @@ public class DetectionJob {
         alerts.sinkTo(
                         new Elasticsearch8AsyncSinkBuilder<String>()
                                 .setHosts(new HttpHost("siem-elasticsearch", 9200, "http"))
-                                .setMaxBatchSize(500)                 // 批量大小
-                                .setMaxInFlightRequests(5)
-                                .setMaxBufferedRequests(1000)
-                                .setMaxTimeInBufferMS(1000)
+                                .setMaxBatchSize(tuning.esBatchSize())
+                                .setMaxInFlightRequests(tuning.esMaxInFlightRequests())
+                                .setMaxBufferedRequests(tuning.esMaxBufferedRequests())
+                                .setMaxTimeInBufferMS(tuning.esMaxTimeInBufferMs())
                                 .setElementConverter((element, context) ->
                                         new IndexOperation.Builder<JsonData>()
                                                 .index("siem-alerts")

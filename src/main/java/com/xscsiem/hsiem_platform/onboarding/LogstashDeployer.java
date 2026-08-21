@@ -14,4 +14,9 @@ public interface LogstashDeployer {
 
     /** 重启 Logstash 容器使新 pipeline 生效。 */
     void restartLogstash();
+
+    /** 重新加载 pipeline；默认回退到重启，生产实现对 file pipeline 使用 HUP。 */
+    default void reloadLogstash() {
+        restartLogstash();
+    }
 }

@@ -114,6 +114,9 @@ wait_for_health siem-flink-jobmanager
 wait_for_running siem-flink-taskmanager
 wait_for_health siem-kibana
 
+echo "==> 创建 Kafka topics(幂等)"
+bash "$DEPLOY/kafka/create-topics.sh"
+
 echo "==> 拷贝 $JAR 到 siem-flink-jobmanager 容器"
 wait_for_running siem-flink-jobmanager
 docker cp "$DEPLOY/flink/target/$JAR" siem-flink-jobmanager:/opt/flink/

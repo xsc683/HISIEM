@@ -77,6 +77,17 @@ public class NotificationService {
         notifications.removeIf(n -> id.equals(n.get("id")));
     }
 
+    /** 清理已读历史通知，默认由定时扫描调用。 */
+    public int cleanup(Instant before) {
+        if (control != null) {
+            return control.deleteReadNotificationsBefore(before);
+        }
+        int beforeSize = notifications.size();
+        notifications.removeIf(n -> Boolean.TRUE.equals(n.get("read"))
+                && timestamp(n.get("timestamp")).isBefore(before));
+        return beforeSize - notifications.size();
+    }
+
     /** 创建通知(频控:同 type+target 1h 内 1 条)。 */
     public void notify(String type, String target, String message) {
         if (control != null) {
@@ -106,5 +117,13 @@ public class NotificationService {
                 .filter(n -> id.equals(n.get("id")))
                 .findFirst()
                 .orElseThrow(() -> new NotFoundException("通知不存在: " + id));
+    }
+
+    private static Instant timestamp(Object value) {
+        try {
+            return Instant.parse(String.valueOf(value));
+        } catch (Exception ignored) {
+            return Instant.EPOCH;
+        }
     }
 }

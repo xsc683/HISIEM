@@ -112,12 +112,12 @@
 
 ---
 
-## 已知问题(2026-08-16 观察,待处理)
+## 已知问题与处置(2026-08-21 更新)
 
 | 问题 | 现象 | 根因 | 处置 | 待办 |
 | --- | --- | --- | --- | --- |
-| Flink checkpoint 偶发卡滞 → 告警批量吐出 | Kafka LAG 持续不降;告警在恢复后突然批量新增;日志 `Checkpoint expired before completing` | 瞬时负载(Logstash 重启时 ES 压力、大批日志)使 ES sink 缓冲积压,checkpoint barrier 阻塞超时(5min) | `flink cancel` + 重新 `flink run -d`,重启后 checkpoint 恢复正常(9-16ms) | 评估 ES sink `maxInFlightRequests(5)/maxBufferedRequests(1000)` 与 checkpoint timeout/间隔,真实负载下调优 |
-| 手动聚合案件跨页签割裂(前端体验) | 告警台与调查台是独立页签,手动聚合需在告警台勾选告警、切到调查台执行"聚合为案件",操作割裂 | 设计如此:勾选态在告警台(Story 04),执行入口在调查台(Story 07);跨页签状态未合并 | 已在告警台勾选后切调查台执行,可用但体验差 | 方案:①告警台直接提供"聚合为案件"按钮(需跳转/弹窗);②或案件入口合并进告警台展开行;待评估 |
+| Flink checkpoint 偶发卡滞 → 告警批量吐出 | 瞬时负载可能使 ES sink 缓冲积压,checkpoint barrier 延迟 | 原先缺少可调运行参数,且部署未保证 `siem-events` topic 先于 job 创建 | `RuntimeTuning` 已统一 checkpoint/ES sink 参数,部署脚本已幂等创建 topic;真实发送 2000 条事件后作业保持 RUNNING,新增 5 次 checkpoint 完成,耗时 7–85ms | 持续观察 checkpoint duration、失败数和 Kafka lag;通过 `SIEM_FLINK_*` 环境变量按负载调整 |
+| 手动聚合案件跨页签割裂(前端体验) | 告警台与调查台是独立页签,原先需切页执行聚合 | 聚合入口与告警选择状态分属两个视图 | 告警台已提供选中告警直接建案;调查台增加按规则分组、窗口/阈值控制和多人协作者维护 | SOAR/外部工单协作仍不在本阶段范围 |
 
 ## 明确不做(维持 01-§7 范围)
 

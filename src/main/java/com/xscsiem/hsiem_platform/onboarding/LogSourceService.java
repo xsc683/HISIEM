@@ -26,14 +26,22 @@ public class LogSourceService {
     private final ParserTemplateService templates;
     private final ActivationCoordinator coordinator;
     private final ControlPlaneStore control;
+    private final IngestFailedListener ingestFailed;
+
+    public LogSourceService(LogSourceStore store, ParserTemplateService templates,
+                            ActivationCoordinator coordinator, ControlPlaneStore control) {
+        this(store, templates, coordinator, control, null);
+    }
 
     @Autowired
     public LogSourceService(LogSourceStore store, ParserTemplateService templates,
-                            ActivationCoordinator coordinator, ControlPlaneStore control) {
+                            ActivationCoordinator coordinator, ControlPlaneStore control,
+                            IngestFailedListener ingestFailed) {
         this.store = store;
         this.templates = templates;
         this.coordinator = coordinator;
         this.control = control;
+        this.ingestFailed = ingestFailed;
     }
 
     /** 轻量构造器仅供不启动 Spring/数据库的单元测试使用。 */
@@ -50,25 +58,64 @@ public class LogSourceService {
         return store.find(id);
     }
 
-    /** 创建(落库为 creating)。校验:模板存在(404)、协议 tcp、端口合法且未被占用(409)。 */
+    /** 创建(落库为 creating)。支持 tcp/syslog/file；端口协议复用同一冲突校验。 */
     public LogSource create(String name, String protocol, String templateId, int port) {
+        return create(name, protocol, templateId, port, null);
+    }
+
+    public LogSource create(String name, String protocol, String templateId, int port, String path) {
         templates.find(templateId); // 模板不存在 → 404
         if (protocol == null || protocol.isBlank()) {
             protocol = "tcp";
         }
-        if (!"tcp".equals(protocol)) {
-            throw new IllegalArgumentException("当前仅支持 tcp 协议(见 06 §3.1 能力边界)");
+        protocol = protocol.toLowerCase();
+        if (!List.of("tcp", "syslog", "file").contains(protocol)) {
+            throw new IllegalArgumentException("协议必须是 tcp/syslog/file");
+        }
+        if ("file".equals(protocol)) {
+            if (path == null || path.isBlank() || path.indexOf('\n') >= 0 || path.indexOf('\r') >= 0) {
+                throw new IllegalArgumentException("file 协议必须提供不含换行的 path");
+            }
+            port = 0;
+        } else if (port < 1 || port > 65535) {
+            throw new IllegalArgumentException("端口需在 1-65535 之间");
+        }
+        final int requestedPort = port;
+        boolean taken = requestedPort > 0 && store.list().stream()
+                .anyMatch(s -> s.port == requestedPort && !"file".equalsIgnoreCase(s.protocol));
+        if (taken) {
+            throw new PortConflictException(requestedPort);
+        }
+        LogSource s = LogSource.creating(name, protocol, templateId, port, path);
+        store.save(s);
+        return s;
+    }
+
+    /** 预览与创建共用的输入校验，不产生文件和端口占用。 */
+    public void validate(String name, String protocol, String templateId, int port, String path) {
+        templates.find(templateId);
+        if (name == null || name.isBlank() || name.length() > 128
+                || name.indexOf('\n') >= 0 || name.indexOf('\r') >= 0) {
+            throw new IllegalArgumentException("数据源名称不能为空、不能含换行且最长 128 字符");
+        }
+        String normalized = protocol == null || protocol.isBlank() ? "tcp" : protocol.toLowerCase();
+        if (!List.of("tcp", "syslog", "file").contains(normalized)) {
+            throw new IllegalArgumentException("协议必须是 tcp/syslog/file");
+        }
+        if ("file".equals(normalized)) {
+            if (path == null || path.isBlank() || path.indexOf('\n') >= 0 || path.indexOf('\r') >= 0) {
+                throw new IllegalArgumentException("file 协议必须提供不含换行的 path");
+            }
+            return;
         }
         if (port < 1 || port > 65535) {
             throw new IllegalArgumentException("端口需在 1-65535 之间");
         }
-        boolean taken = store.list().stream().anyMatch(s -> s.port == port);
+        boolean taken = store.list().stream()
+                .anyMatch(s -> s.port == port && !"file".equalsIgnoreCase(s.protocol));
         if (taken) {
             throw new PortConflictException(port);
         }
-        LogSource s = LogSource.creating(name, protocol, templateId, port);
-        store.save(s);
-        return s;
     }
 
     /** 异步激活:立即返回当前(creating)数据源,后台执行生效并更新状态;前端轮询状态。 */
@@ -107,6 +154,9 @@ public class LogSourceService {
         } catch (Exception e) {
             s.status = "failed";
             s.lastError = e.getMessage();
+            if (ingestFailed != null) {
+                ingestFailed.onFailed(s, e.getMessage());
+            }
             System.err.println("[LogSourceService] 数据源 " + id + " 生效失败: " + e.getMessage());
         } finally {
             s.updatedAt = Instant.now().toString();

@@ -84,6 +84,14 @@ public class CaseController {
         return service.updateMetadata(id, req.owner(), req.evidence(), operator(authHeader));
     }
 
+    /** 设置案件协作负责人列表，避免只能通过单一 owner 协作。 */
+    @PostMapping("/{id}/collaborators")
+    @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST')")
+    public Map<String, Object> collaborators(@PathVariable String id, @RequestBody CollaboratorsRequest req,
+                                              @RequestHeader(value = "Authorization", required = false) String authHeader) {
+        return service.updateCollaborators(id, req.usernames(), operator(authHeader));
+    }
+
     /** 时间线(实时关联 siem-events)。 */
     @GetMapping("/{id}/timeline")
     @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST', 'AUDIT')")
@@ -102,8 +110,11 @@ public class CaseController {
     /** 手动触发一轮自动聚合(运维/测试用)。 */
     @PostMapping("/aggregate")
     @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST')")
-    public Map<String, Object> aggregate() {
-        int created = service.aggregateAuto(30);
+    public Map<String, Object> aggregate(@RequestParam(defaultValue = "30") int windowMinutes,
+                                         @RequestParam(defaultValue = "false") boolean groupByRule,
+                                         @RequestParam(defaultValue = "2") int threshold,
+                                         @RequestParam(required = false) String ruleId) {
+        int created = service.aggregateAuto(windowMinutes, groupByRule, threshold, ruleId);
         return Map.of("created", created);
     }
 
@@ -127,5 +138,8 @@ public class CaseController {
     }
 
     public record MetadataRequest(String owner, List<Map<String, Object>> evidence) {
+    }
+
+    public record CollaboratorsRequest(List<String> usernames) {
     }
 }

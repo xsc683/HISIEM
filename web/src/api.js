@@ -142,6 +142,20 @@ export function recalcCriticality() {
   return request('/settings/criticality/recalc', { method: 'POST' })
 }
 
+export function searchCriticality(type, query) {
+  const q = new URLSearchParams()
+  if (type) q.set('type', type)
+  if (query) q.set('query', query)
+  return request('/settings/criticality/search?' + q.toString())
+}
+
+export function batchCriticality(items) {
+  return request('/settings/criticality/batch', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ items }),
+  })
+}
+
 // ---- 认证与权限(Story 08 RBAC) ----
 
 export function login(username, password) {
@@ -306,13 +320,29 @@ export function deleteCase(id) {
 }
 
 export function aggregateCases() {
-  return request('/cases/aggregate', { method: 'POST' })
+  return aggregateCasesWithOptions({})
+}
+
+export function aggregateCasesWithOptions({ windowMinutes, groupByRule, threshold, ruleId } = {}) {
+  const q = new URLSearchParams()
+  if (windowMinutes) q.set('windowMinutes', windowMinutes)
+  if (groupByRule) q.set('groupByRule', 'true')
+  if (threshold) q.set('threshold', threshold)
+  if (ruleId) q.set('ruleId', ruleId)
+  return request('/cases/aggregate?' + q.toString(), { method: 'POST' })
 }
 
 export function updateCaseMetadata(id, payload) {
   return request(`/cases/${id}/metadata`, {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
+  })
+}
+
+export function updateCaseCollaborators(id, usernames) {
+  return request('/cases/' + id + '/collaborators', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ usernames }),
   })
 }
 

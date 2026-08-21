@@ -6,9 +6,11 @@ import co.elastic.clients.elasticsearch.core.CountRequest;
 import co.elastic.clients.elasticsearch.core.DeleteRequest;
 import co.elastic.clients.elasticsearch.core.GetRequest;
 import co.elastic.clients.elasticsearch.core.GetResponse;
+import co.elastic.clients.elasticsearch.core.IndexRequest;
 import co.elastic.clients.elasticsearch.core.SearchRequest;
 import co.elastic.clients.elasticsearch.core.SearchResponse;
 import co.elastic.clients.elasticsearch.core.UpdateRequest;
+import co.elastic.clients.elasticsearch._types.Refresh;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -52,6 +54,9 @@ public class ElasticsearchGateway {
             }
             if ("_doc".equals(operation) && "GET".equalsIgnoreCase(method) && segments.length >= 3) {
                 return get(index, segments[2]);
+            }
+            if ("_doc".equals(operation) && "POST".equalsIgnoreCase(method) && segments.length >= 3) {
+                return index(index, segments[2].split("\\?", 2)[0], path, body);
             }
             if ("_doc".equals(operation) && "DELETE".equalsIgnoreCase(method) && segments.length >= 3) {
                 return delete(index, segments[2]);
@@ -127,6 +132,17 @@ public class ElasticsearchGateway {
         if (response.seqNo() != null) out.put("_seq_no", response.seqNo());
         if (response.primaryTerm() != null) out.put("_primary_term", response.primaryTerm());
         return new Response(200, out);
+    }
+
+    private Response index(String index, String id, String path, String body) throws Exception {
+        IndexRequest.Builder<Map<String, Object>> builder = new IndexRequest.Builder<>();
+        builder.index(index).id(id);
+        if (path.contains("refresh=wait_for")) {
+            builder.refresh(Refresh.WaitFor);
+        }
+        builder.withJson(new StringReader(body == null ? "{}" : body));
+        var response = client.index(builder.build());
+        return new Response(200, Map.of("result", response.result().jsonValue(), "_id", response.id()));
     }
 
     private Response update(String index, String id, String path, String body) throws Exception {

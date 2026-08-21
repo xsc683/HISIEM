@@ -182,10 +182,10 @@ public class AlertService {
     /** 按规则 FP 率(FP/(TP+FP) 不含 duplicate,>50% 高亮由前端/通知处理)。 */
     public List<Map<String, Object>> fpRate() {
         String body = """
-                {"size":0,"aggs":{"rules":{"terms":{"field":"alert.rule_id","size":50},
+                {"size":0,"aggs":{"rules":{"terms":{"field":"alert.rule_id.keyword","size":50},
                   "aggs":{
-                    "fp":{"filter":{"term":{"alert.analyst_verdict":"false_positive"}}},
-                    "tp":{"filter":{"term":{"alert.analyst_verdict":"true_positive"}}}}}}}
+                    "fp":{"filter":{"term":{"alert.analyst_verdict.keyword":"false_positive"}}},
+                    "tp":{"filter":{"term":{"alert.analyst_verdict.keyword":"true_positive"}}}}}}}
                 """;
         Map<String, Object> resp = esCall("POST", "/siem-alerts/_search", body);
         List<Map<String, Object>> out = new ArrayList<>();

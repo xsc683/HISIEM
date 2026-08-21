@@ -75,7 +75,12 @@ public class ActivationCoordinator {
                 rollback(confFile, pipelines, pipelinesBackup, compose, composeBackup);
                 throw new ActivationFailedException("Logstash 配置校验失败(" + s.id + "),已回滚");
             }
-            deployer.restartLogstash();
+            if (portProtocol(s)) {
+                // 新增/移除宿主机端口时必须重建 compose；file pipeline 可直接 HUP 热加载。
+                deployer.restartLogstash();
+            } else {
+                deployer.reloadLogstash();
+            }
         } catch (ActivationFailedException e) {
             throw e;
         } catch (IOException e) {
@@ -108,11 +113,15 @@ public class ActivationCoordinator {
             if (pipelinesBackup != null) {
                 Files.writeString(pipelines, removePipelineEntry(pipelinesBackup, s.id));
             }
-            if (composeBackup != null) {
+            if (composeBackup != null && portProtocol(s)) {
                 Files.writeString(compose, removePortFromCompose(composeBackup, s.port));
             }
             deployer.syncLogstash();
-            deployer.restartLogstash();
+            if (portProtocol(s)) {
+                deployer.restartLogstash();
+            } else {
+                deployer.reloadLogstash();
+            }
         } catch (IOException | RuntimeException e) {
             restoreDeactivation(confFile, confExisted, confBackup, pipelines, pipelinesBackup,
                     compose, composeBackup);
@@ -215,5 +224,9 @@ public class ActivationCoordinator {
 
     private static String pipelineId(LogSource s) {
         return s.id;
+    }
+
+    private static boolean portProtocol(LogSource s) {
+        return s.port > 0 && ("tcp".equalsIgnoreCase(s.protocol) || "syslog".equalsIgnoreCase(s.protocol));
     }
 }

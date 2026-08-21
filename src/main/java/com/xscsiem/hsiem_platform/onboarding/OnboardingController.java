@@ -45,6 +45,7 @@ public class OnboardingController {
     @PostMapping("/parser-templates/test")
     @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST', 'OPS')")
     public Map<String, Object> test(@RequestBody TestRequest req) {
+        SampleSizeValidator.requireApiSample(req.sample());
         ParserTemplate template = templates.find(req.templateId());
         GrokTestService.ParseResult result = grok.test(template, req.sample());
         Map<String, Object> resp = new LinkedHashMap<>();
@@ -57,10 +58,12 @@ public class OnboardingController {
     @PostMapping("/log-sources/preview")
     @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST', 'OPS')")
     public Map<String, Object> preview(@RequestBody LogSourceRequest req) {
+        logSources.validate(req.name(), req.protocol(), req.templateId(), req.port(), req.path());
         ParserTemplate template = templates.find(req.templateId());
+        LogSource preview = LogSource.creating(req.name(), req.protocol(), req.templateId(), req.port(), req.path());
         Map<String, Object> resp = new LinkedHashMap<>();
         resp.put("template", template.id);
-        resp.put("input", "tcp { port => " + req.port() + " }");
+        resp.put("input", generator.generateInput(preview));
         resp.put("config", generator.generateFilter(template));
         return resp;
     }
@@ -92,7 +95,7 @@ public class OnboardingController {
     @PreAuthorize("hasAnyRole('ADMIN', 'OPS')")
     @ResponseStatus(HttpStatus.CREATED)
     public LogSource createSource(@RequestBody CreateSourceRequest req) {
-        return logSources.create(req.name(), req.protocol(), req.templateId(), req.port());
+        return logSources.create(req.name(), req.protocol(), req.templateId(), req.port(), req.path());
     }
 
     /** 生效(Story 01 FR-3):异步执行,202 返回当前状态,前端轮询详情直至 active/failed。 */
@@ -120,9 +123,15 @@ public class OnboardingController {
     public record TestRequest(String templateId, String sample) {
     }
 
-    public record LogSourceRequest(String name, String protocol, String templateId, int port) {
+    public record LogSourceRequest(String name, String protocol, String templateId, int port, String path) {
+        public LogSourceRequest(String name, String protocol, String templateId, int port) {
+            this(name, protocol, templateId, port, null);
+        }
     }
 
-    public record CreateSourceRequest(String name, String protocol, String templateId, int port) {
+    public record CreateSourceRequest(String name, String protocol, String templateId, int port, String path) {
+        public CreateSourceRequest(String name, String protocol, String templateId, int port) {
+            this(name, protocol, templateId, port, null);
+        }
     }
 }

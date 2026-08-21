@@ -71,6 +71,13 @@ public class ProcessLogstashDeployer implements LogstashDeployer {
         }
     }
 
+    @Override
+    public void reloadLogstash() {
+        if (!exitOk("docker", "exec", containerName, "kill", "-HUP", "1")) {
+            throw new IllegalStateException("热加载 Logstash pipeline 失败");
+        }
+    }
+
     private boolean exitOk(String... cmd) {
         try {
             Process p = new ProcessBuilder(cmd).redirectErrorStream(true).start();

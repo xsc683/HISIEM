@@ -9,6 +9,8 @@ import com.xscsiem.hsiem_platform.search.ElasticsearchGateway;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.net.URI;
@@ -40,6 +42,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class CaseService {
 
     public static final List<String> STATUSES = List.of("open", "investigating", "resolved");
+    private static final Logger LOG = LoggerFactory.getLogger(CaseService.class);
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final HttpClient CLIENT = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(3)).build();
@@ -404,12 +407,26 @@ public class CaseService {
 
     /** 自动聚合(供 CaseAggregateJob 调用):近 30min open 告警按实体聚类,组 ≥2 建案。幂等可重跑。 */
     public int aggregateAuto(int lookbackMinutes) {
+        return aggregateAuto(lookbackMinutes, false, 2, null);
+    }
+
+    /** 可配置聚合窗口、阈值和是否按规则分组。 */
+    public int aggregateAuto(int lookbackMinutes, boolean groupByRule, int threshold, String ruleId) {
+        if (lookbackMinutes < 1 || lookbackMinutes > 24 * 60) {
+            throw new IllegalArgumentException("聚合窗口需在 1-1440 分钟之间");
+        }
+        if (threshold < 2 || threshold > 1000) {
+            throw new IllegalArgumentException("聚合阈值需在 2-1000 之间");
+        }
+        String ruleFilter = ruleId == null || ruleId.isBlank()
+                ? "" : "{\"term\":{\"alert.rule_id.keyword\":\"" + ruleId.replace("\"", "") + "\"}},";
         String body = """
                 {"size":200,"query":{"bool":{"must":[
                   {"term":{"alert.status":"open"}},
+                  %s
                   {"range":{"alert.created_at":{"gte":"now-%dm"}}},
                   {"bool":{"must_not":[{"exists":{"field":"alert.case_id"}}]}}]}},"_source":["alert.id","alert.rule_id","source.ip","user.name","alert.risk_score"]}
-                """.formatted(lookbackMinutes);
+                """.formatted(ruleFilter, lookbackMinutes);
         Map<String, Object> resp = esCall("POST", "/siem-alerts/_search", body);
         List<Map<String, Object>> hits = new ArrayList<>();
         Object hh = resp.get("hits");
@@ -426,20 +443,22 @@ public class CaseService {
         // 按实体分组
         Map<String, List<Map<String, Object>>> groups = new LinkedHashMap<>();
         for (Map<String, Object> a : hits) {
-            String entityKey = entityKey(a);
-            if (entityKey != null) {
-                groups.computeIfAbsent(entityKey, k -> new ArrayList<>()).add(a);
+            String baseEntity = entityKey(a);
+            if (baseEntity != null) {
+                String groupKey = (groupByRule ? str(a.get("alert.rule_id")) + "|" : "") + baseEntity;
+                groups.computeIfAbsent(groupKey, k -> new ArrayList<>()).add(a);
             }
         }
         AtomicInteger created = new AtomicInteger();
         for (Map.Entry<String, List<Map<String, Object>>> e : groups.entrySet()) {
-            if (e.getValue().size() < 2) {
+            if (e.getValue().size() < threshold) {
                 continue;
             }
             List<String> ids = e.getValue().stream()
                     .map(a -> str(a.get("_id"))).distinct().toList();
             // 防重复:查已有案件是否已含这些告警(实体已有 open 案 或 任一告警已入他案 → 跳过)
-            if (entityHasOpenCase(e.getKey()) || anyAlertInCase(ids)) {
+            String entityOnly = e.getKey().contains("|") ? e.getKey().substring(e.getKey().indexOf('|') + 1) : e.getKey();
+            if (entityHasOpenCase(entityOnly) || anyAlertInCase(ids)) {
                 continue;
             }
             String title = "自动聚合 " + e.getKey();
@@ -448,10 +467,23 @@ public class CaseService {
                 created.incrementAndGet();
             } catch (Exception ex) {
                 // 单组失败不阻塞整轮(job 幂等,下次重试)
-                System.out.println("[CaseAggregateJob] 建案失败 " + e.getKey() + ": " + ex.getMessage());
+                LOG.warn("[CaseAggregateJob] 建案失败 {}: {}", e.getKey(), ex.getMessage(), ex);
             }
         }
         return created.get();
+    }
+
+    /** 更新案件协作负责人列表；主负责人仍由 case.owner 保留兼容。 */
+    public Map<String, Object> updateCollaborators(String caseId, List<String> usernames, String operator) {
+        detail(caseId);
+        List<String> safe = usernames == null ? List.of() : usernames.stream()
+                .filter(u -> u != null && !u.isBlank())
+                .map(String::trim).distinct().limit(20).toList();
+        if (usernames != null && usernames.size() > 20) {
+            throw new IllegalArgumentException("协作负责人最多 20 人");
+        }
+        return optimisticUpdate(caseId, null,
+                Map.of("case.collaborators", safe), operator);
     }
 
     /** 时间线:按实体 + 案件时间窗实时查 siem-events-*(MVP 实时关联,不物化存储)。 */

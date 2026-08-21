@@ -56,6 +56,9 @@ public interface ControlPlaneStore {
 
     boolean deleteNotification(String id);
 
+    /** 删除已读且超过保留期的通知，返回删除数。 */
+    int deleteReadNotificationsBefore(Instant before);
+
     List<Map<String, Object>> listCases(String status, String entity, int size);
 
     Map<String, Object> findCase(String id);

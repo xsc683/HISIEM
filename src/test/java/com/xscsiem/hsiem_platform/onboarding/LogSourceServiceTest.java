@@ -67,9 +67,19 @@ class LogSourceServiceTest {
     }
 
     @Test
-    void create_nonTcpProtocol_badRequest400() {
+    void create_syslogProtocol_acceptsPort() {
+        LogSource source = service.create("web-01", "syslog", "ssh-auth", 5001);
+        assertEquals("syslog", source.protocol);
+        assertEquals(5001, source.port);
+    }
+
+    @Test
+    void create_fileProtocol_requiresPathAndDoesNotReservePort() {
+        LogSource source = service.create("web-01", "file", "ssh-auth", 0, "/var/log/auth.log");
+        assertEquals("file", source.protocol);
+        assertEquals("/var/log/auth.log", source.path);
         assertThrows(IllegalArgumentException.class,
-                () -> service.create("web-01", "syslog", "ssh-auth", 5001));
+                () -> service.create("web-02", "file", "ssh-auth", 0, ""));
     }
 
     @Test

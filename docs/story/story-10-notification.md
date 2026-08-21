@@ -3,7 +3,7 @@
 > **元信息**
 > - 关联模块:08 产品设计 §8 通知与告警路由([08](../design/08-product-design.md) §8)
 > - 优先级:P1(原 Could,承接被多处后置的告警通知真空)
-> - 状态:✅ 已实现基础通知中心(f63bff0 + 阶段 4.1;PostgreSQL CRUD/1h 频控;规则部署、实体风险重算和数据源健康查询异常通知;自动 FP/接入失败/定时健康扫描后置;外部渠道 Won't)
+> - 状态:✅ 已实现通知中心与内部自动治理(PostgreSQL CRUD/1h 频控、高 FP、接入失败、定时健康扫描、30d 清理;外部渠道 Won't)
 > - 依赖:告警台(Story 04,FP 率统计/verdict 回流)、数据健康(Story 05,健康指标/停采判定)
 >
 > **填写完成度 checklist**(P1 深化判定,提交评审前逐项自检;参照 P0 既有结论深化,不重开已定决策)
@@ -31,7 +31,7 @@
 
 ### 2.1 背景(当前痛点)
 
-- 检测引擎已产出告警(`siem-alerts`),告警台(Story 04)与数据健康(Story 05)提供了**拉取式**视图。当前通知中心已承接规则部署、实体风险重算和数据健康接口返回的异常源通知;高 FP、接入失败及定时健康扫描仍是后置项。
+- 检测引擎已产出告警(`siem-alerts`),告警台(Story 04)与数据健康(Story 05)提供了**拉取式**视图。通知中心现已承接规则部署、实体风险重算、高 FP、接入失败和定时健康异常。
 - 08 §8 历史上将「通知与告警路由」列为 Could(后置),造成三条关键信号缺少统一入口；本 story 已将其承接并完成控制台内通知闭环。
 - 已有点(本 story 只做"把信号变成通知",不重做判定):
   - FP 率统计:Story 04 FR-5,`FP/(TP+FP)`、样本豁免、>50% 高亮;
@@ -41,8 +41,8 @@
 
 ### 2.2 目标(可度量)
 
-- **当前已实现**:通知中心支持未读角标、列表查询、标记已读、全部已读、单条删除与 PostgreSQL 持久化;规则部署、实体风险重算和数据源健康查询异常会生成通知,同一 `type + target` 1h 频控。
-- **后置目标**:高 FP、接入失败和定时健康异常扫描接入通知中心;清理与保留 ≥30d 的策略待补充实现。
+- **当前已实现**:通知中心支持未读角标、列表查询、标记已读、全部已读、单条删除与 PostgreSQL 持久化;规则部署、实体风险重算、接入失败、高 FP 和健康异常均可生成通知,同一 `type + target` 1h 频控。
+- **自动治理**:`NotificationScanner` 每 1min 扫描高 FP/健康异常并清理 30d 前已读通知；`IngestFailedListener` 在数据源生效失败时即时生成 `ingest_failed`。
 - **外部渠道投递(邮件 / Webhook)**:**Won't**(2026-08-16 决策,单人项目不关注外部投递,控制台内通知中心已足够;见 §10 ADR)。
 
 ### 2.3 非目标
@@ -71,9 +71,9 @@
 
 | ID | 需求 | 优先级 | 说明 |
 | --- | --- | --- | --- |
-| FR-1 | 通知类型·高 FP 规则 review(`fp_review`) | 后置 | 当前没有 `NotificationScanner`;保留 FP 阈值与样本豁免验收目标,待自动扫描接入 |
-| FR-2 | 通知类型·数据源接入失败(`ingest_failed`) | 后置 | 当前没有 `IngestFailedListener`;待 source 无数据/连接失败检测接入通知中心 |
-| FR-3 | 通知类型·健康异常(`health_anomaly`) | 部分实现 | `/api/data-health/sources` 返回 `anomalous=true` 时会按源生成通知;停采/失败率定时扫描仍为后置目标 |
+| FR-1 | 通知类型·高 FP 规则 review(`false_positive`) | 已实现 | `NotificationScanner` 扫描 `high=true` 且样本数 ≥20 的规则，沿用 1h 频控 |
+| FR-2 | 通知类型·数据源接入失败(`ingest_failed`) | 已实现 | `IngestFailedListener` 接收生效失败分支并生成通知 |
+| FR-3 | 通知类型·健康异常(`health_anomaly`) | 已实现 | scanner 与 `/api/data-health/sources` 均处理 `anomalous=true` 数据源 |
 | FR-4 | 通知中心列表(未读过滤) | 已实现 | `GET /api/notifications?unread=true`;返回数组,按创建时间倒序;分页与 type/status 筛选后置 |
 | FR-5 | 标记已读 / 全部已读 | 已实现 | `POST /api/notifications/{id}/read`、`POST /api/notifications/read-all`;成功返回 204,重复操作幂等 |
 | FR-6 | 删除单条 | 已实现 | `DELETE /api/notifications/{id}`;成功返回 204;批量清空已读后置 |
@@ -85,11 +85,11 @@
 
 | 维度 | 要求 |
 | --- | --- |
-| 性能 | 当前操作/健康查询通知在请求链路内入库;前端列表每 20s 轮询刷新;自动扫描目标 ≤10s/1min 属于后置验收指标 |
+| 性能 | 当前操作/健康查询通知在请求链路内入库;前端列表每 20s 轮询刷新;扫描默认首次 30s、间隔 60s |
 | 权限/安全 | 通知读取需登录;已读由 admin/analyst/ops 执行,删除仅 admin;当前通知动作未接入独立审计字段;消息仅保存摘要,不写入原始日志/敏感字段 |
 | 异常恢复/回滚 | 通知写入失败只影响当前控制面请求,不改变 Logstash/Flink/ES 数据管道;频控依赖 PostgreSQL,重启后窗口仍按已落库记录判断 |
-| 可观测 | 当前可通过通知列表查看未读/已读状态;自动扫描、清理 job 和独立生成计数属于后置 |
-| 可维护性 | 当前触发点集中在 `RuleController`、`CriticalityController`、`DataHealthController`;自动 FP/接入失败/定时健康阈值作为后置设计,不新增 `infra/` 配置来源 |
+| 可观测 | 可通过通知列表、日志和扫描单元测试观察生成/清理；任务异常按扫描分支隔离记录 |
+| 可维护性 | `NotificationScanner` 与 `IngestFailedListener` 集中承接自动信号，不新增 `infra/` 配置来源 |
 
 ### 4.3 枚举与字段字典(全 story 唯一取值来源)
 
@@ -98,13 +98,13 @@
 
 | 字段 | 取值集合 | 权威来源 | 说明 |
 | --- | --- | --- | --- |
-| `notification.type` | `fp_review` / `ingest_failed` / `health_anomaly` / `rule_deploy` / `criticality` | 本 story 登记(§4.3) | 自动扫描目标类型 + 当前已实现类型:rule_deploy=规则部署;criticality=实体风险重算;health_anomaly=数据源健康查询异常 |
+| `notification.type` | `false_positive` / `ingest_failed` / `health_anomaly` / `rule_deploy` / `criticality` | 本 story 登记(§4.3) | 自动扫描类型 + 当前已实现类型:rule_deploy=规则部署;criticality=实体风险重算 |
 | `notification.status` | `unread` / `read` | 本 story 登记(§4.3) | 已读/未读;标记已读幂等;清空只清已读 |
 | `notification.priority` | `high` / `medium` / `low` | 本 story 登记(§4.3) | 设计预留字段;当前 API 不返回优先级 |
 | `notification.channel` | `banner` | 本 story 登记(§4.3) | 历史设计值;当前仅通过菜单/头部通知按钮进入通知中心,无独立横幅。email/webhook 已列入 **Won't**(§10 ADR) |
 | `alert.analyst_verdict` | `true_positive` / `false_positive` / `duplicate` | triage-alert.py `VERDICTS` | FP 率计算输入;`FP/(TP+FP)`,duplicate 不进分母(引用,不重定义) |
 | `log-source.status` | `creating` / `active` / `stopped` / `failed` | 本字典已登记,story-01 落地 | `ingest_failed` 通知触发值 = `failed` |
-| `rule.type` | `single_event` / `window` / `cep` / `baseline` | 检测引擎,对齐 story-03 | `fp_review` 通知对象类型 = `rule`(引用) |
+| `rule.type` | `single_event` / `window` / `cep` / `baseline` | 检测引擎,对齐 story-03 | `false_positive` 通知对象类型 = `rule`(引用) |
 
 ## 5. 后端架构
 
@@ -114,19 +114,19 @@
         └→ 1h 频控(type+target) → GET /api/notifications
              └→ 前端每 20s 轮询 → 菜单/头部通知按钮角标 + 通知中心
 
-后置: NotificationScanner(FP/定时健康) + IngestFailedListener(接入失败)
+NotificationScanner(每 1min 扫描 FP/健康并清理 30d 已读通知) + IngestFailedListener(接入失败)
 外部投递 ChannelDispatcher 不做——Won't,§10 ADR
 ```
 
-> 当前没有 `NotificationScanner` 或 `IngestFailedListener` 实现类;自动 FP/接入失败/定时健康扫描属于后置补充。`DataHealthController` 会在查询到 `anomalous=true` 的数据源时生成 `health_anomaly` 通知。
+> `NotificationScanner` 和 `IngestFailedListener` 已落地。扫描器通过 `scanOnce()` 可被测试或运维显式调用，定时任务默认启动延迟 30s、间隔 60s，通知清理仅删除 30d 前已读记录。
 
 ### 5.1 组件与职责
 
 | 组件 | 职责 |
 | --- | --- |
 | `NotificationService`(新) | 通知 CRUD、标记已读/删除/清空;生成与查询 |
-| `NotificationScanner`(后置) | 定时扫描(每 1min):FP 率聚合(siem-alerts)+ 健康异常聚合(siem-events-*),产出候选通知 |
-| `IngestFailedListener`(后置) | 事件驱动:监听 `log-source.status=failed` 变更,即时触发 `ingest_failed` 通知(满足 ≤10s) |
+| `NotificationScanner` | 定时扫描(每 1min):FP 率聚合(siem-alerts)+ 健康异常聚合,并清理 30d 前已读通知 |
+| `IngestFailedListener` | 事件驱动:监听数据源生效失败分支,即时触发 `ingest_failed` 通知 |
 | `RateLimiter` | 频控:按 `type+target` 的 1h 窗口查询 PostgreSQL;重启后规则仍生效 |
 | `ChannelDispatcher`(**Won't**) | 邮件/Webhook 派发——不做(§10 ADR,不实现、不预留接口) |
 | PostgreSQL `notifications` | 通知与 1h 频控查询(控制面 V1,与用户/案件/审计共库);渠道订阅表不建 |
@@ -196,7 +196,7 @@ DELETE /api/notifications/notif-20260816-0001 → 204  // 已删除;再次删除
 ### 5.4 配置同步与生效链路(强制)
 
 > **本 story MVP 不写 `infra/` 下任何文件**:通知是 console 运行时状态(生成即落库),无"改配置→同步→生效"链路,因此 deploy.sh rsync 不涉及本 story。
-> 当前只实现固定 1h 频控和控制台操作/健康查询触发;FP、接入失败与定时健康扫描的阈值及配置生效链路属于后置设计。
+> 当前固定 1h 频控和扫描阈值均在控制面实现；阈值配置中心、批量清空已读和外部渠道投递仍不做。
 
 | 配置对象 | 写入位置 | 校验 | 生效动作 | 失败回滚 |
 | --- | --- | --- | --- | --- |
@@ -211,34 +211,33 @@ DELETE /api/notifications/notif-20260816-0001 → 204  // 已删除;再次删除
 ③ 生成:NotificationService 写 PostgreSQL `notifications`(is_read=false,created_at=now)
 ④ 呈现:前端每 20s 轮询 GET /api/notifications → 菜单/头部通知按钮角标 + 通知中心
 ⑤ 处置:POST read / read-all / DELETE → 更新已读状态/删除
-⑥ 后置:NotificationScanner 扫描 FP/健康,IngestFailedListener 监听接入失败
-⑦ 后置:通知保留与清理 job(目标 ≥30d)
+⑥ NotificationScanner 扫描 FP/健康并清理 30d 前已读通知,IngestFailedListener 监听接入失败
 ```
 
 | 环节 | 输入 | 处理 | 输出 | 异常处理 |
 | --- | --- | --- | --- | --- |
-| FP 扫描 | siem-alerts verdict 聚合 | 后置 | fp_review 候选 | 待 `NotificationScanner` 实现 |
-| 接入失败 | log-source.status=failed | 后置 | ingest_failed 候选 | 待 `IngestFailedListener` 实现 |
-| 健康查询 | `/api/data-health/sources` | `anomalous=true` | health_anomaly 通知 | 当前按查询触发,定时停采/失败率扫描后置 |
+| FP 扫描 | siem-alerts verdict 聚合 | 已实现 | false_positive 候选 | 样本数 ≥20 且 high=true 时生成 |
+| 接入失败 | log-source.status=failed | 已实现 | ingest_failed 候选 | 生效失败分支即时触发 |
+| 健康查询 | `/api/data-health/sources` | 已实现 | health_anomaly 通知 | scanner 与查询接口均可触发 |
 | 频控 | 当前及后置通知 | 1h 窗口去重 | 通过/丢弃 | PostgreSQL 查询保证重启后规则仍在 |
 | 生成 | 通过的通知 | 写 PostgreSQL `notifications` | unread 通知 | 写失败由请求失败返回,不影响数据管道 |
 | 呈现 | 通知 | 前端 20s 轮询 | 角标/列表 | 对象已删除时仍可查看消息并删除 |
-| 清理 | created_at | 后置 | 空间回收 | 当前无自动清理 job |
+| 清理 | created_at + is_read | 已实现 | 空间回收 | 仅删除 30d 前已读通知 |
 
 ## 7. 验收标准(DoD)
 
 - **已实现(健康查询)**:**Given** 数据源列表包含 `anomalous=true` 的 `S-001` **When** 调用 `GET /api/data-health/sources` **Then** `GET /api/notifications` 可查到 `health_anomaly` 通知,同一 source 1h 内不重复。
-- **后置(FP review)**:**Given** 规则 `R-001` 近 1h 已打 verdict 告警 25 条且 FP 13 条(FP/(TP+FP)=52%>50%,样本 25≥20)**When** `NotificationScanner` 完成后置实现并运行 **Then** 生成 `fp_review` 通知。
-- **后置(接入失败)**:**Given** 数据源 `S-002` 生效失败、`log-source.status=failed`(story-01 落库)**When** `IngestFailedListener` 完成后置实现并接收状态事件 **Then** 10s 内可查到 `ingest_failed` 通知。
+- **正常(FP review)**:**Given** 规则 `R-001` 近 1h 已打 verdict 告警 25 条且 `high=true` **When** `NotificationScanner.scanOnce()` 运行 **Then** 生成 `false_positive` 通知。
+- **正常(接入失败)**:**Given** 数据源 `S-002` 生效失败 **When** `IngestFailedListener` 接收失败事件 **Then** 可查到 `ingest_failed` 通知。
 - **正常(已读/角标)**:**Given** 通知中心未读 N=3 **When** 标记 1 条已读且另调 read-all **Then** `GET /api/notifications?unread=true` 返回的未读数递减;两个接口均返回 204,重复标记幂等。
 - **正常(删除)**:**Given** 通知中心有 2 条已读 + 1 条未读 **When** `DELETE /api/notifications/{id}` **Then** 返回 204,该条不再出现在列表;批量清空已读后置。
 - **异常(404)**:**Given** 通知 id 不存在 **When** `POST /api/notifications/{id}/read` 或 `DELETE /api/notifications/{id}` **Then** 返回 404,不创建、不报 500。
 - **异常(参数非法)**:**Given** `GET /api/notifications?unread=abc` **When** 请求 **Then** 400;`type` 非 §4.3 枚举 → 400。
-- **边界(频控防轰炸)**:**Given** 规则 `R-001` 连续 2 个扫描周期均 FP>50%(1h 窗口内)**When** 两次扫描 **Then** `GET /api/notifications?subjectId=R-001&type=fp_review` 只返回 1 条(总数不变,第二次命中频控仅记日志);1h 后新窗口恢复可生成。
+- **边界(频控防轰炸)**:**Given** 规则 `R-001` 连续 2 个扫描周期均 `high=true` 且样本 ≥20 **When** 两次扫描 **Then** `NotificationService` 按 `false_positive:R-001` 只保留 1 条通知;1h 后新窗口恢复可生成。
 - **边界(空态)**:**Given** 无任何通知 **When** 打开通知中心 **Then** 显示空态文案、通知按钮角标隐藏。
-- **后置边界(失败率小样本不误报)**:**Given** 数据源 `S-003` 近 1h 失败率 10% 但失败样本仅 5 条(<20)**When** 健康扫描完成后置实现 **Then** 不生成 health_anomaly 通知(样本豁免,与 §4.1 FR-3 一致)。
+- **边界(扫描隔离)**:**Given** FP 查询异常 **When** `scanOnce()` 运行 **Then** 健康扫描与 30d 清理仍继续，错误仅记录日志。
 - **异常/回滚(不阻塞主流程)**:**Given** console 通知存储写盘失败(如磁盘满)**When** 扫描生成通知 **Then** 采集/检测/告警落库(Logstash/Flink/ES)不受影响,通知生成记日志可重试,不阻塞管道。
-- **后置性能/保留**:**Given** 通知中心累计 1000 条 **When** 分页与清理策略完成后置实现 **Then** 目标 P95 <500ms;`created_at` 超过 30d 的通知按策略清理。
+- **性能/保留**:**Given** 通知中心累计历史通知 **When** scanner 运行 **Then** 30d 前已读通知被清理，未读通知不被自动删除。
 
 ## 8. 业界参考 / 最佳实践
 
@@ -263,15 +262,15 @@ DELETE /api/notifications/notif-20260816-0001 → 204  // 已删除;再次删除
 - **决定**:采用 **C**。生产写 PostgreSQL `notifications`，单元测试保留内存构造器；不建 ES 通知索引和外部渠道表。
 
 ### ADR-2 通知触发与频控机制(生效机制)
-- **背景**:当前通知由规则部署、实体风险重算和数据源健康查询异常触发;FP 统计、数据源 status 变更和定时健康指标扫描仍待接入。已实现同一 type+target 1h 频控。
+- **背景**:通知由规则部署、实体风险重算、数据源 status 变更和定时健康扫描触发；FP 统计与健康聚合由 scanner 负责。已实现同一 type+target 1h 频控。
 - **选项**:A. 纯事件驱动(状态变更即触发)/ B. 纯定时扫描(每 1min)/ C. 混合(事件驱动 + 定时兜底)
-- **取舍**:A 延迟低但对"由聚合推导"的信号(FP 率/停采/失败率)不适用;B 简单可靠但需要扫描与轮询;C 作为后置目标保留,当前先复用控制面请求链路和 PostgreSQL 频控。
-- **决定**:当前采用 `NotificationService` 同步生成 + PostgreSQL 1h 窗口频控,前端每 20s 轮询。后续按 C 补充 `IngestFailedListener`(事件驱动)+ `NotificationScanner`(每 1min 扫 FP/健康);不改变存储边界。
+- **取舍**:A 延迟低但对"由聚合推导"的信号(FP 率/停采/失败率)不适用;B 简单可靠但需要扫描与轮询;C 同时覆盖即时失败和聚合指标。
+- **决定**:采用 C：`IngestFailedListener` 事件触发 + `NotificationScanner` 每 1min 扫 FP/健康并清理已读通知；生成仍由 `NotificationService` 负责，存储边界不变。
 
 ### ADR-3 通知与告警(告警中心)的边界
 - **背景**:08 §8 通知信号之一"高 FP 规则"由告警 verdict 计算,容易与"告警中心"混淆;需明确二者职责,避免一个列表两种语义。
 - **选项**:A. 通知并入告警中心(同一列表展示)/ B. 通知=控制台运维层、告警=检测层,不混存、不互转 / C. 通知同时承接 critical 告警的推送
-- **取舍**:A 把"运维信号"(接入失败/健康异常/规则 review)与"安全告警"(检测到攻击)混在一个列表,语义混乱、筛选交叉; C 会模糊检测与运维边界,且告警推送本由告警台/Kibana 承接(08 §1 分工),重复实现; B 职责清晰:`siem-alerts` 只存检测告警(Story 04 管),通知中心只存运维/规则质量信号;`fp_review` 通知虽由 verdict 计算,但内容是"建议 review 规则"而非新告警,归通知。
+- **取舍**:A 把"运维信号"(接入失败/健康异常/规则 review)与"安全告警"(检测到攻击)混在一个列表,语义混乱、筛选交叉; C 会模糊检测与运维边界,且告警推送本由告警台/Kibana 承接(08 §1 分工),重复实现; B 职责清晰:`siem-alerts` 只存检测告警(Story 04 管),通知中心只存运维/规则质量信号;`false_positive` 通知虽由 verdict 计算,但内容是"建议 review 规则"而非新告警,归通知。
 - **决定**:**B 通知=控制台运维层,告警=检测层**;二者不混存、不互转——通知不写 `siem-alerts`,告警不进通知中心。未来若需"critical 告警推送 admin",作为 P1+ 扩展经 subscribe 渠道投递,但不改变存储边界(ADR-1)。(**注**:2026-08-16 起 subscribe/外部投递已 Won't(ADR-4),此处的"扩展投递"路径同步关闭。)
 
 ### ADR-4 外部通知渠道投递(Won't)
