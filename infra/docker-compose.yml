@@ -80,6 +80,7 @@ services:
         condition: service_healthy
     ports:
       - "5000:5000"
+      - "5007:5007"
       - "5006:5006"
       - "5005:5005"
       - "5004:5004"

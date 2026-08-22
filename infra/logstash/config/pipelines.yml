@@ -18,3 +18,6 @@
 - pipeline.id: ls-157ad51f
   path.config: "/usr/share/logstash/pipeline/log-sources/ls-157ad51f.conf"
   pipeline.ecs_compatibility: v8
+- pipeline.id: ls-54fc7d96
+  path.config: "/usr/share/logstash/pipeline/log-sources/ls-54fc7d96.conf"
+  pipeline.ecs_compatibility: v8

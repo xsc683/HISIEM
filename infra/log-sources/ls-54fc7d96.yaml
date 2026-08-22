@@ -1,0 +1,13 @@
+---
+id: "ls-54fc7d96"
+name: "demo-ssh-source"
+protocol: "tcp"
+templateId: "ssh-auth"
+port: 5007
+path: null
+status: "active"
+sourceId: "ls-54fc7d96"
+createdAt: "2026-08-22T15:20:53.068910400Z"
+updatedAt: "2026-08-22T15:21:18.996590500Z"
+taskId: "task-4d6346ca-2546-4574-98dd-792808084ee4"
+lastError: null
