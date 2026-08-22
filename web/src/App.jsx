@@ -785,8 +785,8 @@ export default function App() {
                               onChange={(v) => handleAlertVerdict(r._id, v)}
                               options={['true_positive', 'false_positive', 'duplicate'].map((v) => ({ value: v, label: v }))} />
                           </Space>
-                          <pre style={{ background: '#0f1d33', color: '#a8d4ff', padding: 10, borderRadius: 6, fontSize: 12, maxHeight: 220, overflow: 'auto', whiteSpace: 'pre-wrap' }}>
-                            {JSON.stringify(r, null, 2).slice(0, 2500)}
+                          <pre style={{ background: '#0f1d33', color: '#a8d4ff', padding: 10, borderRadius: 6, fontSize: 12, maxHeight: 420, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                            {JSON.stringify(r, null, 2)}
                           </pre>
                         </Space>
                       ),
