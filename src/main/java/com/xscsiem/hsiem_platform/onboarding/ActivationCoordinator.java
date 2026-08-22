@@ -1,6 +1,9 @@
 package com.xscsiem.hsiem_platform.onboarding;
 
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Autowired;
+import com.xscsiem.hsiem_platform.control.ConfigRevisionJournal;
+import com.xscsiem.hsiem_platform.control.ControlPlaneStore;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -28,20 +31,30 @@ public class ActivationCoordinator {
     private final String configDir;
     private final String containerPipelineRoot;
     private final String composeFile;
+    private final ControlPlaneStore control;
 
+    @Autowired
     public ActivationCoordinator(
             LogstashConfigGenerator generator,
             LogstashDeployer deployer,
             @Value("${app.logstash.pipeline-dir:infra/logstash/pipeline}") String pipelineDir,
             @Value("${app.logstash.config-dir:infra/logstash/config}") String configDir,
             @Value("${app.logstash.container-pipeline-root:/usr/share/logstash/pipeline}") String containerPipelineRoot,
-            @Value("${app.logstash.compose-file:infra/docker-compose.yml}") String composeFile) {
+            @Value("${app.logstash.compose-file:infra/docker-compose.yml}") String composeFile,
+            ControlPlaneStore control) {
         this.generator = generator;
         this.deployer = deployer;
         this.pipelineDir = pipelineDir;
         this.configDir = configDir;
         this.containerPipelineRoot = containerPipelineRoot;
         this.composeFile = composeFile;
+        this.control = control;
+    }
+
+    public ActivationCoordinator(LogstashConfigGenerator generator, LogstashDeployer deployer,
+                                 String pipelineDir, String configDir, String containerPipelineRoot,
+                                 String composeFile) {
+        this(generator, deployer, pipelineDir, configDir, containerPipelineRoot, composeFile, null);
     }
 
     /** 生效;失败已回滚文件并抛 {@link ActivationFailedException},由调用方置 failed 状态。 */
@@ -82,6 +95,9 @@ public class ActivationCoordinator {
             } else {
                 deployer.reloadLogstash();
             }
+            ConfigRevisionJournal.record(control, "logstash-pipeline", confFile, "system");
+            ConfigRevisionJournal.record(control, "logstash-pipelines", pipelines, "system");
+            ConfigRevisionJournal.record(control, "compose", compose, "system");
         } catch (ActivationFailedException e) {
             throw e;
         } catch (IOException e) {
@@ -123,6 +139,8 @@ public class ActivationCoordinator {
             } else {
                 deployer.reloadLogstash();
             }
+            ConfigRevisionJournal.record(control, "logstash-pipelines", pipelines, "system");
+            ConfigRevisionJournal.record(control, "compose", compose, "system");
         } catch (IOException | RuntimeException e) {
             restoreDeactivation(confFile, confExisted, confBackup, pipelines, pipelinesBackup,
                     compose, composeBackup);

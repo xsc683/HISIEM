@@ -35,7 +35,8 @@ public class LogstashConfigGenerator {
             for (String f : t.timestamp.formats) {
                 sb.append(", \"").append(f).append("\"");
             }
-            sb.append(" ]\n  timezone => \"").append(t.timestamp.timezone).append("\"\n  target => \"@timestamp\"\n}\n");
+            sb.append(" ]\n  timezone => \"").append(t.timestamp.timezone)
+                    .append("\"\n  target => \"@timestamp\"\n  tag_on_failure => [\"_dateparsefailure\"]\n}\n");
         }
 
         if (t.ecs != null && !t.ecs.isEmpty()) {
@@ -93,7 +94,7 @@ public class LogstashConfigGenerator {
 
         // output:解析失败只进 raw 桶,不写 Kafka,避免未知日志进入 Flink 检测链。
         sb.append("output {\n");
-        sb.append("  if \"_parsefailure\" in [tags] {\n");
+        sb.append("  if \"_parsefailure\" in [tags] or \"_dateparsefailure\" in [tags] {\n");
         sb.append("    elasticsearch {\n");
         sb.append("      hosts => [\"http://elasticsearch:9200\"]\n");
         sb.append("      index => \"siem-events-raw-%{+YYYY.MM.dd}\"\n");

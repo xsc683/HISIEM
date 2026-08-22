@@ -3,6 +3,11 @@ package com.xscsiem.hsiem_platform.health;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import co.elastic.clients.elasticsearch.ElasticsearchClient;
+import org.apache.kafka.clients.admin.AdminClient;
+import org.apache.kafka.clients.admin.AdminClientConfig;
+import org.apache.kafka.clients.admin.OffsetSpec;
+import org.apache.kafka.clients.consumer.OffsetAndMetadata;
+import org.apache.kafka.common.TopicPartition;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
@@ -20,6 +25,9 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
+import java.util.HashMap;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Predicate;
 
 /** 对 Docker Desktop + WSL2 数据面做一次可重复的运行态扫描。 */
@@ -35,6 +43,14 @@ public class OperationalHealthService {
     private final String logstashUrl;
     private final String kafkaHost;
     private final int kafkaPort;
+    private final String kafkaTopic;
+    private final String kafkaGroup;
+    private final long kafkaMaxLag;
+    private final String kafkaSecurityProtocol;
+    private final String kafkaSaslMechanism;
+    private final String kafkaSaslJaasConfig;
+    private final String kafkaTruststoreLocation;
+    private final String kafkaTruststorePassword;
     private final Counter scanCounter;
     private final Timer scanTimer;
     private volatile long lastScanEpoch;
@@ -46,7 +62,15 @@ public class OperationalHealthService {
                                     @Value("${app.health.scan.kibana-url:http://localhost:5601}") String kibanaUrl,
                                     @Value("${app.health.scan.logstash-url:http://localhost:9600}") String logstashUrl,
                                     @Value("${app.health.scan.kafka-host:localhost}") String kafkaHost,
-                                    @Value("${app.health.scan.kafka-port:9092}") int kafkaPort) {
+                                    @Value("${app.health.scan.kafka-port:9092}") int kafkaPort,
+                                    @Value("${app.health.scan.kafka-topic:siem-events}") String kafkaTopic,
+                                    @Value("${app.health.scan.kafka-group:siem-detection}") String kafkaGroup,
+                                    @Value("${app.health.scan.kafka-max-lag:10000}") long kafkaMaxLag,
+                                    @Value("${app.health.scan.kafka-security-protocol:PLAINTEXT}") String kafkaSecurityProtocol,
+                                    @Value("${app.health.scan.kafka-sasl-mechanism:}") String kafkaSaslMechanism,
+                                    @Value("${app.health.scan.kafka-sasl-jaas-config:}") String kafkaSaslJaasConfig,
+                                    @Value("${app.health.scan.kafka-ssl-truststore-location:}") String kafkaTruststoreLocation,
+                                    @Value("${app.health.scan.kafka-ssl-truststore-password:}") String kafkaTruststorePassword) {
         this.jdbc = jdbc;
         this.elasticsearch = elasticsearch;
         this.objectMapper = objectMapper;
@@ -55,6 +79,14 @@ public class OperationalHealthService {
         this.logstashUrl = logstashUrl;
         this.kafkaHost = kafkaHost;
         this.kafkaPort = kafkaPort;
+        this.kafkaTopic = kafkaTopic;
+        this.kafkaGroup = kafkaGroup;
+        this.kafkaMaxLag = kafkaMaxLag;
+        this.kafkaSecurityProtocol = kafkaSecurityProtocol;
+        this.kafkaSaslMechanism = kafkaSaslMechanism;
+        this.kafkaSaslJaasConfig = kafkaSaslJaasConfig;
+        this.kafkaTruststoreLocation = kafkaTruststoreLocation;
+        this.kafkaTruststorePassword = kafkaTruststorePassword;
         this.scanCounter = Counter.builder("siem.health.scans").description("Health scans executed").register(metrics);
         this.scanTimer = Timer.builder("siem.health.scan.duration").description("Health scan duration").register(metrics);
         io.micrometer.core.instrument.Gauge.builder("siem.health.last.scan.epoch", this, value -> value.lastScanEpoch)
@@ -68,7 +100,7 @@ public class OperationalHealthService {
             LinkedHashMap<String, Map<String, Object>> components = new LinkedHashMap<>();
             components.put("postgresql", database());
             components.put("elasticsearch", elasticsearch());
-            components.put("kafka", tcp("kafka", kafkaHost, kafkaPort));
+            components.put("kafka", kafka());
             components.put("logstash", logstash());
             components.put("flink", httpJson("flink", flinkUrl + "/overview",
                     node -> node.path("jobs-running").isInt() && node.path("jobs-running").asInt() > 0,
@@ -92,6 +124,57 @@ public class OperationalHealthService {
             return row("postgresql", "UP", elapsedMs(started), null);
         } catch (Exception e) {
             return row("postgresql", "DOWN", elapsedMs(started), e.getMessage());
+        }
+    }
+
+    /** Kafka 不再只探测 TCP；同时确认 topic、consumer group 和积压量。 */
+    private Map<String, Object> kafka() {
+        long started = System.nanoTime();
+        Properties props = new Properties();
+        props.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaHost + ":" + kafkaPort);
+        props.put(AdminClientConfig.REQUEST_TIMEOUT_MS_CONFIG, "3000");
+        props.put(AdminClientConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, "3000");
+        if (kafkaSecurityProtocol != null && !kafkaSecurityProtocol.isBlank()) {
+            props.put("security.protocol", kafkaSecurityProtocol);
+        }
+        putIfPresent(props, "sasl.mechanism", kafkaSaslMechanism);
+        putIfPresent(props, "sasl.jaas.config", kafkaSaslJaasConfig);
+        putIfPresent(props, "ssl.truststore.location", kafkaTruststoreLocation);
+        putIfPresent(props, "ssl.truststore.password", kafkaTruststorePassword);
+        try (AdminClient admin = AdminClient.create(props)) {
+            var description = admin.describeTopics(List.of(kafkaTopic)).allTopicNames()
+                    .get(4, TimeUnit.SECONDS).get(kafkaTopic);
+            if (description == null || description.partitions().isEmpty()) {
+                return row("kafka", "DOWN", elapsedMs(started), "topic 不存在或没有分区");
+            }
+            List<TopicPartition> partitions = description.partitions().stream()
+                    .map(partition -> new TopicPartition(kafkaTopic, partition.partition()))
+                    .toList();
+            Map<TopicPartition, OffsetSpec> requests = new HashMap<>();
+            partitions.forEach(partition -> requests.put(partition, OffsetSpec.latest()));
+            Map<TopicPartition, Long> end = admin.listOffsets(requests).all()
+                    .get(4, TimeUnit.SECONDS).entrySet().stream()
+                    .collect(java.util.stream.Collectors.toMap(Map.Entry::getKey, e -> e.getValue().offset()));
+            Map<TopicPartition, OffsetAndMetadata> committed = admin.listConsumerGroupOffsets(kafkaGroup)
+                    .partitionsToOffsetAndMetadata().get(4, TimeUnit.SECONDS);
+            long lag = 0;
+            int missing = 0;
+            for (TopicPartition partition : partitions) {
+                Long latest = end.get(partition);
+                OffsetAndMetadata offset = committed.get(partition);
+                if (latest != null && offset != null) lag += Math.max(0, latest - offset.offset());
+                if (offset == null) missing++;
+            }
+            Map<String, Object> result = row("kafka", missing == partitions.size() || lag > kafkaMaxLag ? "DOWN" : "UP",
+                    elapsedMs(started), missing == partitions.size() ? "consumer group 尚未提交 offset"
+                            : lag > kafkaMaxLag ? "consumer lag 超过阈值 " + kafkaMaxLag : null);
+            result.put("topic", kafkaTopic);
+            result.put("consumerGroup", kafkaGroup);
+            result.put("partitions", partitions.size());
+            result.put("lag", lag);
+            return result;
+        } catch (Exception e) {
+            return row("kafka", "DOWN", elapsedMs(started), e.getMessage());
         }
     }
 
@@ -162,5 +245,9 @@ public class OperationalHealthService {
 
     private static long elapsedMs(long started) {
         return Math.max(0, Duration.ofNanos(System.nanoTime() - started).toMillis());
+    }
+
+    private static void putIfPresent(Properties props, String key, String value) {
+        if (value != null && !value.isBlank()) props.put(key, value);
     }
 }

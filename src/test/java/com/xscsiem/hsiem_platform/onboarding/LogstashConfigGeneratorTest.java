@@ -45,6 +45,8 @@ class LogstashConfigGeneratorTest {
         assertTrue(c.contains("ssh-web-01"), "source_name 值");
         assertTrue(c.contains("grok {"), "filter grok");
         assertTrue(c.contains("event.category"), "ECS 字段");
+        assertTrue(c.contains("_dateparsefailure"), "非法时间戳应进入 raw 分流");
+        assertTrue(c.contains("or \"_dateparsefailure\" in [tags]"), "时间解析失败不能进入 Kafka/Flink");
         assertTrue(c.contains("related.ip"), "规范化字段");
         assertTrue(c.contains("siem-events-%{+YYYY.MM.dd}"), "ES 输出");
         assertTrue(c.contains("topic_id => \"siem-events\""), "Kafka 输出");

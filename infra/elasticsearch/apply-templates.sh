@@ -102,18 +102,18 @@ curl -s -X PUT "http://localhost:9200/siem-events-20*/_settings" \
   -d '{"index.lifecycle.name": "siem-events-retention"}'
 echo
 
-echo "==> 已存在的 SIEM 索引关闭副本(单节点无法分配副本,replica=1 只会 yellow + 写放大)"
+echo "==> 已存在的 SIEM 索引启用副本与同步 translog(单节点开发环境会显示 yellow;生产至少两节点)"
 curl -s -X PUT "http://localhost:9200/siem-events-20*/_settings" \
   -H 'Content-Type: application/json' \
-  -d '{"index.number_of_replicas": 0}'
+  -d '{"index.number_of_replicas": 1,"index.translog.durability":"request"}'
 echo
 curl -s -X PUT "http://localhost:9200/siem-alerts/_settings" \
   -H 'Content-Type: application/json' \
-  -d '{"index.number_of_replicas": 0}'
+  -d '{"index.number_of_replicas": 1,"index.translog.durability":"request"}'
 echo
 curl -s -X PUT "http://localhost:9200/siem-cases/_settings" \
   -H 'Content-Type: application/json' \
-  -d '{"index.number_of_replicas": 0}'
+  -d '{"index.number_of_replicas": 1,"index.translog.durability":"request"}'
 echo
 
 echo "==> 已存在的 siem-alerts 索引套用 ILM(模板只对新索引生效;单索引须显式设置)"

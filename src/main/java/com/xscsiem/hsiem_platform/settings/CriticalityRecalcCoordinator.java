@@ -6,6 +6,8 @@ import org.springframework.stereotype.Component;
 
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.time.Instant;
+import java.util.UUID;
 
 /** 关键度变更后的异步重算任务，状态统一落入 background_tasks。 */
 @Component
@@ -16,6 +18,7 @@ public class CriticalityRecalcCoordinator {
         t.setDaemon(true);
         return t;
     });
+    private static final String TASK_OWNER = "criticality-worker-" + UUID.randomUUID();
 
     private final CriticalityDeployer deployer;
     private final ControlPlaneStore control;
@@ -31,7 +34,9 @@ public class CriticalityRecalcCoordinator {
     public String enqueue(String actor) {
         String taskId = control.createTask("criticality_recalc", "entity-risk", "等待实体风险重算");
         EXECUTOR.execute(() -> {
-            control.updateTask(taskId, "running", 10, "运行 entity-risk.py", null);
+            if (!control.claimTask(taskId, TASK_OWNER, Instant.now().plusSeconds(600))) return;
+            control.heartbeatTask(taskId, TASK_OWNER, Instant.now().plusSeconds(600),
+                    10, "运行 entity-risk.py");
             try {
                 deployer.recalcEntityRisk();
                 control.updateTask(taskId, "succeeded", 100, "实体风险已重算", null);

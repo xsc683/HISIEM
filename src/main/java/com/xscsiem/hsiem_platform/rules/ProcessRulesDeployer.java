@@ -8,6 +8,10 @@ import java.nio.charset.StandardCharsets;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
+import java.time.Instant;
+import java.util.UUID;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -30,6 +34,8 @@ public class ProcessRulesDeployer implements RulesDeployer {
     private final String containerName;
     private final String jarName;
     private final String savepointDir;
+    private volatile String activeRulesDir;
+    private volatile String lastSuccessfulRulesDir;
 
     public ProcessRulesDeployer(
             @Value("${app.flink.wsl-repo-path:/mnt/d/Project/SIEM}") String wslRepoPath,
@@ -44,30 +50,75 @@ public class ProcessRulesDeployer implements RulesDeployer {
 
     @Override
     public void syncRules() {
+        String revision = "rev-" + Instant.now().toEpochMilli() + "-"
+                + UUID.randomUUID().toString().substring(0, 8);
+        String target = "/opt/flink/rules-revisions/" + revision;
+        run("docker", "exec", containerName, "mkdir", "-p", target);
         run("wsl", "bash", "-c",
-                "docker cp " + wslRepoPath + "/infra/rules/. " + containerName + ":/opt/flink/rules/");
+                "docker cp " + wslRepoPath + "/infra/rules/. " + containerName + ":" + target + "/");
+        activeRulesDir = target;
     }
 
     @Override
     public String restartDetectionJob() {
         String runningJob = findRunningJob();
+        String previousRules = lastSuccessfulRulesDir == null ? "/opt/flink/rules" : lastSuccessfulRulesDir;
+        String nextRules = activeRulesDir == null ? previousRules : activeRulesDir;
         if (runningJob == null) {
             // 无运行中 job → 全新提交(规则已同步,启动即读取)
-            return submittedJobId(runOut("docker", "exec", containerName, "flink",
-                    "run", "-d", "/opt/flink/" + jarName));
+            try {
+                String id = submit(null, nextRules);
+                verifyRunning(id);
+                lastSuccessfulRulesDir = nextRules;
+                return id;
+            } catch (RuntimeException failure) {
+                if (nextRules.equals(previousRules)) throw failure;
+                String id = submit(null, previousRules);
+                verifyRunning(id);
+                return id;
+            }
         }
         // cancel 带 savepoint(保留状态),从最新 savepoint 恢复(重新读取规则)
         run("docker", "exec", containerName, "flink", "cancel", "-s", savepointDir, runningJob);
         String sp = latestSavepoint();
-        if (sp == null) {
-            // cancel -s 已经停止旧 job；不能让检测面永久离线。无状态快照时以 earliest
-            // 重新提交，告警 _id 是确定性的，重放不会产生重复文档。
-            System.err.println("[ProcessRulesDeployer] 未找到 savepoint,以全新状态重新提交检测 job");
-            return submittedJobId(runOut("docker", "exec", containerName, "flink",
-                    "run", "-d", "/opt/flink/" + jarName));
+        try {
+            String id = submit(sp, nextRules);
+            verifyRunning(id);
+            lastSuccessfulRulesDir = nextRules;
+            return id;
+        } catch (RuntimeException failure) {
+            // 新 revision 未能启动时，使用刚才的 savepoint 和上一版规则恢复旧 Job，避免检测面长期下线。
+            try {
+                String id = submit(sp, previousRules);
+                verifyRunning(id);
+                lastSuccessfulRulesDir = previousRules;
+                return id;
+            } catch (RuntimeException rollback) {
+                rollback.addSuppressed(failure);
+                throw rollback;
+            }
         }
-        return submittedJobId(runOut("docker", "exec", containerName, "flink",
-                "run", "-d", "-s", savepointDir + "/" + sp, "/opt/flink/" + jarName));
+    }
+
+    private String submit(String savepoint, String rulesDir) {
+        List<String> cmd = new ArrayList<>(List.of("docker", "exec", containerName, "flink", "run", "-d"));
+        if (savepoint != null) cmd.addAll(List.of("-s", savepointDir + "/" + savepoint));
+        cmd.add("/opt/flink/" + jarName);
+        cmd.add(rulesDir);
+        return submittedJobId(runOut(cmd.toArray(String[]::new)));
+    }
+
+    private void verifyRunning(String jobId) {
+        for (int attempt = 0; attempt < 10; attempt++) {
+            if (findRunningJob() != null) return;
+            try {
+                Thread.sleep(1000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("等待 Flink Job 启动时被中断", e);
+            }
+        }
+        throw new IllegalStateException("Flink Job 未进入 RUNNING: " + jobId);
     }
 
     private String findRunningJob() {

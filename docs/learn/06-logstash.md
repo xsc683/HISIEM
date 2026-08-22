@@ -120,7 +120,7 @@ output {
 
 ## 5. 常见问题与设计关注点
 
-1. **grok 未覆盖日志变体**:`sshd.*Failed password for` 无法匹配 `invalid user` 变体(暴力破解常用),需补充对应 pattern 分支。
+1. **grok 变体与时间失败分流**：主/动态 pipeline 已覆盖 `invalid user`，并将 `_parsefailure`/`_dateparsefailure` 路由到 raw 索引；新增变体仍应通过模板正负样本门禁验证。
 2. **`naming_strategy` 配置不存在**:Logstash 8.14 的 elasticsearch output 无此选项,无法配置输出为扁平/嵌套,保持默认即可。
 3. **bind mount 目录不可删除**:`deploy.sh` 若对 logstash 目录执行 `rm -rf` 会破坏 Docker Desktop 的挂载注册,导致容器重启失败(exit 127),应使用原地同步(rsync)。
 4. **单 pipeline 多 output 相互影响**:ES output 阻塞会反向拖累 Kafka output(背压传导);若后续引入独立 Kafka→ES 通路,可考虑拆分为独立 pipeline。

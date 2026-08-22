@@ -18,10 +18,10 @@
 | 层 | 现状 | 局限 |
 | --- | --- | --- |
 | 采集 | Logstash 单 pipeline,TCP :5000 | 早期单数据源(SSH)、无 PQ/DLQ → persistent queue + DLQ 已落地(Phase 3.1 `b284fa3`);多数据源由接入模块扩展(story-01) |
-| 解析 | Grok + ECS 字段标准化;`@timestamp`=日志时间(date filter,Asia/Shanghai) | `Failed password for invalid user` 变体漏解析;失败行静默漏过 |
+| 解析 | Grok + ECS 字段标准化;`@timestamp`=日志时间(date filter,Asia/Shanghai) | `invalid user` 变体已覆盖；Grok/date 失败进入 raw 索引并绕过 Kafka/Flink，仍需真实 Logstash E2E |
 | 缓冲 | Kafka 3.8 单 topic `siem-events`,3 分区,zstd 压缩,acks=all | 早期 1 分区/无压缩 → 已扩 3 分区 + zstd + acks=all(Phase 3.0 `7e86478`);显式 retention 未设;单 broker 无容错 |
 | 检测 | Flink 单 job:6 条规则(3 单事件 + 1 窗口 tumbling 5min≥5 + 1 CEP 攻击链 + 1 基线异常) | 早期:无 CEP 序列关联、无去重抑制、无幂等 `_id`、checkpoint 未持久化、无 `.uid()`、窗口无 idle 处理 → 均已由 Phase 3.0-3.5 解决(见 §2.1) |
-| 存储 | ES 8.14:`siem-events-*` 按天 + `siem-alerts`(模板+显式 mapping) | 早期 replica=1(yellow)、无 ILM 留存 → 已解决:replica=0 + ILM(hot → delete 365d,无 warm);无压缩/refresh 调优;无 RBAC |
+| 存储 | ES 8.14:`siem-events-*` 按天 + `siem-alerts`(模板+显式 mapping) | 当前模板使用 replica=1、request translog、ILM(hot → delete 365d)；开发单节点会 yellow，生产需多节点；仍无租户级 RBAC |
 | 呈现 | Kibana `SIEM 总览` dashboard | 早期无告警三线视图/调优闭环、无覆盖度视图 → 已落地:triage-alert.py 三线处置(Phase 3.3 `6524fb6`)+ `rule.tags`/`attack.*` 覆盖度可见(Phase 3.2 `da1a0f6`) |
 
 ### 2.1 已实现基线(2026-08-16,Phase 3.0-3.5)
@@ -34,7 +34,7 @@ Phase 3.0-3.5 检测引擎能力已全部实现并验证(commit `7e86478` / `b28
 | 全算子 `.uid()` | source / parser / detection / suppression / window / cep / anomaly / sink 均设 uid | Phase 3.0 `7e86478` |
 | checkpoint 持久化 | `enableCheckpointing(60s, EXACTLY_ONCE)` + 持久卷 + 显式 restart 策略 | Phase 3.0 `7e86478` |
 | Kafka 3 分区 | `siem-events` 3 分区 + zstd 压缩 + acks=all | Phase 3.0 `7e86478` |
-| replica=0 | 单节点 `number_of_replicas: 0`,消除 yellow | Phase 3.0 `7e86478` |
+| 副本与 translog | 模板/已有索引设置 `number_of_replicas: 1`、`index.translog.durability=request`；开发单节点 yellow 为预期，生产至少两节点 | 本轮可靠性收口 |
 | ILM 留存 | `siem-events-*`:hot → delete `min_age 365d`(无 warm,单节点;满足 PCI 12 个月留存) | Phase 3.0 `7e86478` / 3.4 `6524fb6` |
 | PQ + DLQ | Logstash persistent queue + dead letter queue(ES 拒收事件落 DLQ);`siem-events-raw` 未知桶 P2 再落地 | Phase 3.1 `b284fa3` |
 | watermark idle | 窗口 / CEP / 基线均 `.withIdleness(60s)` | Phase 3.1 `b284fa3` |

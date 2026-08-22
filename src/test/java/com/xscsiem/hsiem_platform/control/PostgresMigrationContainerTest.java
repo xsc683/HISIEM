@@ -31,7 +31,7 @@ class PostgresMigrationContainerTest {
         Flyway.configure().dataSource(dataSource).locations("classpath:db/migration").load().migrate();
 
         JdbcTemplate jdbc = new JdbcTemplate(dataSource);
-        assertEquals(6, jdbc.queryForObject(
+        assertEquals(7, jdbc.queryForObject(
                 "SELECT COUNT(*) FROM flyway_schema_history WHERE success = TRUE", Integer.class));
         assertTrue(jdbc.queryForObject("""
                 SELECT COUNT(*) FROM information_schema.tables

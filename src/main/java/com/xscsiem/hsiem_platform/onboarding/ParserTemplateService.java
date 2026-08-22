@@ -2,7 +2,11 @@ package com.xscsiem.hsiem_platform.onboarding;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
+import com.xscsiem.hsiem_platform.control.ConfigRevisionJournal;
+import com.xscsiem.hsiem_platform.control.ControlPlaneStore;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 
 import java.io.File;
@@ -20,12 +24,21 @@ public class ParserTemplateService {
     private final ObjectMapper yamlMapper = new ObjectMapper(new YAMLFactory());
     private final String templatesDir;
     private final GrokTestService grok;
+    private final ControlPlaneStore control;
 
+    @Autowired
     public ParserTemplateService(
             @Value("${app.parser-templates-dir:infra/parser-templates}") String templatesDir,
-            GrokTestService grok) {
+            GrokTestService grok, ControlPlaneStore control) {
         this.templatesDir = templatesDir;
         this.grok = grok;
+        this.control = control;
+    }
+
+    public ParserTemplateService(String templatesDir, GrokTestService grok) {
+        this.templatesDir = templatesDir;
+        this.grok = grok;
+        this.control = null;
     }
 
     public List<ParserTemplate> list() {
@@ -60,11 +73,17 @@ public class ParserTemplateService {
         validateGate(t);
         File f = new File(templatesDir, t.id + ".yaml");
         try {
-            yamlMapper.writeValue(f, t);
+            ConfigRevisionJournal.atomicWrite(f.toPath(), yamlMapper.writeValueAsString(t));
+            ConfigRevisionJournal.record(control, "parser-template", f.toPath(), actor());
         } catch (IOException e) {
             throw new IllegalStateException("模板保存失败: " + t.id, e);
         }
         return t;
+    }
+
+    private static String actor() {
+        var auth = SecurityContextHolder.getContext().getAuthentication();
+        return auth == null ? "system" : auth.getName();
     }
 
     /** 正负样本门禁(先于保存)。 */

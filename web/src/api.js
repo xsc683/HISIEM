@@ -1,6 +1,7 @@
 // 接入层 API 客户端(代理:web/ vite.config.js 把 /api → 后端 8080)
 
 const BASE = '/api'
+const REQUEST_TIMEOUT_MS = 10000
 
 // 登录 token(Story 08 RBAC),本地持久化;所有请求自动携带
 let authToken = localStorage.getItem('siem_token') || ''
@@ -12,7 +13,21 @@ function authHeaders(extra) {
 }
 
 async function request(path, options) {
-  const r = await fetch(BASE + path, { ...options, headers: authHeaders(options?.headers) })
+  const controller = new AbortController()
+  const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+  let r
+  try {
+    r = await fetch(BASE + path, {
+      ...options,
+      signal: options?.signal || controller.signal,
+      headers: authHeaders(options?.headers),
+    })
+  } catch (e) {
+    if (e?.name === 'AbortError') throw new Error(`请求超时（${REQUEST_TIMEOUT_MS / 1000}s）`)
+    throw e
+  } finally {
+    window.clearTimeout(timeout)
+  }
   if (r.status === 401 && path !== '/auth/login') {
     authToken = ''
     localStorage.removeItem('siem_token')

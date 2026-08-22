@@ -1,6 +1,7 @@
 package com.xscsiem.hsiem_platform.investigation;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import com.xscsiem.hsiem_platform.alert.AlertService;
 import com.xscsiem.hsiem_platform.control.ControlPlaneStore;
 import com.xscsiem.hsiem_platform.onboarding.ConflictException;
@@ -44,7 +45,8 @@ public class CaseService {
 
     public static final List<String> STATUSES = List.of("open", "investigating", "resolved");
     private static final Logger LOG = LoggerFactory.getLogger(CaseService.class);
-    private static final ObjectMapper MAPPER = new ObjectMapper();
+    private static final ObjectMapper MAPPER = new ObjectMapper().findAndRegisterModules()
+            .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
     private static final HttpClient CLIENT = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(3)).build();
 

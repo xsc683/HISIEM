@@ -55,7 +55,9 @@ public class ElasticsearchGateway {
             if ("_doc".equals(operation) && "GET".equalsIgnoreCase(method) && segments.length >= 3) {
                 return get(index, segments[2]);
             }
-            if ("_doc".equals(operation) && "POST".equalsIgnoreCase(method) && segments.length >= 3) {
+            if ("_doc".equals(operation)
+                    && ("POST".equalsIgnoreCase(method) || "PUT".equalsIgnoreCase(method))
+                    && segments.length >= 3) {
                 return index(index, segments[2].split("\\?", 2)[0], path, body);
             }
             if ("_doc".equals(operation) && "DELETE".equalsIgnoreCase(method) && segments.length >= 3) {

@@ -2,6 +2,7 @@ package com.xscsiem.hsiem_platform.control;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import com.xscsiem.hsiem_platform.auth.AuthUser;
 import com.xscsiem.hsiem_platform.onboarding.NotFoundException;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -28,7 +29,8 @@ public class JdbcControlPlaneStore implements ControlPlaneStore {
     private static final TypeReference<List<Map<String, Object>>> MAP_LIST = new TypeReference<>() {};
 
     private final JdbcTemplate jdbc;
-    private final ObjectMapper mapper = new ObjectMapper();
+    private final ObjectMapper mapper = new ObjectMapper().findAndRegisterModules()
+            .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
 
     public JdbcControlPlaneStore(JdbcTemplate jdbc) {
         this.jdbc = jdbc;
@@ -324,6 +326,7 @@ public class JdbcControlPlaneStore implements ControlPlaneStore {
                 writeJson(document.getOrDefault("evidence", List.of())),
                 writeJson(document.getOrDefault("case.collaborators", List.of())));
         insertRelations(value(document, "case.id"), alertIds);
+        enqueueCaseMirror(value(document, "case.id"), "upsert", document);
     }
 
     @Override
@@ -382,12 +385,90 @@ public class JdbcControlPlaneStore implements ControlPlaneStore {
         }
         jdbc.update("DELETE FROM case_alerts WHERE case_id = ?", id);
         insertRelations(id, finalAlertIds);
-        return findCase(id);
+        Map<String, Object> updated = findCase(id);
+        enqueueCaseMirror(id, "upsert", updated);
+        return updated;
     }
 
     @Override
+    @Transactional
     public boolean deleteCase(String id) {
-        return jdbc.update("DELETE FROM cases WHERE id = ?", id) > 0;
+        int changed = jdbc.update("DELETE FROM cases WHERE id = ?", id);
+        if (changed > 0) {
+            enqueueCaseMirror(id, "delete", null);
+        }
+        return changed > 0;
+    }
+
+    @Override
+    public void enqueueCaseMirror(String caseId, String operation, Map<String, Object> document) {
+        String payload = document == null ? null : writeJson(document);
+        // 同一案件的连续更新只保留最后一个待处理 upsert；delete 不可被后续旧 upsert 覆盖。
+        if ("upsert".equals(operation)) {
+            jdbc.update("""
+                    UPDATE case_mirror_outbox SET payload_json = ?, status = 'pending',
+                        available_at = CURRENT_TIMESTAMP, locked_until = NULL, lease_owner = NULL,
+                        last_error = NULL, updated_at = CURRENT_TIMESTAMP
+                    WHERE case_id = ? AND operation = 'upsert' AND status IN ('pending', 'failed')
+                    """, payload, caseId);
+            Integer pending = jdbc.queryForObject("""
+                    SELECT COUNT(*) FROM case_mirror_outbox
+                    WHERE case_id = ? AND operation = 'upsert' AND status = 'pending'
+                    """, Integer.class, caseId);
+            if (pending != null && pending > 0) return;
+        }
+        jdbc.update("""
+                INSERT INTO case_mirror_outbox(case_id, operation, payload_json)
+                VALUES (?, ?, ?)
+                """, caseId, operation, payload);
+    }
+
+    @Override
+    @Transactional
+    public List<Map<String, Object>> claimCaseMirrorBatch(String owner, Instant leaseUntil, int size) {
+        int limit = Math.min(Math.max(size, 1), 100);
+        List<Map<String, Object>> rows = jdbc.query("""
+                SELECT id, case_id, operation, payload_json, attempts
+                FROM case_mirror_outbox
+                WHERE status IN ('pending', 'failed')
+                  AND available_at <= CURRENT_TIMESTAMP
+                  AND (locked_until IS NULL OR locked_until < CURRENT_TIMESTAMP)
+                ORDER BY id
+                LIMIT ? FOR UPDATE
+                """, (rs, rowNum) -> {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("id", rs.getLong("id"));
+            row.put("caseId", rs.getString("case_id"));
+            row.put("operation", rs.getString("operation"));
+            row.put("payload", rs.getString("payload_json"));
+            row.put("attempts", rs.getInt("attempts"));
+            return row;
+        }, limit);
+        for (Map<String, Object> row : rows) {
+            jdbc.update("""
+                    UPDATE case_mirror_outbox SET status = 'in_flight', lease_owner = ?,
+                        locked_until = ?, attempts = attempts + 1, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """, owner, timestamp(leaseUntil.toString()), row.get("id"));
+        }
+        return rows;
+    }
+
+    @Override
+    public void completeCaseMirror(long id, String owner, boolean success, String error, Instant nextAttemptAt) {
+        if (success) {
+            jdbc.update("""
+                    UPDATE case_mirror_outbox SET status = 'succeeded', lease_owner = NULL,
+                        locked_until = NULL, last_error = NULL, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ? AND lease_owner = ?
+                    """, id, owner);
+        } else {
+            jdbc.update("""
+                    UPDATE case_mirror_outbox SET status = 'failed', lease_owner = NULL,
+                        locked_until = NULL, last_error = ?, available_at = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ? AND lease_owner = ?
+                    """, error, timestamp(nextAttemptAt.toString()), id, owner);
+        }
     }
 
     @Override
@@ -412,15 +493,39 @@ public class JdbcControlPlaneStore implements ControlPlaneStore {
                         UPDATE background_tasks SET status = ?, progress = ?, message = ?, error = ?,
                             started_at = CASE WHEN ? = 'running' AND started_at IS NULL THEN CURRENT_TIMESTAMP ELSE started_at END,
                             finished_at = CASE WHEN ? IN ('succeeded', 'failed', 'cancelled') THEN CURRENT_TIMESTAMP ELSE finished_at END,
+                            lease_owner = CASE WHEN ? IN ('succeeded', 'failed', 'cancelled') THEN NULL ELSE lease_owner END,
+                            lease_until = CASE WHEN ? IN ('succeeded', 'failed', 'cancelled') THEN NULL ELSE lease_until END,
                             updated_at = CURRENT_TIMESTAMP WHERE id = ?
-                        """, status, Math.max(0, Math.min(progress, 100)), message, error, status, status, id);
+                        """, status, Math.max(0, Math.min(progress, 100)), message, error, status, status,
+                status, status, id);
+    }
+
+    @Override
+    public boolean claimTask(String id, String owner, Instant leaseUntil) {
+        return jdbc.update("""
+                UPDATE background_tasks SET status = 'running', lease_owner = ?, lease_until = ?,
+                    heartbeat_at = CURRENT_TIMESTAMP, attempts = attempts + 1,
+                    started_at = COALESCE(started_at, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND status IN ('queued', 'running')
+                  AND (lease_until IS NULL OR lease_until < CURRENT_TIMESTAMP)
+                """, owner, timestamp(leaseUntil.toString()), id) > 0;
+    }
+
+    @Override
+    public boolean heartbeatTask(String id, String owner, Instant leaseUntil, int progress, String message) {
+        return jdbc.update("""
+                UPDATE background_tasks SET status = 'running', progress = ?, message = ?,
+                    lease_until = ?, heartbeat_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND status = 'running' AND lease_owner = ?
+                """, Math.max(0, Math.min(progress, 100)), message, timestamp(leaseUntil.toString()), id, owner) > 0;
     }
 
     @Override
     public Map<String, Object> findTask(String id) {
         List<Map<String, Object>> rows = jdbc.query("""
                         SELECT id, task_type, resource_id, status, progress, message, error,
-                               started_at, finished_at, created_at, updated_at
+                               started_at, finished_at, created_at, updated_at, attempts, max_attempts,
+                               lease_owner, lease_until, heartbeat_at
                         FROM background_tasks WHERE id = ?
                         """, (rs, rowNum) -> taskRow(rs), id);
         return rows.isEmpty() ? null : rows.get(0);
@@ -430,7 +535,8 @@ public class JdbcControlPlaneStore implements ControlPlaneStore {
     public List<Map<String, Object>> listTasks(int size) {
         return jdbc.query("""
                         SELECT id, task_type, resource_id, status, progress, message, error,
-                               started_at, finished_at, created_at, updated_at
+                               started_at, finished_at, created_at, updated_at, attempts, max_attempts,
+                               lease_owner, lease_until, heartbeat_at
                         FROM background_tasks ORDER BY updated_at DESC LIMIT ?
                         """, (rs, rowNum) -> taskRow(rs), Math.min(Math.max(size, 1), 200));
     }
@@ -441,7 +547,8 @@ public class JdbcControlPlaneStore implements ControlPlaneStore {
                         UPDATE background_tasks
                         SET status = 'failed', progress = 100,
                             message = '任务未完成，已由服务恢复器收敛',
-                            error = ?, finished_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+                            error = ?, finished_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP,
+                            lease_owner = NULL, lease_until = NULL
                         WHERE status IN ('queued', 'running') AND updated_at < ?
                         """, errorMessage, timestamp(cutoff.toString()));
     }
@@ -459,6 +566,11 @@ public class JdbcControlPlaneStore implements ControlPlaneStore {
         row.put("finishedAt", instant(rs.getTimestamp("finished_at")));
         row.put("createdAt", instant(rs.getTimestamp("created_at")));
         row.put("updatedAt", instant(rs.getTimestamp("updated_at")));
+        row.put("attempts", rs.getInt("attempts"));
+        row.put("maxAttempts", rs.getInt("max_attempts"));
+        row.put("leaseOwner", rs.getString("lease_owner"));
+        row.put("leaseUntil", instant(rs.getTimestamp("lease_until")));
+        row.put("heartbeatAt", instant(rs.getTimestamp("heartbeat_at")));
         return row;
     }
 

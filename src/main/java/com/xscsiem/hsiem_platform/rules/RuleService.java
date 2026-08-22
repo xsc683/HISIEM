@@ -3,6 +3,7 @@ package com.xscsiem.hsiem_platform.rules;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import com.xscsiem.hsiem_platform.onboarding.NotFoundException;
+import com.xscsiem.hsiem_platform.control.ConfigRevisionJournal;
 import com.xscsiem.hsiem_platform.control.ControlPlaneStore;
 import com.xscsiem.hsiem_platform.search.ElasticsearchGateway;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -94,7 +95,7 @@ public class RuleService {
         Map<String, Object> m = get(id);
         boolean enabled = Boolean.TRUE.equals(m.get("enabled"));
         m.put("enabled", !enabled);
-        writeEnabledOnly(id, !enabled);
+        writeEnabledOnly(id, !enabled, actor);
         if (control != null) {
             control.audit(actor == null || actor.isBlank() ? "system" : actor,
                     "rule_toggle", id);
@@ -103,7 +104,7 @@ public class RuleService {
     }
 
     /** 规则是检测即代码,启停只应产生一行可 review 的 diff,不能重排/丢失 YAML 注释。 */
-    private void writeEnabledOnly(String id, boolean enabled) {
+    private void writeEnabledOnly(String id, boolean enabled, String actor) {
         Path path = new File(rulesDir, id + ".yaml").toPath();
         try {
             String original = Files.readString(path);
@@ -114,7 +115,8 @@ public class RuleService {
             }
             String replacement = matcher.group(1) + enabled + matcher.group(3) + matcher.group(4);
             String updated = matcher.replaceFirst(Matcher.quoteReplacement(replacement));
-            Files.writeString(path, updated);
+            ConfigRevisionJournal.atomicWrite(path, updated);
+            ConfigRevisionJournal.record(control, "rule", path, actor);
         } catch (IOException e) {
             throw new IllegalStateException("规则保存失败: " + id, e);
         }
@@ -123,7 +125,8 @@ public class RuleService {
     private void write(Map<String, Object> rule, String id) {
         File f = new File(rulesDir, id + ".yaml");
         try {
-            yamlMapper.writeValue(f, rule);
+            ConfigRevisionJournal.atomicWrite(f.toPath(), yamlMapper.writeValueAsString(rule));
+            ConfigRevisionJournal.record(control, "rule", f.toPath(), "system");
         } catch (IOException e) {
             throw new IllegalStateException("规则保存失败: " + id, e);
         }

@@ -56,6 +56,9 @@ class ControlPlaneStoreTest {
                 .filter(n -> username.equals(n.get("target"))).count());
 
         String task = store.createTask("test", username, "queued");
+        assertTrue(store.claimTask(task, "worker-a", Instant.now().plusSeconds(60)));
+        assertFalse(store.claimTask(task, "worker-b", Instant.now().plusSeconds(60)));
+        assertTrue(store.heartbeatTask(task, "worker-a", Instant.now().plusSeconds(60), 50, "working"));
         store.updateTask(task, "succeeded", 100, "done", null);
         assertTrue(store.listTasks(20).stream().anyMatch(t -> task.equals(t.get("id"))
                 && "succeeded".equals(t.get("status"))));
@@ -94,6 +97,13 @@ class ControlPlaneStoreTest {
         document.put("evidence", List.of(Map.of("type", "reference", "title", "ticket-1", "uri", "https://example.test/1")));
         store.createCase(document, List.of(alertId));
 
+        List<Map<String, Object>> outbox = store.claimCaseMirrorBatch("case-test", Instant.now().plusSeconds(60), 10);
+        assertTrue(outbox.stream().anyMatch(row -> caseId.equals(row.get("caseId"))
+                && "upsert".equals(row.get("operation"))));
+        Map<String, Object> mirror = outbox.stream()
+                .filter(row -> caseId.equals(row.get("caseId"))).findFirst().orElseThrow();
+        store.completeCaseMirror(((Number) mirror.get("id")).longValue(), "case-test", true, null, Instant.now());
+
         Map<String, Object> stored = store.findCase(caseId);
         assertNotNull(stored);
         assertEquals(List.of(alertId), stored.get("alert_ids"));
@@ -115,5 +125,8 @@ class ControlPlaneStoreTest {
 
         assertTrue(store.deleteCase(caseId));
         assertFalse(store.hasAlert(alertId));
+        List<Map<String, Object>> deleteOutbox = store.claimCaseMirrorBatch("case-test", Instant.now().plusSeconds(60), 10);
+        assertTrue(deleteOutbox.stream().anyMatch(row -> caseId.equals(row.get("caseId"))
+                && "delete".equals(row.get("operation"))));
     }
 }

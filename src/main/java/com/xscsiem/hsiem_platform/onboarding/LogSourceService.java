@@ -10,6 +10,7 @@ import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.UUID;
 
 /**
  * 数据源生命周期(Story 01):CRUD + 状态机(creating → active/failed → stopped)+ 生效。
@@ -23,6 +24,7 @@ public class LogSourceService {
         t.setDaemon(true);
         return t;
     });
+    private static final String TASK_OWNER = "source-worker-" + UUID.randomUUID();
     private final Set<String> lifecycleInFlight = ConcurrentHashMap.newKeySet();
     private final Object portLock = new Object();
 
@@ -136,13 +138,20 @@ public class LogSourceService {
         try {
             String taskId = control == null ? null
                     : control.createTask("log_source_activate", id, "等待数据源配置生效");
+            // 重试 failed 或 stopped 数据源时先回到中间态，避免前端把旧终态误判为本次任务结果。
+            s.status = "creating";
             s.taskId = taskId;
             s.lastError = null;
             store.save(s);
             ACTIVATOR.execute(() -> {
                 try {
-                    if (taskId != null) control.updateTask(taskId, "running", 10, "正在生成 Logstash 配置", null);
-                    if (taskId != null) control.updateTask(taskId, "running", 40, "正在校验并同步 Logstash 配置", null);
+                    if (taskId != null && !control.claimTask(taskId, TASK_OWNER, Instant.now().plusSeconds(600))) {
+                        return;
+                    }
+                    if (taskId != null) control.heartbeatTask(taskId, TASK_OWNER,
+                            Instant.now().plusSeconds(600), 10, "正在生成 Logstash 配置");
+                    if (taskId != null) control.heartbeatTask(taskId, TASK_OWNER,
+                            Instant.now().plusSeconds(600), 40, "正在校验并同步 Logstash 配置");
                     LogSource result = activateSync(id);
                     if (taskId != null) {
                         boolean success = "active".equals(result.status);
@@ -204,7 +213,11 @@ public class LogSourceService {
             store.save(s);
             ACTIVATOR.execute(() -> {
                 try {
-                    if (taskId != null) control.updateTask(taskId, "running", 20, "正在移除 Logstash pipeline", null);
+                    if (taskId != null && !control.claimTask(taskId, TASK_OWNER, Instant.now().plusSeconds(600))) {
+                        return;
+                    }
+                    if (taskId != null) control.heartbeatTask(taskId, TASK_OWNER,
+                            Instant.now().plusSeconds(600), 20, "正在移除 Logstash pipeline");
                     try {
                         coordinator.deactivate(s);
                         s.status = "stopped";

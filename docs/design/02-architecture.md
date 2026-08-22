@@ -46,7 +46,7 @@
 │   - consumer lag 监控脚本  [已实现,check-lag.sh]                       │
 ├──────────────────────────────────────────────────────────────────────┤
 │ 采集层  Logstash 8.14                                                  │
-│   - tcp :5000 → grok(+invalid user 分支)+ ECS + date  [P0]             │
+│   - tcp/file/syslog → grok(+invalid user 分支)+ ECS + date/raw 分流 [已实现]│
 │   - persistent queue + DLQ(ES 拒收兜底)  [已实现,b284fa3]              │
 │   - geoip 富化(at-ingest,6524fb6)  [已实现,原 P2]                      │
 │   - 双写 ES + Kafka(现有),ES 挂不阻塞 Kafka 的边界文档化               │
@@ -86,7 +86,7 @@ SSH 日志
 | --- | --- | --- |
 | 可靠队列 | `queue.type: persisted` + `queue.max_bytes` + 映射 `path.data` 持久卷 | P0 |
 | 拒收兜底 | `dead_letter_queue.enable: true`(仅 ES output 支持,400/404 拒收进 DLQ) | P1 |
-| 解析健壮性 | grok 补 `invalid user` 分支 + `tag_on_failure => ["_parsefailure"]` | P0 |
+| 解析健壮性 | grok 补 `invalid user` 分支；Grok/date 失败均 `tag_on_failure` 并 raw-only | 已实现 |
 | 性能 | 去掉 stdout rubydebug;显式 `LS_HEAP_SIZE`(Xms=Xmx);确认 workers/batch | P0 |
 | ECS 锁定 | `pipeline.ecs_compatibility: v8` 显式声明 | P1 |
 | 富化 | `geoip` filter → `source.geo.country_name/city/location` | P2 |

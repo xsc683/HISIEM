@@ -4,7 +4,7 @@
 > - 关联模块:08 产品设计 §5.6 系统设置(用户权限)+ §7 权限与安全;对齐 [security-rbac.md](../design/security-rbac.md) 的 ES 侧 RBAC
 > - 优先级:Phase 4.3 已交付(原 P2)
 > - 状态:✅ 已实现（登录/会话/用户角色 CRUD + 方法级权限 + 审计 + V6 首次登录改密）
-> - 依赖:Spring Boot + React 控制台;PostgreSQL/Flyway V1-V6;ES 侧最小权限脚本独立维护
+> - 依赖:Spring Boot + React 控制台;PostgreSQL/Flyway V1-V7;ES 侧最小权限脚本独立维护
 >
 > **填写完成度 checklist**
 > - [x] **1 用户故事**:「作为…我希望…以便…」

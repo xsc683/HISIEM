@@ -52,7 +52,7 @@ java -jar target/hsiem-platform-0.0.1-SNAPSHOT.jar
 # WSL: export SIEM_BOOTSTRAP_PASSWORD='<至少12位临时口令>'
 ```
 
-Flyway 首次启动会创建控制面表并导入旧版本 `infra/auth/users.yaml` 用户；当前迁移为 V6，新增首次登录改密标记；之后 PostgreSQL 是用户、角色和审计的唯一来源。
+Flyway 首次启动会创建控制面表并导入旧版本 `infra/auth/users.yaml` 用户；当前迁移为 V7，包含首次登录改密、案件镜像 outbox 与任务租约；之后 PostgreSQL 是用户、角色和审计的唯一来源。
 登录 Token 只在响应中返回一次，数据库保存 SHA-256 后的会话值；默认会话 8 小时，连续 5 次失败后锁定 15 分钟。控制面 API 需要 `Authorization: Bearer <token>`。首次登录或管理员新建用户必须先调用密码轮换接口，业务 API 在轮换完成前返回 428。
 
 Logstash 的 healthcheck 同时检查 5000/5001/5002/5004/5005/5006 和 9600,
@@ -113,7 +113,7 @@ bash /mnt/d/Project/SIEM/infra/validate-deployment.sh
 
 脚本以非 0 退出表示失败,检查 Compose 配置、7 个容器状态、健康检查、6 个 Logstash 输入端口、PostgreSQL/ES/Kibana/Flink API、Kafka topic 及检测作业 RUNNING。
 只启动数据面而未提交 Flink 作业时可用 `REQUIRE_DETECTION_JOB=0`。
-Spring Boot 启动并完成 Flyway 后，可追加 `REQUIRE_CONTROL_PLANE_SCHEMA=1` 检查 PostgreSQL 控制面 7 张表。
+Spring Boot 启动并完成 Flyway 后，可追加 `REQUIRE_CONTROL_PLANE_SCHEMA=1` 检查 PostgreSQL 控制面 8 张核心表（完整控制面含会话/登录保护表共 10 张）。
 
 应用接口自验证示例:
 
@@ -141,6 +141,15 @@ bash /mnt/d/Project/SIEM/infra/elasticsearch/backup-restore-rehearsal.sh
 ```
 
 案件处置可用 `PATCH /api/cases/{id}/metadata` 保存负责人和证据引用；数据源停用使用 `POST /api/log-sources/{id}/deactivate`，完成后可通过 `GET /api/tasks/{id}` 查看阶段进度。
+
+生产环境不能直接使用 Compose 的开发默认值。请先准备 ES HTTPS/凭据、Kafka SASL_SSL 和多节点/RF≥2，再执行：
+
+```bash
+REQUIRE_PRODUCTION_SECURITY=1 REQUIRE_CONTROL_PLANE_SCHEMA=1 \
+  bash /mnt/d/Project/SIEM/infra/validate-deployment.sh
+```
+
+详细的证书、凭据和 truststore 要求见 [`infra/SECURITY.md`](../infra/SECURITY.md)；密钥和证书不提交 Git。
 
 ## 10. 验证链路
 
@@ -180,10 +189,10 @@ Windows 侧用 **IDEA 自带的 Maven**(已验证:3.9.16 + Java 21,依赖已缓�
 MVN="D:/application/IntelliJ IDEA 2026.2.0.1/plugins/maven-plugin/lib/maven3/bin/mvn.cmd"
 
 # Flink 检测 job —— 注意用 -f flink/pom.xml(根 pom.xml 是 Spring Boot 控制面,不是它)
-"$MVN" -f flink/pom.xml clean package          # 含 32 个 Flink 测试
+"$MVN" -f flink/pom.xml clean package          # 含 33 个 Flink 测试
 "$MVN" -f flink/pom.xml clean package -DskipTests   # 部署时加快
 
-# Spring Boot 控制面(根 pom,含 74 个测试)
+# Spring Boot 控制面(根 pom,含 74 个测试；Flyway 当前 V7)
 "$MVN" -f pom.xml clean package
 ```
 

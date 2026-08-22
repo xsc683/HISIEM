@@ -72,11 +72,23 @@ public interface ControlPlaneStore {
 
     boolean deleteCase(String id);
 
+    /** 在案件事实源事务中写入 ES 镜像 outbox，避免删除/更新只成功一侧。 */
+    void enqueueCaseMirror(String caseId, String operation, Map<String, Object> document);
+
+    /** 由单个 dispatcher 持有租约领取待投递的镜像操作。 */
+    List<Map<String, Object>> claimCaseMirrorBatch(String owner, Instant leaseUntil, int size);
+
+    void completeCaseMirror(long id, String owner, boolean success, String error, Instant nextAttemptAt);
+
     boolean hasAlert(String alertId);
 
     String createTask(String type, String resourceId, String message);
 
     void updateTask(String id, String status, int progress, String message, String error);
+
+    boolean claimTask(String id, String owner, Instant leaseUntil);
+
+    boolean heartbeatTask(String id, String owner, Instant leaseUntil, int progress, String message);
 
     Map<String, Object> findTask(String id);
 

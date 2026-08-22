@@ -12,6 +12,7 @@ set -euo pipefail
 DEPLOY="${SIEM_DEPLOY_DIR:-$HOME/projects/mini-siem}"
 REQUIRE_DETECTION_JOB="${REQUIRE_DETECTION_JOB:-1}"
 REQUIRE_CONTROL_PLANE_SCHEMA="${REQUIRE_CONTROL_PLANE_SCHEMA:-0}"
+REQUIRE_PRODUCTION_SECURITY="${REQUIRE_PRODUCTION_SECURITY:-0}"
 ES="${SIEM_ES_URL:-http://localhost:9200}"
 KIBANA="${SIEM_KIBANA_URL:-http://localhost:5601}"
 FLINK="${SIEM_FLINK_URL:-http://localhost:8081}"
@@ -59,6 +60,27 @@ else
     fail "docker compose config 失败"
 fi
 
+if [ "$REQUIRE_PRODUCTION_SECURITY" = "1" ]; then
+    echo "==> 1.1) 生产安全门禁"
+    compose_rendered="$(cd "$DEPLOY" && docker compose config 2>/dev/null || true)"
+    if printf '%s' "$compose_rendered" | grep -q 'xpack.security.enabled: "true"'; then
+        echo "  [ok] Elasticsearch security enabled"
+    else
+        fail "生产模式要求 xpack.security.enabled=true"
+    fi
+    if printf '%s' "$compose_rendered" | grep -q 'SASL_SSL'; then
+        echo "  [ok] Kafka SASL_SSL listener"
+    else
+        fail "生产模式要求 Kafka SASL_SSL listener"
+    fi
+    replication="$(printf '%s' "$compose_rendered" | sed -n 's/.*KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: *\([0-9][0-9]*\).*/\1/p' | head -1)"
+    if [ "${replication:-0}" -ge 2 ] 2>/dev/null; then
+        echo "  [ok] Kafka replication factor >= 2"
+    else
+        fail "生产模式要求 Kafka replication factor >= 2"
+    fi
+fi
+
 echo "==> 2) 容器状态"
 for container in siem-postgres siem-elasticsearch siem-kafka siem-logstash siem-flink-jobmanager siem-flink-taskmanager siem-kibana; do
     check_running "$container"
@@ -80,20 +102,20 @@ else
 fi
 if [ "$REQUIRE_CONTROL_PLANE_SCHEMA" = "1" ]; then
     control_tables="$(docker exec siem-postgres psql -U siem -d siem -tAc \
-        "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('roles','users','audit_logs','cases','case_alerts','notifications','background_tasks')" \
+        "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('roles','users','audit_logs','cases','case_alerts','notifications','background_tasks','case_mirror_outbox')" \
         2>/dev/null | tr -d '[:space:]' || true)"
-    if [ "$control_tables" = "7" ]; then
-        echo "  [ok] PostgreSQL 控制面 7 张表已由 Flyway 创建"
+    if [ "$control_tables" = "8" ]; then
+        echo "  [ok] PostgreSQL 控制面 8 张表已由 Flyway 创建"
     else
-        fail "PostgreSQL 控制面表不完整(检测到 $control_tables/7),请先启动 Spring Boot 应用执行 Flyway"
+        fail "PostgreSQL 控制面表不完整(检测到 $control_tables/8),请先启动 Spring Boot 应用执行 Flyway"
     fi
     flyway_version="$(docker exec siem-postgres psql -U siem -d siem -tAc \
         "SELECT version FROM flyway_schema_history WHERE success = TRUE ORDER BY installed_rank DESC LIMIT 1" \
         2>/dev/null | tr -d '[:space:]' || true)"
-    if [ -n "$flyway_version" ] && [ "$flyway_version" -ge 6 ] 2>/dev/null; then
+    if [ -n "$flyway_version" ] && [ "$flyway_version" -ge 7 ] 2>/dev/null; then
         echo "  [ok] Flyway V${flyway_version} 控制面迁移已完成"
     else
-        fail "Flyway 当前版本为 ${flyway_version:-unknown},预期至少 V6(包含密码轮换字段)"
+        fail "Flyway 当前版本为 ${flyway_version:-unknown},预期至少 V7(密码轮换、outbox、任务租约)"
     fi
 fi
 if curl -fsS "$ES/_cluster/health?filter_path=status" | grep -qE 'green|yellow'; then

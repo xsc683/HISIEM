@@ -402,7 +402,8 @@ export default function App() {
           message.warning(`数据源 ${id} 状态轮询超时，请到运行态任务查看结果`)
           return
         }
-        window.setTimeout(poll, 2000)
+        const delay = Math.min(1000 * (2 ** Math.min(attempts - 1, 4)), 10000)
+        window.setTimeout(poll, delay)
       } catch (e) {
         setActivating((prev) => ({ ...prev, [id]: false }))
         message.error(e.message)
@@ -431,7 +432,9 @@ export default function App() {
 
   async function handleAlertVerdict(id, verdict) {
     await updateAlertVerdict(id, verdict).catch((e) => message.error(e.message))
-    if (detailAlert && detailAlert._id === id) setDetailAlert(await getAlert(id).catch(() => null))
+      if (detailAlert && detailAlert._id === id) {
+        setDetailAlert(await getAlert(id).catch((e) => { message.error(`告警详情刷新失败: ${e.message}`); return null }))
+      }
     reloadAlerts()
   }
 
@@ -479,7 +482,7 @@ export default function App() {
   }
 
   async function openCaseDetail(id) {
-    const c = await getCase(id).catch(() => null)
+      const c = await getCase(id).catch((e) => { message.error(`案件详情加载失败: ${e.message}`); return null })
     setDetailCase(c)
     if (c) {
       setCaseOwner(c['case.owner'] || '')
