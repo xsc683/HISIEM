@@ -9,6 +9,8 @@ public class AuthUser {
     public String id;
     public String username;
     public String passwordHash;
+    /** 首次登录或管理员重置后必须完成密码轮换。 */
+    public boolean passwordChangeRequired;
     /** admin / analyst / ops / audit(角色权限矩阵见 AuthService.ROLE_PERMS)。 */
     public String role;
     /** active / disabled。 */

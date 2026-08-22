@@ -44,22 +44,23 @@ public class AuthController {
     @PreAuthorize("isAuthenticated()")
     public Map<String, Object> me(@RequestHeader(value = "Authorization", required = false) String authHeader) {
         AuthUser u = auth.me(extractToken(authHeader));
-        return Map.of("username", u.username, "role", u.role, "status", u.status);
+        return Map.of("username", u.username, "role", u.role, "status", u.status,
+                "passwordChangeRequired", u.passwordChangeRequired);
     }
 
     // ---- 用户/角色/审计(admin-only,AuthInterceptor 拦截) ----
 
     @GetMapping("/users")
     @PreAuthorize("hasRole('ADMIN')")
-    public List<AuthUser> users() {
-        return auth.listUsers();
+    public List<AuthUserView> users() {
+        return auth.listUsers().stream().map(AuthUserView::from).toList();
     }
 
     @PostMapping("/users")
     @PreAuthorize("hasRole('ADMIN')")
     @ResponseStatus(HttpStatus.CREATED)
-    public AuthUser createUser(@RequestBody UserRequest req) {
-        return auth.createUser(req.username(), req.password(), req.role());
+    public AuthUserView createUser(@RequestBody UserRequest req) {
+        return AuthUserView.from(auth.createUser(req.username(), req.password(), req.role()));
     }
 
     @DeleteMapping("/users/{username}")
@@ -71,8 +72,17 @@ public class AuthController {
 
     @PutMapping("/users/{username}/role")
     @PreAuthorize("hasRole('ADMIN')")
-    public AuthUser updateRole(@PathVariable String username, @RequestBody RoleRequest req) {
-        return auth.updateRole(username, req.role());
+    public AuthUserView updateRole(@PathVariable String username, @RequestBody RoleRequest req) {
+        return AuthUserView.from(auth.updateRole(username, req.role()));
+    }
+
+    @PostMapping("/password")
+    @PreAuthorize("isAuthenticated()")
+    public Map<String, Object> changePassword(@RequestBody PasswordChangeRequest req,
+                                               @RequestHeader(value = "Authorization", required = false) String authHeader) {
+        AuthUser current = auth.me(extractToken(authHeader));
+        AuthUser updated = auth.changePassword(current.username, req.currentPassword(), req.newPassword());
+        return Map.of("username", updated.username, "passwordChangeRequired", updated.passwordChangeRequired);
     }
 
     @GetMapping("/roles")
@@ -98,5 +108,8 @@ public class AuthController {
     }
 
     public record RoleRequest(String role) {
+    }
+
+    public record PasswordChangeRequest(String currentPassword, String newPassword) {
     }
 }

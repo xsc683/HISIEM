@@ -6,6 +6,8 @@ import org.springframework.stereotype.Component;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -58,7 +60,11 @@ public class ProcessRulesDeployer implements RulesDeployer {
         run("docker", "exec", containerName, "flink", "cancel", "-s", savepointDir, runningJob);
         String sp = latestSavepoint();
         if (sp == null) {
-            throw new IllegalStateException("未找到 savepoint,取消 job 后无法恢复");
+            // cancel -s 已经停止旧 job；不能让检测面永久离线。无状态快照时以 earliest
+            // 重新提交，告警 _id 是确定性的，重放不会产生重复文档。
+            System.err.println("[ProcessRulesDeployer] 未找到 savepoint,以全新状态重新提交检测 job");
+            return submittedJobId(runOut("docker", "exec", containerName, "flink",
+                    "run", "-d", "/opt/flink/" + jarName));
         }
         return submittedJobId(runOut("docker", "exec", containerName, "flink",
                 "run", "-d", "-s", savepointDir + "/" + sp, "/opt/flink/" + jarName));
@@ -78,7 +84,10 @@ public class ProcessRulesDeployer implements RulesDeployer {
 
     private static String submittedJobId(String out) {
         Matcher m = SUBMITTED_JOB.matcher(out);
-        return m.find() ? m.group(1) : "unknown";
+        if (!m.find()) {
+            throw new IllegalStateException("Flink 提交命令未返回 JobID: " + out);
+        }
+        return m.group(1);
     }
 
     private void run(String... cmd) {
@@ -89,17 +98,29 @@ public class ProcessRulesDeployer implements RulesDeployer {
     private String runOut(String... cmd) {
         try {
             Process p = new ProcessBuilder(cmd).redirectErrorStream(true).start();
-            String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            // 必须并行消费 stdout；先 readAllBytes 再 waitFor 会在子进程输出较多时阻塞，
+            // 使超时参数形同虚设。
+            CompletableFuture<String> output = CompletableFuture.supplyAsync(() -> {
+                try {
+                    return new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+                } catch (IOException e) {
+                    throw new IllegalStateException("读取命令输出失败", e);
+                }
+            });
             if (!p.waitFor(TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
                 p.destroyForcibly();
+                output.cancel(true);
                 throw new IllegalStateException("命令超时: " + String.join(" ", cmd));
             }
+            String out = output.get(5, TimeUnit.SECONDS);
             if (p.exitValue() != 0) {
                 throw new IllegalStateException("命令失败: " + String.join(" ", cmd) + "\n" + out);
             }
             return out;
-        } catch (IOException | InterruptedException e) {
+        } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+            throw new IllegalStateException("命令执行异常: " + String.join(" ", cmd), e);
+        } catch (IOException | ExecutionException | java.util.concurrent.TimeoutException e) {
             throw new IllegalStateException("命令执行异常: " + String.join(" ", cmd), e);
         }
     }

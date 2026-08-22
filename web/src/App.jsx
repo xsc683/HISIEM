@@ -12,7 +12,7 @@ import {
   listDetectionRules, toggleRule, deployRules, ruleMitre,
   dataHealthSources, dataHealthTrend, dataHealthFailures,
   listCriticality, setCriticality, deleteCriticality, recalcCriticality,
-  login, logout, authMe, listUsers, createUser, deleteUser, updateUserRole, listRoles, auditLogs,
+  login, logout, authMe, changePassword, listUsers, createUser, deleteUser, updateUserRole, listRoles, auditLogs,
   listNotifications, readNotification, readAllNotifications, deleteNotification,
   listAlerts, getAlert, updateAlertStatus, updateAlertVerdict,
   batchAlertStatus, batchAlertVerdict, fpRate,
@@ -87,6 +87,12 @@ export default function App() {
   const [user, setUser] = useState(null)
   const [loginUser, setLoginUser] = useState('')
   const [loginPass, setLoginPass] = useState('')
+  const [passwordModalOpen, setPasswordModalOpen] = useState(false)
+  const [currentPassword, setCurrentPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [passwordSaving, setPasswordSaving] = useState(false)
+  const [loadErrors, setLoadErrors] = useState([])
   const [users, setUsers] = useState([])
   const [roles, setRoles] = useState([])
   const [audit, setAudit] = useState([])
@@ -134,50 +140,87 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    listAlerts(alertFilter).then(setAlerts).catch(() => {})
-    fpRate().then(setFpRates).catch(() => {})
-    listCases(caseFilter).then(setCases).catch(() => {})
-    listTemplates().then(setTemplates).catch(() => {})
-    listLogSources().then(setSources).catch(() => {})
-    listDetectionRules().then(setDetRules).catch(() => {})
-    ruleMitre().then(setMitre).catch(() => {})
-    dataHealthSources().then(setHealth).catch(() => {})
-    listCriticality().then(setCrit).catch(() => {})
     authMe().then(setUser).catch(() => setUser(null))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
-    if (user && activeKey === 'ops-health') {
-      healthScan().then(setOpsHealth).catch((e) => message.error(e.message))
-      listTasks(50).then(setTasks).catch(() => {})
+    if (!user || user.passwordChangeRequired) return
+    setLoadErrors([])
+    const failed = []
+    const report = (name) => (error) => {
+      failed.push(`${name}: ${error.message}`)
+      setLoadErrors([...failed])
     }
+    listAlerts(alertFilter).then(setAlerts).catch(report('告警'))
+    fpRate().then(setFpRates).catch(report('FP 率'))
+    listCases(caseFilter).then(setCases).catch(report('案件'))
+    listTemplates().then(setTemplates).catch(report('解析模板'))
+    listLogSources().then(setSources).catch(report('数据源'))
+    listDetectionRules().then(setDetRules).catch(report('检测规则'))
+    ruleMitre().then(setMitre).catch(report('MITRE'))
+    dataHealthSources().then(setHealth).catch(report('数据健康'))
+    listCriticality().then(setCrit).catch(report('资产关键度'))
+  }, [user])
+
+  useEffect(() => {
+    if (user?.passwordChangeRequired) setPasswordModalOpen(true)
+  }, [user?.passwordChangeRequired])
+
+  useEffect(() => {
+    if (!user || user.passwordChangeRequired || activeKey !== 'ops-health') return undefined
+    let disposed = false
+    const load = () => {
+      healthScan().then((value) => { if (!disposed) setOpsHealth(value) })
+        .catch((e) => { if (!disposed) message.error(e.message) })
+      listTasks(50).then((value) => { if (!disposed) setTasks(value) })
+        .catch((e) => { if (!disposed) message.error(`任务列表加载失败: ${e.message}`) })
+    }
+    load()
+    const timer = window.setInterval(load, 10000)
+    return () => { disposed = true; window.clearInterval(timer) }
   }, [user, activeKey])
 
   useEffect(() => {
-    if (user && user.role === 'admin') {
-      listUsers().then(setUsers).catch(() => {})
-      listRoles().then(setRoles).catch(() => {})
-      auditLogs().then(setAudit).catch(() => {})
+    if (user && !user.passwordChangeRequired && user.role === 'admin') {
+      listUsers().then(setUsers).catch((e) => message.error(`用户列表加载失败: ${e.message}`))
+      listRoles().then(setRoles).catch((e) => message.error(`角色列表加载失败: ${e.message}`))
+      auditLogs().then(setAudit).catch((e) => message.error(`审计日志加载失败: ${e.message}`))
     } else {
       setUsers([]); setRoles([]); setAudit([])
     }
   }, [user])
 
   useEffect(() => {
-    const loadNotifs = () => listNotifications().then(setNotifs).catch(() => {})
+    if (!user || user.passwordChangeRequired) {
+      setNotifs([])
+      return undefined
+    }
+    const loadNotifs = () => listNotifications().then(setNotifs).catch((e) => message.error(`通知加载失败: ${e.message}`))
     loadNotifs()
     const timer = setInterval(loadNotifs, 20000)
     return () => clearInterval(timer)
-  }, [])
+  }, [user])
 
   async function handleLogin() {
     try {
       const r = await login(loginUser.trim(), loginPass)
-      setUser({ username: r.username, role: r.role })
+      setUser({ username: r.username, role: r.role, passwordChangeRequired: r.passwordChangeRequired })
       setLoginPass('')
-      message.success('登录成功')
+      message.success(r.passwordChangeRequired ? '登录成功，请先修改初始密码' : '登录成功')
     } catch (e) { message.error(e.message) }
+  }
+
+  async function handleChangePassword() {
+    if (newPassword.length < 12) { message.warning('新密码至少 12 位'); return }
+    if (newPassword !== confirmPassword) { message.warning('两次新密码不一致'); return }
+    setPasswordSaving(true)
+    try {
+      await changePassword(currentPassword, newPassword)
+      setUser((prev) => ({ ...prev, passwordChangeRequired: false }))
+      setPasswordModalOpen(false)
+      setCurrentPassword(''); setNewPassword(''); setConfirmPassword('')
+      message.success('密码已更新')
+    } catch (e) { message.error(e.message) } finally { setPasswordSaving(false) }
   }
 
   async function handleLogout() {
@@ -197,6 +240,7 @@ export default function App() {
   }
 
   async function handleDelUser(username) {
+    if (!window.confirm(`确定删除用户 ${username}？`)) return
     try {
       await deleteUser(username)
       setUsers(await listUsers())
@@ -222,6 +266,7 @@ export default function App() {
   }
 
   async function handleCritDelete(type, key) {
+    if (!window.confirm(`确定删除 ${type}/${key} 的关键度配置？`)) return
     try {
       await deleteCriticality(type, key)
       setCrit(await listCriticality())
@@ -332,6 +377,7 @@ export default function App() {
   }
 
   async function handleDeleteSource(id) {
+    if (!window.confirm(`确定删除数据源 ${id}？仅停用或失败的数据源可以删除。`)) return
     try {
       await deleteLogSource(id)
       setSources((prev) => prev.filter((s) => s.id !== id))
@@ -340,20 +386,29 @@ export default function App() {
   }
 
   function pollSource(id, terminalStatuses = ['active', 'failed']) {
-    const timer = setInterval(async () => {
+    let attempts = 0
+    const poll = async () => {
+      attempts += 1
       try {
         const s = await getLogSource(id)
         setSources((prev) => prev.map((x) => (x.id === id ? s : x)))
         if (terminalStatuses.includes(s.status)) {
-          clearInterval(timer)
           setActivating((prev) => ({ ...prev, [id]: false }))
           message.success(s.status === 'active' ? `数据源 ${id} 已生效` : s.status === 'stopped' ? `数据源 ${id} 已停用` : `数据源 ${id} 生效失败`)
+          return
         }
-      } catch {
-        clearInterval(timer)
+        if (attempts >= 60) {
+          setActivating((prev) => ({ ...prev, [id]: false }))
+          message.warning(`数据源 ${id} 状态轮询超时，请到运行态任务查看结果`)
+          return
+        }
+        window.setTimeout(poll, 2000)
+      } catch (e) {
         setActivating((prev) => ({ ...prev, [id]: false }))
+        message.error(e.message)
       }
-    }, 2000)
+    }
+    poll()
   }
 
   function toggleSel(id) {
@@ -402,11 +457,13 @@ export default function App() {
   }
 
   async function reloadAlerts() {
-    setAlerts(await listAlerts(alertFilter).catch(() => []))
+    try { setAlerts(await listAlerts(alertFilter)) }
+    catch (e) { message.error(`告警刷新失败: ${e.message}`) }
   }
 
   async function reloadCases() {
-    setCases(await listCases(caseFilter).catch(() => []))
+    try { setCases(await listCases(caseFilter)) }
+    catch (e) { message.error(`案件刷新失败: ${e.message}`) }
   }
 
   async function handleCreateCase() {
@@ -427,7 +484,7 @@ export default function App() {
     if (c) {
       setCaseOwner(c['case.owner'] || '')
       setCaseCollaborators((c['case.collaborators'] || []).join(', '))
-      setCaseTimeline_(await caseTimeline(id, 30).catch(() => []))
+      setCaseTimeline_(await caseTimeline(id, 30).catch((e) => { message.error(`时间线加载失败: ${e.message}`); return [] }))
     }
   }
 
@@ -488,6 +545,12 @@ export default function App() {
   }
 
   async function handleDeleteCase(id) {
+    const current = cases.find((c) => c['case.id'] === id)
+    if (current?.alert_ids?.length) {
+      message.warning('案件仍包含告警，请先在详情中移出全部告警')
+      return
+    }
+    if (!window.confirm(`确定删除案件 ${id}？此操作不可撤销。`)) return
     try {
       await deleteCase(id)
       setDetailCase(null)
@@ -507,18 +570,25 @@ export default function App() {
   }
 
   async function handleReadNotif(id) {
-    await readNotification(id).catch(() => {})
-    setNotifs(await listNotifications().catch(() => []))
+    try {
+      await readNotification(id)
+      setNotifs(await listNotifications())
+    } catch (e) { message.error(`通知更新失败: ${e.message}`) }
   }
 
   async function handleReadAllNotifs() {
-    await readAllNotifications().catch(() => {})
-    setNotifs(await listNotifications().catch(() => []))
+    try {
+      await readAllNotifications()
+      setNotifs(await listNotifications())
+    } catch (e) { message.error(`通知更新失败: ${e.message}`) }
   }
 
   async function handleDelNotif(id) {
-    await deleteNotification(id).catch(() => {})
-    setNotifs(await listNotifications().catch(() => []))
+    if (!window.confirm('确定删除这条通知？')) return
+    try {
+      await deleteNotification(id)
+      setNotifs(await listNotifications())
+    } catch (e) { message.error(e.message) }
   }
 
   // ================= 登录页 =================
@@ -540,11 +610,14 @@ export default function App() {
           </div>
           <Space direction="vertical" size="middle" style={{ width: '100%' }}>
             <Input size="large" prefix={<LoginOutlined />} value={loginUser}
-              onChange={(e) => setLoginUser(e.target.value)} placeholder="用户名(默认 admin)" />
+              onChange={(e) => setLoginUser(e.target.value)} placeholder="用户名" />
             <Input.Password size="large" value={loginPass}
               onChange={(e) => setLoginPass(e.target.value)}
               onPressEnter={handleLogin}
-              placeholder="密码(admin123)" />
+              placeholder="密码" />
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              首次登录或管理员重置后，需要设置至少 12 位新密码。
+            </Typography.Text>
             <Button type="primary" size="large" block onClick={handleLogin}>登 录</Button>
           </Space>
         </Card>
@@ -597,12 +670,24 @@ export default function App() {
               <Badge count={unreadCount} size="small"><Button icon={<BellOutlined />} onClick={() => navigate('notify')}>通知</Button></Badge>
               <Space>
                 <AvatarUser username={user.username} role={user.role} />
+                <Button icon={<SafetyCertificateOutlined />} onClick={() => setPasswordModalOpen(true)}>修改密码</Button>
                 <Button icon={<LogoutOutlined />} onClick={handleLogout}>退出</Button>
               </Space>
             </Space>
           </Header>
 
           <Content style={{ padding: 20, background: '#f5f7fa' }}>
+            {loadErrors.length > 0 && (
+              <Alert
+                type="warning"
+                showIcon
+                closable
+                onClose={() => setLoadErrors([])}
+                message="部分数据加载失败"
+                description={loadErrors.join('；')}
+                style={{ marginBottom: 16 }}
+              />
+            )}
             {/* ===== 接入向导(四步合一) ===== */}
             {activeKey === 'wizard' && (
               <WizardView
@@ -668,7 +753,7 @@ export default function App() {
               <Card>
                 <Space direction="vertical" size="middle" style={{ width: '100%' }}>
                   <Space wrap>
-                    <Select value={alertFilter} style={{ width: 160 }} onChange={(v) => { setAlertFilter(v); listAlerts(v).then(setAlerts) }}
+                    <Select value={alertFilter} style={{ width: 160 }} onChange={(v) => { setAlertFilter(v); listAlerts(v).then(setAlerts).catch((e) => message.error(`告警筛选失败: ${e.message}`)) }}
                       options={['open', 'acknowledged', 'investigating', 'resolved', 'closed'].map((s) => ({ value: s, label: s }))} />
                     <Button type="primary" onClick={handleCreateCase}>选中直接建案</Button>
                     <Button onClick={() => handleBatchStatus('acknowledged')}>批量 ack</Button>
@@ -760,6 +845,7 @@ export default function App() {
                         <Space>
                           <strong>{s.sourceName || '(未命名)'}</strong>
                           <code style={{ fontSize: 12, color: '#999' }}>{s.sourceId}</code>
+                          {s.status && <Tag color={s.status === 'active' ? (s.anomalous ? 'orange' : 'green') : s.status === 'failed' ? 'red' : 'default'}>{s.status}</Tag>}
                           {s.anomalous && <Tag color="red">⚠ 解析异常({s.reason})</Tag>}
                         </Space>
                       }
@@ -808,7 +894,7 @@ export default function App() {
             {activeKey === 'ops-health' && (
               <Card title="运行态健康扫描" extra={<Button onClick={() => {
                 healthScan().then(setOpsHealth).catch((e) => message.error(e.message))
-                listTasks(50).then(setTasks).catch(() => {})
+                listTasks(50).then(setTasks).catch((e) => message.error(`任务刷新失败: ${e.message}`))
               }}>重新扫描</Button>}>
                 {!opsHealth && <Empty description="点击重新扫描检查 PostgreSQL、ES、Kafka、Logstash、Flink 和 Kibana" />}
                 {opsHealth && <>
@@ -819,7 +905,9 @@ export default function App() {
                     columns={[{ title: '组件', dataIndex: 'name' },
                       { title: '状态', dataIndex: 'status', render: (v) => <Tag color={v === 'UP' ? 'green' : 'red'}>{v}</Tag> },
                       { title: '延迟', dataIndex: 'latencyMs', render: (v) => `${v} ms` },
-                      { title: '错误', dataIndex: 'error' }]} />
+                      { title: '探针', dataIndex: 'probe', render: (v, r) => r.degraded ? <Tag color="orange">降级 TCP</Tag> : (v || 'HTTP') },
+                      { title: '错误', dataIndex: 'error' },
+                      { title: '提示', dataIndex: 'warning', render: (v) => v && <Typography.Text type="warning">{v}</Typography.Text> }]} />
                   <Divider>后台任务进度</Divider>
                   <Table rowKey="id" size="small" pagination={{ pageSize: 8 }} dataSource={tasks}
                     columns={[{ title: '任务', dataIndex: 'type' }, { title: '资源', dataIndex: 'resourceId' },
@@ -903,7 +991,7 @@ export default function App() {
                         <Space direction="vertical" size="middle" style={{ width: '100%' }}>
                           <Space wrap>
                             <Input style={{ width: 140 }} value={newUname} onChange={(e) => setNewUname(e.target.value)} placeholder="新用户名" />
-                            <Input.Password style={{ width: 140 }} value={newPass} onChange={(e) => setNewPass(e.target.value)} placeholder="密码(≥6位)" />
+                            <Input.Password style={{ width: 180 }} value={newPass} onChange={(e) => setNewPass(e.target.value)} placeholder="临时密码(≥12位)" />
                             <Select value={newRole} style={{ width: 110 }} onChange={setNewRole}
                               options={['analyst', 'ops', 'audit', 'admin'].map((r) => ({ value: r, label: r }))} />
                             <Button type="primary" onClick={handleCreateUser}>新增用户</Button>
@@ -950,6 +1038,27 @@ export default function App() {
               </Card>
             )}
           </Content>
+          <Modal
+            title="修改密码"
+            open={passwordModalOpen}
+            onOk={handleChangePassword}
+            confirmLoading={passwordSaving}
+            onCancel={() => !user.passwordChangeRequired && setPasswordModalOpen(false)}
+            closable={!user.passwordChangeRequired}
+            maskClosable={!user.passwordChangeRequired}
+            cancelButtonProps={{ disabled: user.passwordChangeRequired }}
+            okText="保存新密码"
+            cancelText="稍后"
+          >
+            {user.passwordChangeRequired && (
+              <Alert type="warning" showIcon message="请先完成初始密码轮换" style={{ marginBottom: 12 }} />
+            )}
+            <Space direction="vertical" style={{ width: '100%' }}>
+              <Input.Password value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} placeholder="当前密码" />
+              <Input.Password value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="新密码（至少 12 位）" />
+              <Input.Password value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} placeholder="再次输入新密码" />
+            </Space>
+          </Modal>
         </Layout>
       </Layout>
     </ConfigProvider>
@@ -1110,7 +1219,7 @@ function CasesView({ cases, setCases, caseFilter, setCaseFilter, selAlerts, setS
       <Card style={{ marginBottom: 16 }}>
         <Space wrap>
           <Select style={{ width: 160 }} value={caseFilter || undefined} placeholder="全部状态" allowClear
-            onChange={(v) => { setCaseFilter(v || ''); listCases(v || '').then(setCases).catch(() => {}) }}
+            onChange={(v) => { setCaseFilter(v || ''); listCases(v || '').then(setCases).catch((e) => message.error(`案件筛选失败: ${e.message}`)) }}
             options={['open', 'investigating', 'resolved'].map((s) => ({ value: s, label: s }))} />
           <Button type="primary" onClick={handleAggregate}>触发一轮自动聚合</Button>
           <Input type="number" min={1} max={1440} style={{ width: 110 }} value={caseWindow}
@@ -1149,7 +1258,9 @@ function CasesView({ cases, setCases, caseFilter, setCaseFilter, selAlerts, setS
               <Space>
                 <Button size="small" onClick={() => openCaseDetail(c['case.id'])}>详情</Button>
                 {c['case.status'] === 'open' && <Button size="small" onClick={() => handleInvestigateCase(c['case.id'])}>接手</Button>}
-                <Button size="small" danger onClick={() => handleDeleteCase(c['case.id'])}>删</Button>
+                <Button size="small" danger disabled={(c['alert_ids'] || []).length > 0}
+                  title={(c['alert_ids'] || []).length > 0 ? '请先移出全部告警' : '删除案件'}
+                  onClick={() => handleDeleteCase(c['case.id'])}>删</Button>
               </Space>
             </div>
           ))}

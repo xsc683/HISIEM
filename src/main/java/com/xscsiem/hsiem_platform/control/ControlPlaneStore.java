@@ -81,4 +81,7 @@ public interface ControlPlaneStore {
     Map<String, Object> findTask(String id);
 
     List<Map<String, Object>> listTasks(int size);
+
+    /** 将进程重启或心跳超时后遗留的任务收敛为 failed。 */
+    int recoverStaleTasks(Instant cutoff, String errorMessage);
 }

@@ -12,6 +12,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.scheduling.annotation.Scheduled;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -229,7 +230,12 @@ public class CaseService {
         }
         if (!failed.isEmpty()) {
             for (String id : marked) {
-                clearAlertCase(id);
+                try {
+                    clearAlertCase(id);
+                } catch (RuntimeException rollback) {
+                    // 保留原始失败，同时把无法清理的 marker 暴露给调用方，避免静默孤儿关系。
+                    failed.add(id + "(rollback:" + rollback.getMessage() + ")");
+                }
             }
             throw new IllegalStateException("告警标记案件失败,已回滚成功标记: " + failed);
         }
@@ -292,10 +298,14 @@ public class CaseService {
     /** 清除告警的 case_id(移出案件时;告警回到 open 待聚合池)。 */
     private void clearAlertCase(String alertId) {
         try {
-            esCallCode("POST", "/siem-alerts/_update/" + alertId + "?refresh=false",
+            int code = esCallCode("POST", "/siem-alerts/_update/" + alertId + "?refresh=false",
                     "{\"doc\":{\"alert.case_id\":null}}");
+            if (code / 100 != 2) {
+                throw new IllegalStateException("ES 返回 " + code);
+            }
         } catch (Exception e) {
-            System.out.println("[CaseService] 清除告警案件标记失败 " + alertId + ": " + e.getMessage());
+            LOG.warn("清除告警案件标记失败 {}", alertId, e);
+            throw new IllegalStateException("清除告警案件标记失败: " + alertId, e);
         }
     }
 
@@ -395,13 +405,44 @@ public class CaseService {
 
     /** 删除案件(移出全部告警后可删空案)。 */
     public void delete(String caseId) {
-        detail(caseId);
-        int code = esCallCode("DELETE", "/siem-cases/_doc/" + caseId, null);
-        if (code / 100 != 2) {
-            throw new IllegalStateException("案件删除失败 " + code);
+        Map<String, Object> current = detail(caseId);
+        List<String> alertIds = strList(current.get("alert_ids"));
+        if (!alertIds.isEmpty()) {
+            throw new IllegalArgumentException("案件仍包含告警，请先移出全部告警后再删除");
         }
         if (control != null) {
-            control.deleteCase(caseId);
+            // PostgreSQL 是控制面事实源；ES 只保留兼容镜像，避免 ES 删除成功后 PG 冲突造成反向不一致。
+            if (!control.deleteCase(caseId)) {
+                throw new NotFoundException("案件不存在: " + caseId);
+            }
+        }
+        int code = esCallCode("DELETE", "/siem-cases/_doc/" + caseId, null);
+        if (code / 100 != 2 && code != 404) {
+            LOG.warn("案件 {} 已从控制面删除，但 ES 兼容镜像清理失败，状态码 {}", caseId, code);
+        }
+    }
+
+    /**
+     * PostgreSQL 是案件事实源；ES 只作为检索镜像。进程或网络故障可能让一次镜像更新失败，
+     * 定时全量按控制面重放可自动收敛这类短暂不一致，而不把用户请求卡在长事务里。
+     */
+    @Scheduled(initialDelayString = "${app.cases.mirror-reconcile-initial-delay-ms:120000}",
+            fixedDelayString = "${app.cases.mirror-reconcile-interval-ms:300000}")
+    public void reconcileMirror() {
+        if (control == null) return;
+        try {
+            for (Map<String, Object> row : control.listCases(null, null, 200)) {
+                String id = str(row.get("case.id"));
+                if (id == null || id.isBlank()) continue;
+                Map<String, Object> mirror = new LinkedHashMap<>(row);
+                mirror.remove("_id");
+                mirror.remove("_control_version");
+                esCall("PUT", "/siem-cases/_doc/" + id + "?refresh=false",
+                        MAPPER.writeValueAsString(mirror));
+            }
+        } catch (Exception e) {
+            // ES 尚未启动时不影响控制面和主应用；下一周期继续重试。
+            LOG.warn("案件 ES 镜像收敛失败: {}", e.getMessage());
         }
     }
 

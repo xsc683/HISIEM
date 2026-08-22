@@ -1,6 +1,7 @@
 package com.xscsiem.hsiem_platform.auth;
 
 import com.xscsiem.hsiem_platform.onboarding.NotFoundException;
+import jakarta.annotation.PostConstruct;
 import com.xscsiem.hsiem_platform.control.ControlPlaneStore;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
@@ -29,7 +30,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * - 登录 → 内存会话 token;密码 BCrypt 哈希,存 infra/auth/users.yaml(文件 + Git)。
  * - 角色矩阵(admin/analyst/ops/audit)见 ROLE_PERMS;敏感操作(设置/部署/用户管理)需 admin。
  * - 审计:登录/用户/角色变更写审计日志(who/when/what)。
- * 首次启动无用户时引导默认 admin(admin123,文档提示改密)。
+ * 首次启动无用户时创建需要轮换密码的 bootstrap admin；生产环境应通过管理 API 完成密码轮换。
  */
 @Service
 public class AuthService {
@@ -54,6 +55,9 @@ public class AuthService {
     private Duration loginLockout = Duration.ofMinutes(15);
     @Value("${app.auth.max-login-failures:5}")
     private int maxLoginFailures = 5;
+    /** 生产首启必须显式注入；轻量单测构造器使用隔离 fixture 口令。 */
+    @Value("${app.auth.bootstrap-password:}")
+    private String bootstrapPassword;
     private MeterRegistry metrics;
 
     /** 生产构造器:用户、角色、审计均落 PostgreSQL。 */
@@ -61,6 +65,10 @@ public class AuthService {
     public AuthService(UserStore store, ControlPlaneStore control) {
         this.store = store;
         this.control = control;
+    }
+
+    @PostConstruct
+    void initialize() {
         bootstrap();
     }
 
@@ -71,23 +79,31 @@ public class AuthService {
 
     /** 轻量构造器仅供不启动 Spring/数据库的单元测试使用。 */
     public AuthService(UserStore store) {
-        this(store, null);
+        this.store = store;
+        this.control = null;
+        this.bootstrapPassword = "Admin-bootstrap-1";
+        bootstrap();
     }
 
     private void bootstrap() {
         if (control != null && control.listUsers().isEmpty()) {
             List<AuthUser> legacy = store.list();
             if (!legacy.isEmpty()) {
+                legacy.forEach(user -> user.passwordChangeRequired = true);
                 legacy.forEach(control::insertUser);
                 audit("migration_users", "users.yaml");
                 return;
             }
         }
         if (listUsersInternal().isEmpty()) {
+            if (bootstrapPassword == null || bootstrapPassword.isBlank()) {
+                throw new IllegalStateException("未配置首启管理员口令，请设置 SIEM_BOOTSTRAP_PASSWORD");
+            }
             AuthUser admin = new AuthUser();
             admin.id = "admin";
             admin.username = "admin";
-            admin.passwordHash = encoder.encode("admin123");
+            admin.passwordHash = encoder.encode(bootstrapPassword);
+            admin.passwordChangeRequired = true;
             admin.role = "admin";
             admin.status = "active";
             admin.createdAt = Instant.now().toString();
@@ -134,7 +150,8 @@ public class AuthService {
         audit("login", loginName);
         counter("hsiem.auth.login.success");
         return Map.of("token", token, "username", u.username, "role", u.role,
-                "expiresAt", expiresAt.toString());
+                "expiresAt", expiresAt.toString(),
+                "passwordChangeRequired", u.passwordChangeRequired);
     }
 
     public void logout(String token) {
@@ -182,6 +199,23 @@ public class AuthService {
         return listUsersInternal();
     }
 
+    /** 当前用户修改自己的密码；成功后清除首次登录轮换标记。 */
+    public AuthUser changePassword(String username, String currentPassword, String newPassword) {
+        AuthUser user = findOrNull(username);
+        if (user == null || currentPassword == null || !encoder.matches(currentPassword, user.passwordHash)) {
+            throw new UnauthorizedException("当前密码错误");
+        }
+        validatePassword(newPassword);
+        if (encoder.matches(newPassword, user.passwordHash)) {
+            throw new IllegalArgumentException("新密码不能与当前密码相同");
+        }
+        user.passwordHash = encoder.encode(newPassword);
+        user.passwordChangeRequired = false;
+        persistUser(user);
+        audit("change_password", username);
+        return user;
+    }
+
     public AuthUser createUser(String username, String password, String role) {
         if (username == null || username.isBlank()) {
             throw new IllegalArgumentException("用户名不能为空");
@@ -189,9 +223,7 @@ public class AuthService {
         if (!ROLE_PERMS.containsKey(role)) {
             throw new IllegalArgumentException("角色非法(admin/analyst/ops/audit): " + role);
         }
-        if (password == null || password.length() < 6) {
-            throw new IllegalArgumentException("密码至少 6 位");
-        }
+        validatePassword(password);
         if (findOrNull(username) != null) {
             throw new IllegalArgumentException("用户已存在: " + username);
         }
@@ -199,6 +231,7 @@ public class AuthService {
         u.id = username;
         u.username = username;
         u.passwordHash = encoder.encode(password);
+        u.passwordChangeRequired = true;
         u.role = role;
         u.status = "active";
         u.createdAt = Instant.now().toString();
@@ -211,6 +244,28 @@ public class AuthService {
         }
         audit("create_user", username + "(" + role + ")");
         return u;
+    }
+
+    private static void validatePassword(String password) {
+        if (password == null || password.length() < 12) {
+            throw new IllegalArgumentException("密码至少 12 位");
+        }
+    }
+
+    private void persistUser(AuthUser user) {
+        if (control == null) {
+            List<AuthUser> users = store.list();
+            users.stream().filter(x -> x.username.equals(user.username)).findFirst()
+                    .ifPresent(existing -> {
+                        existing.passwordHash = user.passwordHash;
+                        existing.passwordChangeRequired = user.passwordChangeRequired;
+                        existing.role = user.role;
+                        existing.status = user.status;
+                    });
+            store.save(users);
+        } else {
+            control.updateUser(user);
+        }
     }
 
     public void deleteUser(String username) {

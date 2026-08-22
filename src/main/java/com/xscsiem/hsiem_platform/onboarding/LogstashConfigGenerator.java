@@ -126,7 +126,7 @@ public class LogstashConfigGenerator {
             case "syslog" -> "syslog {\n    port => " + s.port + "\n";
             case "file" -> "file {\n    path => [\"" + escape(s.path) + "\"]\n"
                     + "    start_position => \"beginning\"\n"
-                    + "    sincedb_path => \"/dev/null\"\n";
+                    + "    sincedb_path => \"/usr/share/logstash/data/sincedb-" + escape(s.id) + "\"\n";
             default -> "tcp {\n    port => " + s.port + "\n";
         };
         return input + "    add_field => { \"log.source_id\" => \"" + escape(s.sourceId) + "\" "

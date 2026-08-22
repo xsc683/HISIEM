@@ -47,11 +47,13 @@ Spring Boot 应用启动时默认读取 PostgreSQL:
 
 ```bash
 java -jar target/hsiem-platform-0.0.1-SNAPSHOT.jar
-# 可用 SIEM_DB_URL / SIEM_DB_USERNAME / SIEM_DB_PASSWORD 覆盖连接
+# 首次启动且 users 表为空时必须提供一次性临时管理员口令；另可用 SIEM_DB_URL / SIEM_DB_USERNAME / SIEM_DB_PASSWORD 覆盖连接
+# PowerShell: $env:SIEM_BOOTSTRAP_PASSWORD = '<至少12位临时口令>'
+# WSL: export SIEM_BOOTSTRAP_PASSWORD='<至少12位临时口令>'
 ```
 
-Flyway 首次启动会创建控制面表并导入旧版本 `infra/auth/users.yaml` 用户；之后 PostgreSQL 是用户、角色和审计的唯一来源。
-登录 Token 只在响应中返回一次，数据库保存 SHA-256 后的会话值；默认会话 8 小时，连续 5 次失败后锁定 15 分钟。控制面 API 需要 `Authorization: Bearer <token>`。
+Flyway 首次启动会创建控制面表并导入旧版本 `infra/auth/users.yaml` 用户；当前迁移为 V6，新增首次登录改密标记；之后 PostgreSQL 是用户、角色和审计的唯一来源。
+登录 Token 只在响应中返回一次，数据库保存 SHA-256 后的会话值；默认会话 8 小时，连续 5 次失败后锁定 15 分钟。控制面 API 需要 `Authorization: Bearer <token>`。首次登录或管理员新建用户必须先调用密码轮换接口，业务 API 在轮换完成前返回 428。
 
 Logstash 的 healthcheck 同时检查 5000/5001/5002/5004/5005/5006 和 9600,
 避免出现“容器 healthy 但 pipeline 尚未监听”的假就绪。
@@ -116,9 +118,14 @@ Spring Boot 启动并完成 Flyway 后，可追加 `REQUIRE_CONTROL_PLANE_SCHEMA
 应用接口自验证示例:
 
 ```bash
+BOOTSTRAP_PASSWORD='<首次启动时设置的临时口令>'
 TOKEN=$(curl -s -X POST http://localhost:8080/api/auth/login \
   -H 'Content-Type: application/json' \
-  -d '{"username":"admin","password":"admin123"}' | jq -r .token)
+  -d "{\"username\":\"admin\",\"password\":\"$BOOTSTRAP_PASSWORD\"}" | jq -r .token)
+# 若登录响应 passwordChangeRequired=true，先用 TOKEN 调整为至少 12 位的新口令
+curl -s -X POST http://localhost:8080/api/auth/password \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"currentPassword":"<临时口令>","newPassword":"<至少12位的新口令>"}'
 curl -s http://localhost:8080/api/auth/me -H "Authorization: Bearer $TOKEN"
 curl -s http://localhost:8080/actuator/health
 curl -s http://localhost:8080/api/tasks -H "Authorization: Bearer $TOKEN"
@@ -127,7 +134,7 @@ curl -s http://localhost:8080/api/ops/health-scan -H "Authorization: Bearer $TOK
 
 `/actuator/health` 公开用于存活探针；`/actuator/metrics`、`/actuator/prometheus` 需要 admin 权限。
 
-运行态扫描会检查 PostgreSQL、Elasticsearch、Kafka、Logstash、Flink 和 Kibana；Logstash 按 9600 TCP 监听判定，避免 monitoring API reset 被误报。备份恢复演练只操作临时索引：
+运行态扫描会检查 PostgreSQL、Elasticsearch、Kafka、Logstash、Flink 和 Kibana；Flink/Kibana 校验响应语义，Logstash 优先检查 pipeline API，API 不可用时才返回明确标记为 degraded 的 TCP 结果。备份恢复演练只操作临时索引：
 
 ```bash
 bash /mnt/d/Project/SIEM/infra/elasticsearch/backup-restore-rehearsal.sh
@@ -176,7 +183,7 @@ MVN="D:/application/IntelliJ IDEA 2026.2.0.1/plugins/maven-plugin/lib/maven3/bin
 "$MVN" -f flink/pom.xml clean package          # 含 32 个 Flink 测试
 "$MVN" -f flink/pom.xml clean package -DskipTests   # 部署时加快
 
-# Spring Boot 控制面(根 pom,含 71 个测试)
+# Spring Boot 控制面(根 pom,含 74 个测试)
 "$MVN" -f pom.xml clean package
 ```
 

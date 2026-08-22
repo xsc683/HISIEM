@@ -1,5 +1,7 @@
 package com.xscsiem.hsiem_platform.health;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import co.elastic.clients.elasticsearch.ElasticsearchClient;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -18,6 +20,7 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Predicate;
 
 /** 对 Docker Desktop + WSL2 数据面做一次可重复的运行态扫描。 */
 @Service
@@ -25,6 +28,7 @@ public class OperationalHealthService {
 
     private final JdbcTemplate jdbc;
     private final ElasticsearchClient elasticsearch;
+    private final ObjectMapper objectMapper;
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build();
     private final String flinkUrl;
     private final String kibanaUrl;
@@ -36,6 +40,7 @@ public class OperationalHealthService {
     private volatile long lastScanEpoch;
 
     public OperationalHealthService(JdbcTemplate jdbc, ElasticsearchClient elasticsearch,
+                                    ObjectMapper objectMapper,
                                     MeterRegistry metrics,
                                     @Value("${app.health.scan.flink-url:http://localhost:8081}") String flinkUrl,
                                     @Value("${app.health.scan.kibana-url:http://localhost:5601}") String kibanaUrl,
@@ -44,6 +49,7 @@ public class OperationalHealthService {
                                     @Value("${app.health.scan.kafka-port:9092}") int kafkaPort) {
         this.jdbc = jdbc;
         this.elasticsearch = elasticsearch;
+        this.objectMapper = objectMapper;
         this.flinkUrl = flinkUrl;
         this.kibanaUrl = kibanaUrl;
         this.logstashUrl = logstashUrl;
@@ -63,12 +69,13 @@ public class OperationalHealthService {
             components.put("postgresql", database());
             components.put("elasticsearch", elasticsearch());
             components.put("kafka", tcp("kafka", kafkaHost, kafkaPort));
-            // Logstash 8.14 的 monitoring API 在当前 compose 配置下可能接受连接后 reset，
-            // 与部署 healthcheck 保持一致，用 TCP 监听作为可用性判据。
-            URI logstash = URI.create(logstashUrl);
-            components.put("logstash", tcp("logstash", logstash.getHost(), logstash.getPort()));
-            components.put("flink", http("flink", flinkUrl + "/overview"));
-            components.put("kibana", http("kibana", kibanaUrl + "/api/status"));
+            components.put("logstash", logstash());
+            components.put("flink", httpJson("flink", flinkUrl + "/overview",
+                    node -> node.path("jobs-running").isInt() && node.path("jobs-running").asInt() > 0,
+                    "Flink 没有运行中的检测任务"));
+            components.put("kibana", httpJson("kibana", kibanaUrl + "/api/status",
+                    node -> "available".equalsIgnoreCase(node.at("/status/overall/level").asText()),
+                    "Kibana overall status 非 available"));
             boolean healthy = components.values().stream().allMatch(row -> "UP".equals(row.get("status")));
             return new LinkedHashMap<>(Map.of(
                     "status", healthy ? "UP" : "DOWN",
@@ -98,13 +105,37 @@ public class OperationalHealthService {
         }
     }
 
-    private Map<String, Object> http(String name, String url) {
+    private Map<String, Object> logstash() {
+        URI endpoint = URI.create(logstashUrl);
+        Map<String, Object> monitoring = httpJson("logstash", logstashUrl + "/_node/pipelines",
+                node -> node.path("pipelines").isObject() && node.path("pipelines").size() > 0,
+                "Logstash 没有活动 pipeline");
+        if ("UP".equals(monitoring.get("status"))) return monitoring;
+
+        // Logstash monitoring API 在部分镜像配置下会 reset 连接；保留 TCP 结果，但明确这是降级探针。
+        Map<String, Object> socket = tcp("logstash", endpoint.getHost(), endpoint.getPort() > 0 ? endpoint.getPort() : 9600);
+        if ("UP".equals(socket.get("status"))) {
+            socket.put("probe", "tcp");
+            socket.put("degraded", true);
+            socket.put("warning", "监控 API 不可用，仅确认端口监听");
+        }
+        return socket;
+    }
+
+    private Map<String, Object> httpJson(String name, String url,
+                                         Predicate<JsonNode> healthy,
+                                         String unhealthyMessage) {
         long started = System.nanoTime();
         try {
             HttpRequest request = HttpRequest.newBuilder(URI.create(url)).timeout(Duration.ofSeconds(3)).GET().build();
-            int status = http.send(request, HttpResponse.BodyHandlers.discarding()).statusCode();
-            return row(name, status < 500 ? "UP" : "DOWN", elapsedMs(started),
-                    status < 500 ? null : "HTTP " + status);
+            HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                return row(name, "DOWN", elapsedMs(started), "HTTP " + response.statusCode());
+            }
+            JsonNode body = objectMapper.readTree(response.body());
+            boolean isHealthy = healthy.test(body);
+            return row(name, isHealthy ? "UP" : "DOWN", elapsedMs(started),
+                    isHealthy ? null : unhealthyMessage);
         } catch (Exception e) {
             return row(name, "DOWN", elapsedMs(started), e.getMessage());
         }

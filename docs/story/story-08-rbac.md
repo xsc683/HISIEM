@@ -3,8 +3,8 @@
 > **元信息**
 > - 关联模块:08 产品设计 §5.6 系统设置(用户权限)+ §7 权限与安全;对齐 [security-rbac.md](../design/security-rbac.md) 的 ES 侧 RBAC
 > - 优先级:Phase 4.3 已交付(原 P2)
-> - 状态:✅ 已实现(dd3e32f + 4.2 持久化增强;登录/会话/用户角色 CRUD + 方法级权限 + 审计)
-> - 依赖:Spring Boot + React 控制台;PostgreSQL/Flyway V1-V2;ES 侧最小权限脚本独立维护
+> - 状态:✅ 已实现（登录/会话/用户角色 CRUD + 方法级权限 + 审计 + V6 首次登录改密）
+> - 依赖:Spring Boot + React 控制台;PostgreSQL/Flyway V1-V6;ES 侧最小权限脚本独立维护
 >
 > **填写完成度 checklist**
 > - [x] **1 用户故事**:「作为…我希望…以便…」
@@ -40,7 +40,7 @@
 - `/api/**` 默认要求 Bearer 会话；登录、健康探针等明确公共端点例外。方法级 `@PreAuthorize` 再按角色限制具体写操作。
 
 ### 2.3 非目标(明确不做)
-- 不做用户自助注册/找回/密码策略(导入式维护,见 §10 ADR-1)。
+- 不做用户自助注册/找回；管理员创建临时口令后由用户自助完成首次轮换，复杂度策略保持最小可执行边界（至少 12 位）。
 - 不做多租户数据隔离(security-rbac.md §3 备注,后置)。
 - 不做字段级隐藏 FLS(security-rbac.md §3 有示例,MVP 单机不启用,多租户前必做)。
 
@@ -52,8 +52,8 @@
 
 | 步骤 | 用户操作 | 界面反馈 | 异常/边界 |
 | --- | --- | --- | --- |
-| ① | 输入用户名/密码登录 | 成功→跳首页,导航显示当前角色 | 密码错→提示 + 401;用户 disabled→403「账号已禁用」 |
-| ② | admin 打开「系统设置→用户权限」新建用户(用户名/角色) | 列表新增一行(status=active) | 用户名重复→400;角色不在 §4.3 字典→400 |
+| ① | 输入用户名/密码登录 | 成功→跳首页,导航显示当前角色；`passwordChangeRequired=true` 时强制打开改密弹窗 | 密码错→提示 + 401;用户 disabled→403「账号已禁用」 |
+| ② | admin 打开「系统设置→用户权限」新建用户(用户名/临时密码/角色) | 列表新增一行(status=active,passwordChangeRequired=true) | 用户名重复→400;角色不在 §4.3 字典→400;密码少于 12 位→400 |
 | ③ | 查看角色矩阵(模块×动作)或为单个用户改角色 | 变更落库并提示生效 | 改自己角色→二次确认;删除最后一名 admin→409 阻止 |
 | ④ | 敏感操作(如规则启停)执行 | 正常执行 + 审计落库 | 无权限(analyst)→403 + 前端按钮置灰 |
 | ⑤ | audit 登录,导出审计 | 下载 CSV/JSON | 非 audit/export 权限调导出→403 |
@@ -70,6 +70,7 @@
 | FR-4 | 敏感操作审计 | 已实现 | 记录 operator + time + action/target;审计写入 PostgreSQL |
 | FR-5 | 前端按角色渲染 | 已实现 | 前端按当前用户角色隐藏/禁用动作;接口层 403 兜底 |
 | FR-6 | 审计查询 | 已实现 | 通过控制面 API 查询审计记录;独立文件导出仍可后置 |
+| FR-7 | 首次登录密码轮换 | 已实现 | `POST /api/auth/password` 校验当前口令和新口令（至少 12 位）；轮换前业务 API 返回 428 |
 
 ### 4.2 非功能需求
 
@@ -110,6 +111,7 @@ React 前端 → /api(Spring Security + BearerSessionFilter) → AuthService(角
 
 ```
 POST /api/auth/login        → 请求 {username,password};200 {token, user{role}}
+POST /api/auth/password     → 请求 {currentPassword,newPassword};200 {username,passwordChangeRequired:false}
 GET  /api/auth/me           → 200 {username, role, permissions:[...]}
 GET  /api/users             → 200 [{id, username, role, status, createdAt}]
 POST /api/users             → 请求 {username, password, role};201 {id}

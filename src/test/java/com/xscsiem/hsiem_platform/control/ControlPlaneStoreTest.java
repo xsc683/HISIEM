@@ -62,6 +62,20 @@ class ControlPlaneStoreTest {
     }
 
     @Test
+    void staleQueuedAndRunningTasksAreMarkedFailed() {
+        String queued = store.createTask("test", "stale-q-" + System.nanoTime(), "queued");
+        String running = store.createTask("test", "stale-r-" + System.nanoTime(), "running");
+        store.updateTask(running, "running", 40, "working", null);
+        jdbc.update("UPDATE background_tasks SET updated_at = CURRENT_TIMESTAMP - INTERVAL '10' MINUTE "
+                + "WHERE id IN (?, ?)", queued, running);
+
+        assertEquals(2, store.recoverStaleTasks(Instant.now().minusSeconds(60), "worker stopped"));
+        assertEquals("failed", store.findTask(queued).get("status"));
+        assertEquals("failed", store.findTask(running).get("status"));
+        assertEquals("worker stopped", store.findTask(running).get("error"));
+    }
+
+    @Test
     void caseRelationsAreTransactionalAndUnique() {
         String suffix = String.valueOf(System.nanoTime());
         String caseId = "case-jdbc-" + suffix;

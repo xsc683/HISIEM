@@ -37,7 +37,7 @@ public class JdbcControlPlaneStore implements ControlPlaneStore {
     @Override
     public List<AuthUser> listUsers() {
         return jdbc.query("""
-                        SELECT id, username, password_hash, role_name, status, created_at
+                        SELECT id, username, password_hash, password_change_required, role_name, status, created_at
                         FROM users ORDER BY username
                         """,
                 (rs, rowNum) -> {
@@ -45,6 +45,7 @@ public class JdbcControlPlaneStore implements ControlPlaneStore {
                     u.id = rs.getString("id");
                     u.username = rs.getString("username");
                     u.passwordHash = rs.getString("password_hash");
+                    u.passwordChangeRequired = rs.getBoolean("password_change_required");
                     u.role = rs.getString("role_name");
                     u.status = rs.getString("status");
                     u.createdAt = rs.getTimestamp("created_at").toInstant().toString();
@@ -55,13 +56,14 @@ public class JdbcControlPlaneStore implements ControlPlaneStore {
     @Override
     public AuthUser findUser(String username) {
         List<AuthUser> users = jdbc.query("""
-                        SELECT id, username, password_hash, role_name, status, created_at
+                        SELECT id, username, password_hash, password_change_required, role_name, status, created_at
                         FROM users WHERE username = ?
                         """, (rs, rowNum) -> {
                     AuthUser u = new AuthUser();
                     u.id = rs.getString("id");
                     u.username = rs.getString("username");
                     u.passwordHash = rs.getString("password_hash");
+                    u.passwordChangeRequired = rs.getBoolean("password_change_required");
                     u.role = rs.getString("role_name");
                     u.status = rs.getString("status");
                     u.createdAt = rs.getTimestamp("created_at").toInstant().toString();
@@ -73,18 +75,18 @@ public class JdbcControlPlaneStore implements ControlPlaneStore {
     @Override
     public void insertUser(AuthUser user) {
         jdbc.update("""
-                        INSERT INTO users(id, username, password_hash, role_name, status, created_at, updated_at)
-                        VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                        """, user.id, user.username, user.passwordHash, user.role,
-                user.status == null ? "active" : user.status, timestamp(user.createdAt));
+                        INSERT INTO users(id, username, password_hash, password_change_required, role_name, status, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                        """, user.id, user.username, user.passwordHash, user.passwordChangeRequired,
+                user.role, user.status == null ? "active" : user.status, timestamp(user.createdAt));
     }
 
     @Override
     public void updateUser(AuthUser user) {
         int changed = jdbc.update("""
-                        UPDATE users SET role_name = ?, status = ?, password_hash = ?, updated_at = CURRENT_TIMESTAMP
+                        UPDATE users SET role_name = ?, status = ?, password_hash = ?, password_change_required = ?, updated_at = CURRENT_TIMESTAMP
                         WHERE username = ?
-                        """, user.role, user.status, user.passwordHash, user.username);
+                        """, user.role, user.status, user.passwordHash, user.passwordChangeRequired, user.username);
         if (changed == 0) {
             throw new NotFoundException("用户不存在: " + user.username);
         }
@@ -431,6 +433,17 @@ public class JdbcControlPlaneStore implements ControlPlaneStore {
                                started_at, finished_at, created_at, updated_at
                         FROM background_tasks ORDER BY updated_at DESC LIMIT ?
                         """, (rs, rowNum) -> taskRow(rs), Math.min(Math.max(size, 1), 200));
+    }
+
+    @Override
+    public int recoverStaleTasks(Instant cutoff, String errorMessage) {
+        return jdbc.update("""
+                        UPDATE background_tasks
+                        SET status = 'failed', progress = 100,
+                            message = '任务未完成，已由服务恢复器收敛',
+                            error = ?, finished_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+                        WHERE status IN ('queued', 'running') AND updated_at < ?
+                        """, errorMessage, timestamp(cutoff.toString()));
     }
 
     private Map<String, Object> taskRow(java.sql.ResultSet rs) throws java.sql.SQLException {

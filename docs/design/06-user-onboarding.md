@@ -76,7 +76,7 @@
 - Logstash input(按协议)
 - Logstash filter(grok + date + mutate,由模板生成)
 
-> **当前能力**:preview/生成器按协议输出 `tcp`、`syslog` 或 `file` input；文件协议要求非空路径并使用 `/dev/null` sincedb，便于容器内首次读取和配置热加载。
+> **当前能力**:preview/生成器按协议输出 `tcp`、`syslog` 或 `file` input；文件协议要求非空路径并使用挂载到 Logstash data volume 的 per-source 持久 sincedb，避免容器重启后从头读取。
 
 ### 4.3 自定义 / 筛选解析规则
 

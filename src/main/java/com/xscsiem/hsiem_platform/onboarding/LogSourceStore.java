@@ -9,6 +9,7 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -58,7 +59,17 @@ public class LogSourceStore {
     public void save(LogSource s) {
         try {
             Path p = dirPath().resolve(s.id + ".yaml");
-            yamlMapper.writeValue(p.toFile(), s);
+            Path tmp = Files.createTempFile(p.getParent(), p.getFileName().toString(), ".tmp");
+            try {
+                yamlMapper.writeValue(tmp.toFile(), s);
+                try {
+                    Files.move(tmp, p, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+                } catch (java.nio.file.AtomicMoveNotSupportedException e) {
+                    Files.move(tmp, p, StandardCopyOption.REPLACE_EXISTING);
+                }
+            } finally {
+                Files.deleteIfExists(tmp);
+            }
         } catch (IOException e) {
             throw new IllegalStateException("数据源保存失败: " + s.id, e);
         }

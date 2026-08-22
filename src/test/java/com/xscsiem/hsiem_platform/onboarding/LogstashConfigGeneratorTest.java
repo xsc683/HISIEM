@@ -65,6 +65,6 @@ class LogstashConfigGeneratorTest {
         String fileConfig = generator.generatePipeline(file, sshTemplate());
         assertTrue(fileConfig.contains("file {"));
         assertTrue(fileConfig.contains("path => [\"/var/log/auth.log\"]"));
-        assertTrue(fileConfig.contains("sincedb_path => \"/dev/null\""));
+        assertTrue(fileConfig.contains("sincedb_path => \"/usr/share/logstash/data/sincedb-" + file.id + "\""));
     }
 }

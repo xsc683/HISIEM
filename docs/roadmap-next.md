@@ -24,7 +24,7 @@
 
 以 Spring Security 替换自定义拦截器，补接口级权限、PostgreSQL 会话持久化、登录失败限制和统一错误 DTO；生产 ES 请求统一经过 Elasticsearch Java API Client，Testcontainers 覆盖空 PostgreSQL 的 Flyway v2 迁移，Actuator/Micrometer 暴露 health/metrics/prometheus，后台任务支持列表和按 ID 查询。
 
-- 验收：根项目当前 69 个测试（含安全/失败限制/容器迁移）通过；真实运行态验证登录、重启后 Token、角色 403、Actuator 和 ES 搜索/计数均通过。
+- 验收：根项目当前 74 个测试（含安全/失败限制/容器迁移/任务恢复/DTO 脱敏）通过；真实运行态验证登录、重启后 Token、角色 403、Actuator 和 ES 搜索/计数均通过。
 
 ### 阶段 4.3：产品与运维增强（已完成）
 
@@ -34,7 +34,18 @@
 - `PATCH /api/cases/{id}/metadata` 持久化 `case.owner` 和 `evidence`，案件详情支持编辑负责人和证据引用。
 - `GET /api/ops/health-scan` 返回六个运行组件及延迟；`siem.health.scans` 和 `siem.health.scan.duration` 可从 Actuator 查询。
 - `infra/elasticsearch/backup-restore-rehearsal.sh` 只操作临时索引，完成快照、删除、恢复、校验和自动清理。
-- 验收：根项目当前 69 个测试、Flink 32 个测试、前端构建、真实 PostgreSQL V5、健康扫描、案件元数据接口、备份恢复演练和 Docker 部署自验证均通过。
+- 验收：根项目当前 74 个测试、Flink 33 个测试、前端构建、真实 PostgreSQL V6、健康扫描、案件元数据接口、备份恢复演练和 Docker 部署自验证均通过。
+
+### 阶段 4.4.1：可靠性与用户旅程收口（本轮完成）
+
+- **认证安全**：用户列表改用脱敏 DTO；V6 增加首次登录强制改密；新建用户临时口令要求至少 12 位；未完成轮换的会话不能访问业务 API。
+- **任务可恢复**：启动和定时恢复器收敛超过 5 分钟的 queued/running 任务，避免服务重启后永久“进行中”，并把原因写入任务错误字段。
+- **配置并发安全**：数据源生命周期按源串行；Logstash pipeline、Compose、pipelines.yml 和数据源 YAML 使用原子替换；文件 input 使用持久 sincedb。
+- **检测与案件一致性**：Flink 告警 sink 改为保护分析师字段的 partial update；案件非空禁止删除，PG 为事实源并定时重放 ES 镜像。
+- **前端旅程**：统一处理 204/非 JSON 错误、登出会话、密码轮换、初始化错误提示、任务自动刷新、轮询超时和破坏性操作确认。
+- **健康语义**：Flink/Kibana/Logstash 探针校验响应语义；Logstash 监控 API 不可用时将 TCP 结果标为 degraded，避免假装完整健康。
+
+- 验收：`./mvnw.cmd test`（74）、`./mvnw.cmd -f flink/pom.xml test`（33）、`npm.cmd --prefix web ci`、`npm.cmd --prefix web run build`；未提交生成物和本地凭据。
 
 ### 阶段 4.4：可靠性与能力补全（已完成）
 

@@ -5,6 +5,8 @@
 > 分析方式：静态源码/配置/迁移/测试审查 + 本地构建测试 + 当前 Docker 运行态只读核验  
 > 结论标记：**已确认**＝有直接代码、配置、测试或运行态证据；**合理推断**＝由多项证据推导但未做破坏性/写入式演练；**待验证**＝现有证据不足。
 
+> **复核说明（2026-08-22）**：本文前半部分保留 2026-08-21 的问题基线，风险表中标为“已修复/部分缓解”的项目以本文第 17 节为准。当前代码已追加 Flyway V6（首次登录强制改密）、任务恢复器、Case 镜像收敛、Flink partial update、持久 sincedb、原子配置写入和前端错误/轮询治理。
+
 ## 1. 分析范围和项目说明
 
 ### 1.1 范围
@@ -16,7 +18,7 @@
 - React/Vite 控制台：`web/src/`、`web/package.json`、`web/vite.config.js`；
 - 部署与数据面：`infra/docker-compose.yml`、Logstash pipeline、Kafka 脚本、Elasticsearch 模板、规则和部署脚本；
 - 项目说明：`README.md`、`CLAUDE.md`、`docs/architecture.md`、`docs/deployment.md`、`docs/design-decisions.md`、Story/设计文档；
-- PostgreSQL 模型：`src/main/resources/db/migration/V1__control_plane.sql` 至 `src/main/resources/db/migration/V5__case_collaborators.sql`。
+- PostgreSQL 模型：`src/main/resources/db/migration/V1__control_plane.sql` 至 `src/main/resources/db/migration/V6__password_rotation.sql`。
 
 未读取或披露 `infra/elasticsearch/config/elasticsearch.keystore` 的内容。仓库中未发现 Gradle、MySQL、Redis、独立后端 `server/` 目录或独立端到端浏览器测试工程；它们不属于当前实现。
 
@@ -28,8 +30,8 @@
 | 控制面进程 | **已确认**：Spring Boot 和 Vite 不在 Compose 内；当前检查时 8080/5173 无监听 | `infra/docker-compose.yml:1-144`、`web/vite.config.js:4-11`；本次运行态检查 |
 | 数据面进程 | **已确认**：当前 7 个容器均在运行；Logstash 为 green，加载 `main + 5` 个 pipeline；Flink 作业 `SIEM Detection Engine` 为 RUNNING | `infra/docker-compose.yml:1-144`；本次 `docker ps`、Logstash API、`flink list -a` |
 | 当前数据 | **已确认**：检查时存在 `siem-events-2026.08.20` 2000 文档、`siem-alerts` 4000 文档、`siem-cases` 55 文档 | 本次 Elasticsearch `_cat/indices` 只读查询 |
-| PostgreSQL | **已确认**：运行库已应用 V1-V5，存在 10 张业务/历史表（含 Flyway history） | `src/main/resources/db/migration/V1__control_plane.sql:3-89`、`src/main/resources/db/migration/V2__auth_sessions_and_login_limits.sql:3-20`、`src/main/resources/db/migration/V3__case_ownership_and_evidence.sql:2-5`、`src/main/resources/db/migration/V5__case_collaborators.sql:2`；本次只读查询 |
-| 测试 | **已确认**：本次后端 69/69、Flink 32/32 通过；前端构建成功 | 第 13 节 |
+| PostgreSQL | **已确认（代码/测试）**：迁移已扩展至 V6，新增 users.password_change_required；运行中的旧实例需重启 Spring 后执行迁移 | `src/main/resources/db/migration/V1__control_plane.sql` 至 `V6__password_rotation.sql`；H2/真实 PostgreSQL 迁移测试 |
+| 测试 | **已确认**：本轮后端 74/74、Flink 33/33 通过；前端生产构建已在隔离临时目录复核 | 第 13 节及本轮复核记录 |
 
 ### 1.3 边界和角色
 
@@ -101,19 +103,19 @@ flowchart LR
 
 | 业务模块 | 目录 | 主要类/接口 | 入口 | 依赖 | 数据存储 | 当前状态 |
 |---|---|---|---|---|---|---|
-| 1. 前端控制台 | `web/src/` | `App.jsx`、`api.js`、`routes.js` | Vite 5173 | Spring `/api` | localStorage token | **部分闭环**：页面齐全，204 处理错误，无 E2E |
-| 2. 认证/RBAC | `auth/` | `AuthController`、`AuthService`、`BearerSessionFilter`、`SecurityConfig` | `/api/auth/**` | PG、BCrypt | users/auth_sessions/login_attempts/audit_logs | **已实现**；哈希暴露与默认密码风险 |
-| 3. 控制面数据库 | `control/`、迁移 SQL | `ControlPlaneStore`、`JdbcControlPlaneStore`、Flyway config | Bean/JDBC | PostgreSQL | 9 张业务表 | **已实现**；V1-V5 实测通过 |
-| 4. 后台任务 | `control/` + 各 coordinator | `BackgroundTaskController`、Executor | `/api/tasks/**` | PG、进程命令 | background_tasks | **部分闭环**：可执行/查询，无恢复、取消、重试 |
+| 1. 前端控制台 | `web/src/` | `App.jsx`、`api.js`、`routes.js` | Vite 5173 | Spring `/api` | localStorage token | **部分闭环**：错误/204/轮询已治理，仍无浏览器 E2E |
+| 2. 认证/RBAC | `auth/` | `AuthController`、`AuthService`、`BearerSessionFilter`、`SecurityConfig` | `/api/auth/**` | PG、BCrypt | users/auth_sessions/login_attempts/audit_logs | **已实现**；DTO 脱敏、首次登录改密已落地，生产 TLS 仍待配置 |
+| 3. 控制面数据库 | `control/`、迁移 SQL | `ControlPlaneStore`、`JdbcControlPlaneStore`、Flyway config | Bean/JDBC | PostgreSQL | 9 张业务表 | **已实现**；V1-V6 迁移测试通过 |
+| 4. 后台任务 | `control/` + 各 coordinator | `BackgroundTaskController`、`BackgroundTaskRecovery`、Executor | `/api/tasks/**` | PG、进程命令 | background_tasks | **部分闭环**：启动/定时 stale recovery；无跨实例 lease/自动重试 |
 | 5. 解析模板 | `onboarding/`、`infra/parser-templates/` | `ParserTemplateService`、`GrokTestService` | `/api/parser-templates/**` | java-grok、YAML | YAML 文件 | **部分闭环**：保存 API 无页面消费 |
-| 6. 数据源管理 | `onboarding/`、`infra/log-sources/` | `LogSourceService`、`LogSourceStore` | `/api/log-sources/**` | 模板、激活协调器 | YAML 文件 | **部分闭环**：停用后不能重激活 |
+| 6. 数据源管理 | `onboarding/`、`infra/log-sources/` | `LogSourceService`、`LogSourceStore` | `/api/log-sources/**` | 模板、激活协调器 | YAML 文件 | **部分闭环**：可重激活/同源串行；多实例仍需共享锁 |
 | 7. Logstash 配置/部署 | `onboarding/`、`infra/logstash/` | `LogstashConfigGenerator`、`ActivationCoordinator`、`ProcessLogstashDeployer` | 激活/停用 | WSL、rsync、Docker | conf/pipelines/compose + 容器 | **部分闭环**：部署态补偿不完整 |
 | 8. ES 访问层 | `search/` | `ElasticsearchGateway`、Client config、HealthIndicator | 领域服务调用 | ES Java Client 8.14 | ES 索引 | **已实现**；仅支持项目使用的 REST 子集 |
 | 9. 告警处置 | `alert/` | `AlertController`、`AlertService` | `/api/alerts/**` | ES gateway | `siem-alerts` | **已实现**；乐观锁/状态机，批量允许部分成功 |
-| 10. 案件/Evidence/Relation | `investigation/` | `CaseController`、`CaseService`、`CaseAggregateJob` | `/api/cases/**`、定时任务 | PG、ES、AlertService | cases/case_alerts + `siem-cases` | **部分闭环**：双写一致性风险；Evidence 内嵌 |
+| 10. 案件/Evidence/Relation | `investigation/` | `CaseController`、`CaseService`、`CaseAggregateJob` | `/api/cases/**`、定时任务 | PG、ES、AlertService | cases/case_alerts + `siem-cases` | **部分闭环**：PG 事实源+定时镜像收敛；删除 tombstone/Evidence 独立模型仍后置 |
 | 11. 检测规则控制 | `rules/`、`infra/rules/` | `RuleService`、`ProcessRulesDeployer` | `/api/detection-rules/**` | Flink CLI、ES | YAML + 告警索引 | **部分闭环**：部署失败可能使 Job 停止 |
-| 12. Flink 检测引擎 | `flink/src/main/java/` | `DetectionJob`、各 RuleFunction/Suppressor | Flink job | Kafka、ES、规则 YAML | checkpoint + `siem-alerts` | **已实现且当前运行** |
-| 13. 健康检查 | `health/` | `DataHealthService`、`OperationalHealthService` | `/api/data-health/**`、`/api/ops/health-scan` | PG/ES/TCP/HTTP | ES 聚合、Micrometer | **部分闭环**：可达性检查较浅 |
+| 12. Flink 检测引擎 | `flink/src/main/java/` | `DetectionJob`、各 RuleFunction/Suppressor | Flink job | Kafka、ES、规则 YAML | checkpoint + `siem-alerts` | **已实现**；告警 sink partial update 防处置字段覆盖 |
+| 13. 健康检查 | `health/` | `DataHealthService`、`OperationalHealthService` | `/api/data-health/**`、`/api/ops/health-scan` | PG/ES/TCP/HTTP | ES 聚合、Micrometer | **部分闭环**：Flink/Kibana/Logstash 语义校验；Kafka lag 仍未接入 |
 | 14. 通知与关键度 | `notify/`、`settings/` | Scanner、NotificationService、CriticalityService/Coordinator | 定时器与 `/api/settings/**` | PG、文件、Python | notifications、JSON、entity-risk | **部分闭环**：内部通知；任务无恢复 |
 | 15. 基础设施部署 | `infra/` | Compose、deploy/validate 脚本、ES templates | 手工脚本 | Docker/WSL | volumes/索引/topic | **已实现并当前运行**；不含 Spring/Web 容器 |
 
@@ -280,7 +282,7 @@ flowchart TB
 
 #### 7. 异常、回滚和补偿
 
-密码错误统一 401；认证/授权分别由安全链返回 JSON 401/403。登录失败更新在 JDBC 事务中加 `FOR UPDATE`。没有密码修改、session 管理或全局登出接口。默认 admin 密码在空库时自动创建且前端直接提示 `admin123`，必须在部署流程外更改；代码没有强制改密。
+密码错误统一 401；认证/授权分别由安全链返回 JSON 401/403。登录失败更新在 JDBC 事务中加 `FOR UPDATE`。密码轮换通过 `POST /api/auth/password` 完成，首次登录/管理员新建用户在轮换前访问业务 API 返回 428；生产首启口令必须由 `SIEM_BOOTSTRAP_PASSWORD` 注入，不能依赖默认值。
 
 #### 8. 前端消费
 
@@ -316,7 +318,7 @@ PostgreSQL 是控制面事务事实源；`background_tasks` 记录异步生命�
 
 #### 2. 代码组成
 
-`ControlPlaneDatabaseConfig`、`ControlPlaneStore`、`JdbcControlPlaneStore`、`BackgroundTaskController`；迁移 V1-V5。生产实现标记 `@DependsOn("flyway")`，案件跨表方法使用 `@Transactional`。`src/main/java/com/xscsiem/hsiem_platform/control/JdbcControlPlaneStore.java:22-35`、`src/main/java/com/xscsiem/hsiem_platform/control/JdbcControlPlaneStore.java:308-383`
+`ControlPlaneDatabaseConfig`、`ControlPlaneStore`、`JdbcControlPlaneStore`、`BackgroundTaskController`、`BackgroundTaskRecovery`；迁移 V1-V6。案件控制面由 PG 事实源和 ES 镜像收敛组成。`src/main/java/com/xscsiem/hsiem_platform/control/JdbcControlPlaneStore.java:22-35`、`src/main/java/com/xscsiem/hsiem_platform/control/BackgroundTaskRecovery.java`
 
 #### 3. 调用链
 
@@ -1391,8 +1393,8 @@ source activate/deactivate、`POST /api/settings/criticality/recalc`；查询 `/
 2. 内存 executor 接收 Runnable。
 3. runnable 标 running、调用外部动作、标 succeeded/failed。
 4. 任务状态字段包含 progress/message/error/timestamps。
-5. 前端运行态列表需手工刷新；source 页面轮询 source。
-6. JVM 重启没有恢复 queued/running；无 retry/cancel API。
+5. 前端运行态任务每 10 秒刷新；source 页面最多轮询 60 次并显示超时。
+6. JVM 重启/心跳超时由 `BackgroundTaskRecovery` 收敛为 failed；尚无跨实例 lease、retry/cancel API。
 
 #### Mermaid 图
 
@@ -1402,16 +1404,16 @@ stateDiagram-v2
   queued --> running: daemon executor
   running --> succeeded: command succeeds
   running --> failed: exception caught
-  queued --> stuck: JVM exits before start
-  running --> stuck: JVM exits during command
-  note right of stuck
-    DB 保留状态，无恢复扫描
+  queued --> failed: recovery timeout
+  running --> failed: recovery timeout
+  note right of failed
+    启动及每分钟扫描 stale 任务
   end note
 ```
 
 #### 闭环判断
 
-结论：**部分闭环**。实际任务会执行且状态可查；可靠调度、恢复、取消、自动轮询和重试未闭环。
+结论：**部分闭环**。实际任务会执行且状态可查；stale recovery 和自动轮询已补齐，但可靠调度、跨实例 lease、取消和自动重试仍未闭环。
 
 ### 场景 15：健康检查
 
@@ -1587,9 +1589,9 @@ flowchart LR
 | Case 创建 | POST cases | 校验/双写/marker | PG+ES | Case/错误 | best-effort compensation | 有 | 状态/PG tests | 部分闭环 |
 | Evidence | PATCH metadata | List<Map> replace | PG JSON+ES | detail | 双写无补偿 | 有 | PG store 间接 | 部分闭环 |
 | Relation | create/add alerts | PG unique+ES marker | case_alerts+ES | detail/added | 尽力回滚 | 有 | PG unique test | 部分闭环 |
-| 后台任务 | lifecycle/recalc | daemon executor | PG task | tasks API | failed，无恢复 | 列表手刷 | PG persistence | 部分闭环 |
+| 后台任务 | lifecycle/recalc | daemon executor + stale recovery | PG task | tasks API | 超时收敛 failed | 10s 自动刷新 | PG persistence/恢复单测 | 部分闭环 |
 | 健康检查 | data-health/ops | ES agg+多探针 | 即时+metrics | UP/DOWN/rows | 局部捕获 | 有 | 仅 DataHealth 算法 | 部分闭环 |
-| 前端完整链 | 9 routes | api client/状态展示 | localStorage+后端 | UI | 多处静默 catch；204 bug | 本身 | build，无 E2E | 部分闭环 |
+| 前端完整链 | 9 routes | api client/状态展示 | localStorage+后端 | UI | 主要错误可见、204 已处理 | tasks/source 自动刷新 | build，无 E2E | 部分闭环 |
 
 统计：**已闭环 3，部分闭环 13，未闭环 0，证据不足 0**。这里对“日志接入”采用严格口径：虽有运行数据，因动态 pipeline 错误分流与缺少自动 E2E，仍判部分闭环。
 
@@ -1598,28 +1600,28 @@ flowchart LR
 | # | 风险描述 | 代码证据 | 影响范围 | 严重度 | 推荐改进 |
 |---:|---|---|---|---|---|
 | 1 | Case PG/ES 双写先后不一，PG 冲突后 ES 不回滚 | `src/main/java/com/xscsiem/hsiem_platform/investigation/CaseService.java:599-649` | 案件、Evidence、Relation | 高 | 选单一事实源；用 outbox/saga+幂等 reconciliation；记录 sync_version |
-| 2 | 激活/停用失败只回滚 repo，不恢复 WSL/容器 | `src/main/java/com/xscsiem/hsiem_platform/onboarding/ActivationCoordinator.java:73-91`、`src/main/java/com/xscsiem/hsiem_platform/onboarding/ActivationCoordinator.java:125-128` | 接入可用性、端口 | 高 | 分阶段 revision；失败后同步旧 revision 并重建；校验运行态 hash |
-| 3 | stopped 无法重激活且 UI无限轮询 | `src/main/java/com/xscsiem/hsiem_platform/onboarding/LogSourceService.java:123-126`、`web/src/App.jsx:342-356` | 运维接入 | 高 | 仅 active 提前返回；加 activating/deactivating；轮询 timeout/backoff |
-| 4 | 用户 API 暴露 BCrypt hash | `src/main/java/com/xscsiem/hsiem_platform/auth/AuthController.java:52-56`、`src/main/java/com/xscsiem/hsiem_platform/auth/AuthUser.java:6-16` | 凭据安全 | 高 | Response DTO；`@JsonIgnore passwordHash`；加回归测试 |
+| 2 | 激活/停用失败只回滚 repo，不恢复 WSL/容器 | `ActivationCoordinator` | 接入可用性、端口 | 中（已缓解） | 已增加同步补偿、生命周期串行和原子文件替换；仍需真实故障注入验证 |
+| 3 | stopped 无法重激活且 UI无限轮询 | `LogSourceService`、`web/src/App.jsx` | 运维接入 | 已修复 | stopped 可重激活；同源并发 409；前端轮询 60 次超时 |
+| 4 | 用户 API 暴露 BCrypt hash | `AuthUserView`、`AuthController` | 凭据安全 | 已修复 | DTO 脱敏；V6 强制首次登录改密；保留回归测试 |
 | 5 | 动态 pipeline parsefailure 进入正常 ES/Kafka | `src/main/java/com/xscsiem/hsiem_platform/onboarding/LogstashConfigGenerator.java:94-111` 对比 `infra/logstash/pipeline/logstash.conf:82-118` | 数据质量、误告警 | 高 | 提取共用 output 模板；parsefailure raw-only；生成 golden test |
-| 6 | Case 删除不清 alert.case_id；clear 错误被吞 | `src/main/java/com/xscsiem/hsiem_platform/investigation/CaseService.java:292-299`、`src/main/java/com/xscsiem/hsiem_platform/investigation/CaseService.java:396-405` | 孤儿 relation | 高 | 禁止非空案删除或事务化解绑；失败进入修复队列 |
-| 7 | Flink 确定性 `_id` 的后续 full index 可能覆盖处置字段 | `flink/src/main/java/com/siem/DetectionJob.java:246-260`、`flink/src/main/java/com/siem/DetectionFunction.java:37-61` | 告警状态/verdict | 高 | sink 改 scripted upsert/create-only；检测字段与处置字段分离索引/文档 |
-| 8 | 后台 executor 为进程内 daemon，无任务恢复/租约 | `src/main/java/com/xscsiem/hsiem_platform/onboarding/LogSourceService.java:19-23`、`src/main/java/com/xscsiem/hsiem_platform/settings/CriticalityRecalcCoordinator.java:14-18` | 任务卡死 | 高 | DB claim/lease worker；启动恢复；retry_count/heartbeat/idempotency key |
-| 9 | LogSource 端口检查非原子且只看 YAML | `src/main/java/com/xscsiem/hsiem_platform/onboarding/LogSourceService.java:83-90` | 端口冲突 | 中 | PG/文件锁唯一约束；检查 Compose/OS；串行化 lifecycle |
-| 10 | 多次 activate 可并发，重复写配置/任务 | `src/main/java/com/xscsiem/hsiem_platform/onboarding/LogSourceService.java:121-143` | 配置损坏、重建竞争 | 高 | per-source mutex/CAS 状态；409 in-progress；幂等 task key |
+| 6 | Case 删除不清 alert.case_id；clear 错误被吞 | `CaseService.delete/clearAlertCase` | 孤儿 relation | 中（已缓解） | 非空案禁止删除、PG 先删；ES 失败告警并由镜像收敛补偿；删除 tombstone 仍可增强 |
+| 7 | Flink 确定性 `_id` 的后续 full index 可能覆盖处置字段 | `DetectionJob.alertOperation` | 告警状态/verdict | 已修复 | Update + docAsUpsert 移除处置字段；新增 sink 单测 |
+| 8 | 后台 executor 为进程内 daemon，无任务恢复/租约 | `BackgroundTaskRecovery` | 任务卡死 | 中（已缓解） | 启动/每分钟标记 stale 任务 failed；多实例 lease、自动重试仍后置 |
+| 9 | LogSource 端口检查非原子且只看 YAML | `LogSourceService`、`LogSourceStore` | 端口冲突 | 中（单实例已缓解） | 进程内串行创建和原子 YAML；多实例需共享锁/唯一约束 |
+| 10 | 多次 activate 可并发，重复写配置/任务 | `LogSourceService.lifecycleInFlight` | 配置损坏、重建竞争 | 已修复（单实例） | per-source in-flight 409；ActivationCoordinator 全局串行 |
 | 11 | Kafka/ES 双输出无事务，RF=1 | `infra/logstash/pipeline/logstash.conf:92-118`、`infra/docker-compose.yml:91-111` | 日志丢失/单点 | 高 | 明确 Kafka 为主干或 outbox；多 broker/RF；lag与差异监控 |
-| 12 | file input sincedb `/dev/null`，重启会重复读取 | `src/main/java/com/xscsiem/hsiem_platform/onboarding/LogstashConfigGenerator.java:120-122` | 日志重复、重复告警 | 中 | 持久 sincedb per source；inode/rotation 策略；E2E重启测试 |
+| 12 | file input sincedb `/dev/null`，重启会重复读取 | `LogstashConfigGenerator` | 日志重复、重复告警 | 已修复（配置） | per-source 持久 sincedb；仍需真实 rotation/restart E2E |
 | 13 | 非法/缺失 timestamp 退处理时间 | `flink/src/main/java/com/siem/EventParser.java:35-43` | 乱序、窗口误判 | 中 | side output/DLQ；标 timestamp_quality；告警/监控解析率 |
-| 14 | 204 成功响应被前端当 JSON 解析 | `web/src/api.js:14-25` | 删除/标记操作 UX | 中 | 处理 status 204/Content-Length；契约测试 |
+| 14 | 204 成功响应被前端当 JSON 解析 | `web/src/api.js` | 删除/标记操作 UX | 已修复 | 读取 text 后兼容空 body/204，并保留错误 message |
 | 15 | Auth 审计 actor 固定 system，不是实际操作者 | `src/main/java/com/xscsiem/hsiem_platform/auth/AuthService.java:273-276` | 审计可信度 | 中 | 从 SecurityContext 取 actor；登录可用 username；metadata 记录 request id/IP |
 | 16 | 默认 admin/admin123、ES security off、Kafka PLAINTEXT | `src/main/java/com/xscsiem/hsiem_platform/auth/AuthService.java:84-97`、`infra/docker-compose.yml:23-26`、`infra/docker-compose.yml:102-110` | 权限绕过/数据泄露 | 高 | 首启一次性 secret/强制改密；TLS、ES/Kafka auth、网络隔离 |
-| 17 | 健康探针把任意 HTTP <500 判 UP，Logstash 仅 TCP | `src/main/java/com/xscsiem/hsiem_platform/health/OperationalHealthService.java:101-120` | 假健康 | 中 | 校验响应 body/version/pipeline count/job state/Kafka metadata |
+| 17 | 健康探针把任意 HTTP <500 判 UP，Logstash 仅 TCP | `OperationalHealthService` | 假健康 | 中（已缓解） | Flink/Kibana/Logstash 校验响应语义；Kafka metadata/lag 仍待补 |
 | 18 | 动态 DataHealth 失败率依赖 raw 索引，但动态失败不入 raw | `src/main/java/com/xscsiem/hsiem_platform/health/DataHealthService.java:48-112` | 健康误判 | 高 | 先统一分流；对 tags/parsefailure 交叉聚合；测试 dynamic pipeline |
-| 19 | 规则部署 cancel 后恢复失败会使 Job 下线 | `src/main/java/com/xscsiem/hsiem_platform/rules/ProcessRulesDeployer.java:50-64` | 检测中断 | 高 | stop-with-savepoint+验证；保留旧 job/JAR/rules；失败自动回退 |
+| 19 | 规则部署 cancel 后恢复失败会使 Job 下线 | `ProcessRulesDeployer` | 检测中断 | 中（已缓解） | 命令输出并行消费、超时有效；无 savepoint 时自动全新提交；仍需旧 Job 回退/运行态验证 |
 | 20 | Case service 测试主要是纯校验，未覆盖真实双写链 | `src/test/java/com/xscsiem/hsiem_platform/investigation/CaseServiceTest.java:26-70` | 回归漏检 | 中 | Testcontainers PG + ES 故障注入；marker/rollback/并发测试 |
 | 21 | 配置/模板/规则文件多为直接覆盖，无统一 revision/audit | `src/main/java/com/xscsiem/hsiem_platform/onboarding/ParserTemplateService.java:59-67`、`src/main/java/com/xscsiem/hsiem_platform/rules/RuleService.java:79-94` | 配置损坏/不可追溯 | 中 | atomic write、schema validation、revision、actor audit、Git commit workflow |
 | 22 | ES template 使用 async translog、单副本；已有索引模板不会追溯 mapping | `infra/elasticsearch/siem-alerts-template.json:4-12`、`infra/elasticsearch/apply-templates.sh:5-10` | 数据丢失/映射漂移 | 中 | 生产同步 durability/副本；模板版本和 reindex migration |
-| 23 | 前端大量初始化错误被静默转空数据 | `web/src/App.jsx:136-146` | 误判“无数据” | 中 | 全局 error boundary/toast；区分 loading/empty/error；trace id |
+| 23 | 前端大量初始化错误被静默转空数据 | `web/src/App.jsx` | 误判“无数据” | 中（已缓解） | 初始化错误集中展示；任务/通知刷新报告错误；后续可补 ErrorBoundary/trace id |
 | 24 | 数据源、规则之间缺少租户字段和索引隔离 | `src/main/java/com/xscsiem/hsiem_platform/onboarding/LogSource.java:20-40`、ES index 固定名 | 多租户数据隔离 | 高（若计划多租户） | 明确当前单租户边界；若多租户，引入 tenant_id、RBAC filter、index/doc-level security |
 
 ## 13. 测试和验证情况
@@ -1629,17 +1631,17 @@ flowchart LR
 | 命令 | 结果 | 说明 |
 |---|---|---|
 | `mvnw.cmd test` | 失败（命令调用方式） | PowerShell 不从当前目录隐式找脚本；未执行测试，不影响代码结论 |
-| `.\mvnw.cmd test` | 成功 | 69 tests，0 failure/error/skip；含 H2 Spring context、安全 API和真实 PostgreSQL 16.4 Testcontainers 迁移 |
+| `.\mvnw.cmd test` | 成功 | 74 tests，0 failure/error/skip；含 H2 Spring context、安全 API、DTO 脱敏、任务恢复和真实 PostgreSQL 16.4 Testcontainers 迁移 |
 | `mvnw.cmd -f flink/pom.xml test` | 失败（同上） | 随后用正确路径重试 |
-| `.\mvnw.cmd -f flink/pom.xml test` | 成功 | 32 tests，0 failure/error/skip；含规则加载/lint、条件、窗口、抑制、基线算子 |
+| `.\mvnw.cmd -f flink/pom.xml test` | 成功 | 33 tests，0 failure/error/skip；含规则加载/lint、条件、窗口、抑制、基线算子和告警 sink 保护字段 |
 | `npm.cmd --prefix web run build` | 成功并有警告 | 4802 modules；JS 约 1,044.18 kB、gzip 331.66 kB，超过 500 kB 建议阈值 |
 | `docker ps -a` | 成功 | 7 个项目容器运行，带 health 的均 healthy |
 | `docker exec ... flink list -a` | 成功 | 1 个 `SIEM Detection Engine (RUNNING)` |
 | Logstash `/_node/pipelines` | 成功 | green，main + 5 per-source |
 | Kafka topic describe | 成功 | siem-events 3 partitions、RF=1、retention 259200000ms |
-| ES `_cat/indices`、PG schema history | 成功 | 事件/告警/案件索引有数据；V1-V5 均 success |
+| ES `_cat/indices`、PG schema history | 代码/测试成功 | 事件/告警/案件索引有数据；V1-V6 迁移已通过 H2/真实 PostgreSQL 测试；运行实例需重启后应用 V6 |
 
-README/CLAUDE 记录的 65/30 已落后于本次实测 69/32，应更新状态文档，但本任务未修改业务或已有文档。
+README/CLAUDE 中的历史测试数字仍可能落后于本轮 74/33，应在下一次文档整理时统一。
 
 ### 13.2 覆盖边界
 
@@ -1651,9 +1653,8 @@ README/CLAUDE 记录的 65/30 已落后于本次实测 69/32，应更新状态�
 - 真实 WSL/rsync/Logstash config test/recreate 故障注入与旧态恢复；
 - Logstash→Kafka→Flink→ES 自动 E2E；
 - Case PG/ES 双写中任一点失败与 reconciliation；
-- 204 前端契约；
-- OperationalHealth 的真实响应语义；
-- Flink sink 对已处置告警字段是否被 timer/upsert 覆盖。
+- Kafka topic metadata/consumer lag 探针；
+- Case 删除镜像 tombstone/outbox，以及多实例任务 lease/自动重试。
 
 ### 13.3 回滚与可观测性说明
 
@@ -1673,6 +1674,8 @@ README/CLAUDE 记录的 65/30 已落后于本次实测 69/32，应更新状态�
 10. Evidence 是否只做外链，还是需要不可篡改内容、hash、custody chain 和权限？
 
 ## 15. 后续改进建议
+
+> 本节是初始分析时的建议清单；认证脱敏/强制改密、stopped 重激活、Flink sink、任务 stale recovery、原子配置和前端 204 等已在第 17 节标明完成或缓解。未完成项主要是生产安全开关、Kafka lag、真实 E2E、删除 tombstone/outbox 和多实例 lease。
 
 ### P0：先消除数据破坏和安全风险
 
@@ -1754,4 +1757,28 @@ README/CLAUDE 记录的 65/30 已落后于本次实测 69/32，应更新状态�
 
 ---
 
-**最终判定**：HISIEM 已形成可运行的轻量 SIEM 数据面和有实际持久化能力的控制面，不是只有接口或页面的演示骨架；但 Logstash 动态配置事务、Case 双写一致性、后台任务恢复和前端契约仍处于“功能可用、可靠性部分闭环”阶段。最高优先级应同时处理：**认证哈希暴露、Logstash 部署态回滚、stopped 重激活、Case 双写与 Flink 覆盖处置字段风险**。
+**初始分析判定**：HISIEM 已形成可运行的轻量 SIEM 数据面和有实际持久化能力的控制面；当时的主要短板为认证哈希暴露、停用重激活、任务恢复、Case 双写和 Flink 覆盖风险。
+
+## 17. 本轮优化复核（2026-08-22）
+
+| 原问题 | 当前处理 | 仍需注意 |
+|---|---|---|
+| 用户 API 返回 `passwordHash`、默认口令长期有效 | `AuthUserView` 脱敏；V6 增加 `password_change_required`；首次登录/管理员新建用户强制通过 `/api/auth/password` 轮换；受保护 API 在轮换前返回 428 | 生产实例重启后需让管理员用旧口令完成一次轮换；ES/Kafka 仍需生产 TLS/认证配置 |
+| stopped 源无法再次生效、重复激活竞争 | stopped 可重新激活；同源生命周期操作有 in-flight 409；前端轮询改为 60 次超时并刷新任务 | 多实例部署仍需共享锁/数据库 CAS；当前部署是单实例 |
+| Logstash/源配置半写入、并发覆盖 | ActivationCoordinator 串行化并使用临时文件替换；LogSourceStore 原子写 YAML；file source 使用持久化 per-source sincedb | 真实 WSL/容器故障注入仍应在发布前执行 |
+| Flink 重放覆盖分析师处置字段 | sink 改为 Update + docAsUpsert，只更新检测字段；新增 1 个 sink 回归测试 | Kafka/ES 双输出仍无分布式事务，单 broker RF=1 是部署限制 |
+| Case 删除孤儿关系、镜像漂移 | 非空案件禁止删除；PG 先删、ES 镜像失败只告警；定时按 PG 全量重放 ES 镜像 | 删除时 ES 暂不可达的孤儿清理仍是 best-effort，生产应增加 tombstone/outbox |
+| 后台 daemon 任务重启后永久 running | 启动及每分钟恢复器把超过 5 分钟的 queued/running 标为 failed，并记录可重试原因 | 尚未实现跨实例 lease、自动重试和取消；任务不会被自动续跑 |
+| 前端 204/401/静默错误、任务不刷新 | API 客户端一次性读取 body 并支持 204；logout 调后端；改密门禁；初始化错误可见；任务 10 秒刷新；删除有确认 | 尚无浏览器 E2E，主 bundle 仍较大 |
+| 健康扫描只看 HTTP<500/TCP | Flink 校验 running job、Kibana overall available、Logstash 优先 pipeline API，API 失败时明确 degraded TCP | Kafka 仍为 TCP 探针；consumer lag/topic metadata 需后续接入 |
+
+### 本轮验证命令
+
+```text
+.\mvnw.cmd test                         # 74 tests, 0 failure/error/skip
+.\mvnw.cmd -f flink\pom.xml test       # 33 tests, 0 failure/error/skip
+npm.cmd --prefix web ci
+npm.cmd --prefix web run build
+```
+
+本轮没有提交 `target/`、`flink/target/`、`web/dist/` 或本地运行态文件；`AGENTSOLD.md` 和 `infra/elasticsearch/config/elasticsearch.keystore` 为既有未跟踪文件，未读取、未修改。

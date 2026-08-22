@@ -25,7 +25,9 @@ import org.apache.flink.streaming.api.windowing.assigners.SlidingEventTimeWindow
 import org.apache.flink.streaming.api.windowing.assigners.TumblingEventTimeWindows;
 import org.apache.kafka.clients.consumer.OffsetResetStrategy;
 
-import co.elastic.clients.elasticsearch.core.bulk.IndexOperation;
+import co.elastic.clients.elasticsearch.core.bulk.UpdateAction;
+import co.elastic.clients.elasticsearch.core.bulk.UpdateOperation;
+import co.elastic.clients.elasticsearch.core.bulk.BulkOperationVariant;
 import co.elastic.clients.json.JsonData;
 import org.apache.http.HttpHost;
 
@@ -34,8 +36,10 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 
 /**
@@ -250,13 +254,7 @@ public class DetectionJob {
                                 .setMaxInFlightRequests(tuning.esMaxInFlightRequests())
                                 .setMaxBufferedRequests(tuning.esMaxBufferedRequests())
                                 .setMaxTimeInBufferMS(tuning.esMaxTimeInBufferMs())
-                                .setElementConverter((element, context) ->
-                                        new IndexOperation.Builder<JsonData>()
-                                                .index("siem-alerts")
-                                                .id(alertId(element))       // 确定性 _id:重放变幂等 upsert(Phase 3.0-F2)
-                                                .document(JsonData.fromJson(element))   // element 是告警 JSON 字符串
-                                                .build()
-                                )
+                                .setElementConverter((element, context) -> alertOperation(element))
                                 .build()
                 )
                 .uid("es-sink");
@@ -265,6 +263,34 @@ public class DetectionJob {
         env.execute(
                 "SIEM Detection Engine"
         );
+    }
+
+    /**
+     * 告警检测字段使用部分更新，避免 suppression timer 或重放覆盖分析师处置字段。
+     * 新告警通过 upsert 保留完整文档；已有告警只更新检测侧字段。
+     */
+    static BulkOperationVariant alertOperation(String element) {
+        try {
+            Map<String, Object> full = ALERT_MAPPER.readValue(element, Map.class);
+            Map<String, Object> patch = new HashMap<>(full);
+            Set<String> protectedFields = Set.of(
+                    "alert.status", "alert.analyst_verdict", "alert.operator",
+                    "alert.status_updated_at", "alert.case_id");
+            protectedFields.forEach(patch::remove);
+            JsonData fullDoc = JsonData.fromJson(element);
+            JsonData partialDoc = JsonData.fromJson(ALERT_MAPPER.writeValueAsString(patch));
+            return new UpdateOperation.Builder<JsonData, JsonData>()
+                            .index("siem-alerts")
+                            .id(alertId(element))
+                            .action(new UpdateAction.Builder<JsonData, JsonData>()
+                                    .doc(partialDoc)
+                                    .upsert(fullDoc)
+                                    .docAsUpsert(true)
+                                    .build())
+                            .build();
+        } catch (Exception e) {
+            throw new IllegalArgumentException("告警 JSON 无法生成 ES 更新操作", e);
+        }
     }
 
     /** 构建 CEP 序列 Pattern:首个 begin 步骤 + 后续 next/followedBy 步骤,整体 within。 */

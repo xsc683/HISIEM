@@ -17,11 +17,17 @@ async function request(path, options) {
     authToken = ''
     localStorage.removeItem('siem_token')
   }
-  if (!r.ok) {
-    const body = await r.json().catch(() => ({}))
-    throw new Error(body.error || `请求失败: ${r.status}`)
+  const raw = await r.text()
+  let body = null
+  if (raw.trim()) {
+    try { body = JSON.parse(raw) } catch {
+      body = { message: raw.slice(0, 200) }
+    }
   }
-  return r.json()
+  if (!r.ok) {
+    throw new Error(body?.message || body?.error || `请求失败: ${r.status}`)
+  }
+  return r.status === 204 || !raw.trim() ? null : body
 }
 
 export function listTemplates() {
@@ -171,9 +177,18 @@ export function login(username, password) {
 }
 
 export function logout() {
-  authToken = ''
-  localStorage.removeItem('siem_token')
-  return request('/auth/logout', { method: 'POST' }).catch(() => {})
+  return request('/auth/logout', { method: 'POST' }).catch(() => {}).finally(() => {
+    authToken = ''
+    localStorage.removeItem('siem_token')
+  })
+}
+
+export function changePassword(currentPassword, newPassword) {
+  return request('/auth/password', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ currentPassword, newPassword }),
+  })
 }
 
 export function authMe() {

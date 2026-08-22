@@ -5,6 +5,7 @@ import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -44,7 +45,7 @@ public class ActivationCoordinator {
     }
 
     /** 生效;失败已回滚文件并抛 {@link ActivationFailedException},由调用方置 failed 状态。 */
-    public void activate(LogSource s, ParserTemplate t) {
+    public synchronized void activate(LogSource s, ParserTemplate t) {
         Path confFile = Path.of(pipelineDir, "log-sources", s.id + ".conf");
         Path pipelines = Path.of(configDir, "pipelines.yml");
         Path compose = Path.of(composeFile);
@@ -57,14 +58,14 @@ public class ActivationCoordinator {
             Files.createDirectories(pipelines.getParent());
 
             pipelinesBackup = Files.exists(pipelines) ? Files.readString(pipelines) : "";
-            Files.writeString(confFile, conf);
+            atomicWrite(confFile, conf);
 
             String entry = "- pipeline.id: " + pipelineId(s) + "\n"
                     + "  path.config: \"" + containerPath + "\"\n"
                     + "  pipeline.ecs_compatibility: v8\n";
             String base = (pipelinesBackup == null || pipelinesBackup.isEmpty())
                     ? "" : (pipelinesBackup.endsWith("\n") ? pipelinesBackup : pipelinesBackup + "\n");
-            Files.writeString(pipelines, base + entry);
+            atomicWrite(pipelines, base + entry);
 
             // 数据源端口映射到宿主机(路线B):把 "<port>:<port>" 加进 compose 的 logstash ports(幂等)。
             // 同步/校验/重启任一步失败 → 还原 compose(见 rollback)。
@@ -93,7 +94,7 @@ public class ActivationCoordinator {
     }
 
     /** 停用数据源并移除 pipeline、端口映射；任一步失败都恢复原文件。 */
-    public void deactivate(LogSource s) {
+    public synchronized void deactivate(LogSource s) {
         Path confFile = Path.of(pipelineDir, "log-sources", s.id + ".conf");
         Path pipelines = Path.of(configDir, "pipelines.yml");
         Path compose = Path.of(composeFile);
@@ -111,10 +112,10 @@ public class ActivationCoordinator {
 
             Files.deleteIfExists(confFile);
             if (pipelinesBackup != null) {
-                Files.writeString(pipelines, removePipelineEntry(pipelinesBackup, s.id));
+                atomicWrite(pipelines, removePipelineEntry(pipelinesBackup, s.id));
             }
             if (composeBackup != null && portProtocol(s)) {
-                Files.writeString(compose, removePortFromCompose(composeBackup, s.port));
+                atomicWrite(compose, removePortFromCompose(composeBackup, s.port));
             }
             deployer.syncLogstash();
             if (portProtocol(s)) {
@@ -156,16 +157,16 @@ public class ActivationCoordinator {
         try {
             if (confExisted) {
                 Files.createDirectories(confFile.getParent());
-                Files.writeString(confFile, confBackup);
+                atomicWrite(confFile, confBackup);
             } else {
                 Files.deleteIfExists(confFile);
             }
             if (pipelinesBackup != null) {
                 Files.createDirectories(pipelines.getParent());
-                Files.writeString(pipelines, pipelinesBackup);
+                atomicWrite(pipelines, pipelinesBackup);
             }
             if (composeBackup != null) {
-                Files.writeString(compose, composeBackup);
+                atomicWrite(compose, composeBackup);
             }
         } catch (IOException rollback) {
             System.err.println("[ActivationCoordinator] 停用回滚失败: " + rollback.getMessage());
@@ -198,7 +199,7 @@ public class ActivationCoordinator {
         if (updated.equals(original)) {
             throw new IllegalStateException("compose 端口插入失败: " + compose);
         }
-        Files.writeString(compose, updated);
+        atomicWrite(compose, updated);
         return original;
     }
 
@@ -211,11 +212,11 @@ public class ActivationCoordinator {
                 if (pipelinesBackup.isEmpty()) {
                     Files.deleteIfExists(pipelines);
                 } else {
-                    Files.writeString(pipelines, pipelinesBackup);
+                    atomicWrite(pipelines, pipelinesBackup);
                 }
             }
             if (composeBackup != null) {
-                Files.writeString(compose, composeBackup);
+                atomicWrite(compose, composeBackup);
             }
         } catch (IOException e) {
             System.err.println("[ActivationCoordinator] 回滚失败: " + e.getMessage());
@@ -240,5 +241,22 @@ public class ActivationCoordinator {
 
     private static boolean portProtocol(LogSource s) {
         return s.port > 0 && ("tcp".equalsIgnoreCase(s.protocol) || "syslog".equalsIgnoreCase(s.protocol));
+    }
+
+    /** 写临时文件后替换目标，避免 Logstash 读取到半截 YAML/conf。调用方已持有生命周期锁。 */
+    private static void atomicWrite(Path target, String content) throws IOException {
+        Path parent = target.toAbsolutePath().getParent();
+        if (parent != null) Files.createDirectories(parent);
+        Path temp = Files.createTempFile(parent, target.getFileName().toString(), ".tmp");
+        try {
+            Files.writeString(temp, content);
+            try {
+                Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            } catch (java.nio.file.AtomicMoveNotSupportedException e) {
+                Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING);
+            }
+        } finally {
+            Files.deleteIfExists(temp);
+        }
     }
 }

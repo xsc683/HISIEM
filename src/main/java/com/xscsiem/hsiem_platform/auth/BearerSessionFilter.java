@@ -30,6 +30,13 @@ public class BearerSessionFilter extends OncePerRequestFilter {
         if (token != null && SecurityContextHolder.getContext().getAuthentication() == null) {
             AuthUser user = auth.authenticateToken(token);
             if (user != null) {
+                if (user.passwordChangeRequired && requiresPasswordChange(request)) {
+                    response.setStatus(428); // Precondition Required
+                    response.setContentType("application/json");
+                    response.setCharacterEncoding("UTF-8");
+                    response.getWriter().write("{\"code\":\"PASSWORD_CHANGE_REQUIRED\",\"message\":\"请先修改密码\"}");
+                    return;
+                }
                 var authorities = auth.authorities(user).stream()
                         .map(SimpleGrantedAuthority::new).toList();
                 // principal 使用用户名而不是 AuthUser 对象,保证 Authentication#getName
@@ -40,6 +47,15 @@ public class BearerSessionFilter extends OncePerRequestFilter {
             }
         }
         filterChain.doFilter(request, response);
+    }
+
+    private static boolean requiresPasswordChange(HttpServletRequest request) {
+        String path = request.getRequestURI();
+        return path.startsWith("/api/")
+                && !path.equals("/api/auth/login")
+                && !path.equals("/api/auth/password")
+                && !path.equals("/api/auth/me")
+                && !path.equals("/api/auth/logout");
     }
 
     private static String extractToken(String header) {
