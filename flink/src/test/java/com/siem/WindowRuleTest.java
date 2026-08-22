@@ -25,6 +25,8 @@ public class WindowRuleTest {
         m.put("@timestamp", "2026-08-01T11:30:00.000Z");
         m.put("event.action", "authentication_failure");
         m.put("source.ip", ip);
+        m.put("log.source_id", "ls-demo");
+        m.put("log.source_name", "demo-ssh");
         return m;
     }
 
@@ -47,6 +49,8 @@ public class WindowRuleTest {
         assertEquals(3, alert.get("event_count"));
         assertEquals(3, ((List<?>) alert.get("related_events")).size());
         assertEquals("authentication_failure", alert.get("event.action"));
+        assertEquals("ls-demo", alert.get("log.source_id"));
+        assertEquals("demo-ssh", alert.get("log.source_name"));
     }
 
     @Test

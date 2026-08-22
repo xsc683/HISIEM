@@ -63,7 +63,7 @@ public class WindowRuleFunction extends ProcessWindowFunction<Event, String, Str
         alert.put(rule.getKeyField(), key);
         if (!matched.isEmpty()) {
             Map<String, Object> first = matched.get(0);
-            for (String f : new String[]{"event.action", "event.category", "user.name", "host.name"}) {
+            for (String f : new String[]{"log.source_id", "log.source_name", "event.action", "event.category", "user.name", "host.name"}) {
                 if (first.containsKey(f)) {
                     alert.put(f, first.get(f));
                 }

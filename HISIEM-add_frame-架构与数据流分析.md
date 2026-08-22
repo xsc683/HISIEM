@@ -54,7 +54,8 @@
 7. **已修复：动态 per-source pipeline 与主 pipeline 统一。** `_parsefailure` 和 `_dateparsefailure` 均进入 `siem-events-raw-*`，不再发送 Kafka/Flink；DataHealth 已分开统计正常、失败和配置源。
 8. **已修复：认证管理 API 使用脱敏 DTO。** `GET /api/auth/users` 不返回 BCrypt；V6 强制首次登录改密，轮换前业务 API 返回 428。`src/main/java/com/xscsiem/hsiem_platform/auth/AuthUserView.java`、`src/main/resources/db/migration/V6__password_rotation.sql`
 9. **已修复：前端请求正确处理 204、超时和失败提示。** 删除/登出等 204 不再被误报，初始化和详情加载错误会展示，数据源轮询采用指数退避。
-10. **仍需补充跨组件验收。** 单元、迁移和 Flink 算子回归已覆盖；浏览器 E2E、真实 Logstash/WSL 故障注入及 Kafka→Flink→ES 故障演练仍属于发布前验收项。
+10. **已优化：前端统一时间口径和跨页签关联。** 页面按浏览器本地时区展示时间，并区分事件/窗口结束时间与告警生成时间；告警、规则、案件、数据健康通过规则命中数、数据源、案件 ID、实体和时间线互相串联。调查台的聚合窗口/阈值改为可见数字控件并显示当前生效条件。
+11. **仍需补充跨组件验收。** 单元、迁移和 Flink 算子回归已覆盖；浏览器 E2E、真实 Logstash/WSL 故障注入及 Kafka→Flink→ES 故障演练仍属于发布前验收项。
 
 ## 3. 系统总体架构
 

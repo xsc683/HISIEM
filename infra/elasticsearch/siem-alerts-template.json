@@ -35,6 +35,8 @@
         "rule.status": { "type": "keyword" },
         "rule.version": { "type": "keyword" },
         "source.ip": { "type": "ip" },
+        "log.source_id": { "type": "keyword" },
+        "log.source_name": { "type": "keyword" },
         "user.name": { "type": "keyword" },
         "host.name": { "type": "keyword" },
         "event.action": { "type": "keyword" },

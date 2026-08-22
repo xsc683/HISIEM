@@ -72,7 +72,9 @@ public class RuleEngineTest {
                 + "\"event.action\":\"authentication_failure\","
                 + "\"user.name\":\"root\","
                 + "\"source.ip\":\"10.0.0.8\","
-                + "\"host.name\":\"server04\"}";
+                + "\"host.name\":\"server04\","
+                + "\"log.source_id\":\"ls-demo\","
+                + "\"log.source_name\":\"demo-ssh\"}";
         java.util.List<String> out = new java.util.ArrayList<>();
         fn.flatMap(EventParser.parseEvent(eventJson), new org.apache.flink.util.Collector<>() {
             @Override
@@ -87,5 +89,6 @@ public class RuleEngineTest {
         // root 事件命中 2 条规则:SSH 认证失败 + root 认证失败
         assertEquals(2, out.size());
         assertTrue(out.stream().anyMatch(a -> a.contains("\"alert.rule_id\":\"rule-root-login-failure-001\"")));
+        assertTrue(out.stream().allMatch(a -> a.contains("\"log.source_id\":\"ls-demo\"")));
     }
 }

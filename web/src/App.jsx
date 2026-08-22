@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ConfigProvider, Layout, Menu, Button, Input, Select, Table, Card, Tag, Steps, Space, Descriptions, Badge, Tabs, Alert, Typography, Divider, Empty, Modal, message, theme } from 'antd'
+import { ConfigProvider, Layout, Menu, Button, Input, InputNumber, Select, Table, Card, Tag, Steps, Space, Descriptions, Badge, Tabs, Alert, Typography, Divider, Empty, Modal, message, theme } from 'antd'
 import {
   LoginOutlined, LogoutOutlined, BellOutlined, SafetyCertificateOutlined,
   AlertOutlined, DeploymentUnitOutlined, BarChartOutlined, TagOutlined, TeamOutlined,
@@ -38,6 +38,36 @@ const RISK_COLOR = (score) => {
   return 'green'
 }
 
+const LOCAL_TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+const LOCAL_TIME_LABEL = LOCAL_TIME_ZONE === 'Asia/Shanghai' ? '北京时间 (UTC+8)' : LOCAL_TIME_ZONE
+
+function formatPlatformTime(value) {
+  if (!value) return '—'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return String(value)
+  return new Intl.DateTimeFormat('zh-CN', {
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  }).format(date)
+}
+
+function timeTitle(value) {
+  return value ? `原始 UTC：${value}；页面显示：${LOCAL_TIME_LABEL}` : undefined
+}
+
+function TimeText({ value }) {
+  return <Typography.Text title={timeTitle(value)}>{formatPlatformTime(value)}</Typography.Text>
+}
+
+function alertSource(alert) {
+  const direct = alert?.['log.source_name'] || alert?.['log.source_id']
+  if (direct) return direct
+  const related = Array.isArray(alert?.related_events)
+    ? alert.related_events.find((event) => event?.['log.source_name'] || event?.['log.source_id'])
+    : null
+  return related?.['log.source_name'] || related?.['log.source_id'] || '未标记数据源'
+}
+
 const MENU_ITEMS = [
   { key: 'wizard', icon: <ApiOutlined />, label: '接入向导' },
   { key: 'rules', icon: <DeploymentUnitOutlined />, label: '检测规则' },
@@ -70,6 +100,7 @@ export default function App() {
   const [activating, setActivating] = useState({})
 
   const [detRules, setDetRules] = useState([])
+  const [ruleHits, setRuleHits] = useState({})
   const [deploying, setDeploying] = useState(false)
   const [deployMsg, setDeployMsg] = useState('')
   const [mitre, setMitre] = useState({})
@@ -111,6 +142,7 @@ export default function App() {
   const [cases, setCases] = useState([])
   const [caseFilter, setCaseFilter] = useState('')
   const [detailCase, setDetailCase] = useState(null)
+  const [caseAlertDetails, setCaseAlertDetails] = useState({})
   const [caseTitle, setCaseTitle] = useState('')
   const [caseWindow, setCaseWindow] = useState(30)
   const [caseThreshold, setCaseThreshold] = useState(2)
@@ -126,6 +158,12 @@ export default function App() {
   const [activeKey, setActiveKey] = useState(() => routeKeyFromPath())
   const [collapsed, setCollapsed] = useState(false)
   const [wizardStep, setWizardStep] = useState(0)
+  const [now, setNow] = useState(() => new Date())
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), 1000)
+    return () => window.clearInterval(timer)
+  }, [])
 
   function navigate(key) {
     setActiveKey(key)
@@ -156,7 +194,12 @@ export default function App() {
     listCases(caseFilter).then(setCases).catch(report('案件'))
     listTemplates().then(setTemplates).catch(report('解析模板'))
     listLogSources().then(setSources).catch(report('数据源'))
-    listDetectionRules().then(setDetRules).catch(report('检测规则'))
+    listDetectionRules().then(async (rows) => {
+      setDetRules(rows)
+      const counts = await Promise.all(rows.map((rule) =>
+        getRuleHits(rule.id).then((result) => [rule.id, result.count]).catch(() => [rule.id, null])))
+      setRuleHits(Object.fromEntries(counts))
+    }).catch(report('检测规则'))
     ruleMitre().then(setMitre).catch(report('MITRE'))
     dataHealthSources().then(setHealth).catch(report('数据健康'))
     listCriticality().then(setCrit).catch(report('资产关键度'))
@@ -475,6 +518,7 @@ export default function App() {
     try {
       const c = await createCase(ids, caseTitle || `案件 ${new Date().toISOString().slice(0, 10)}`)
       setSelAlerts(new Set())
+      await reloadAlerts()
       await reloadCases()
       openCaseDetail(c['case.id'])
       message.success('案件已创建')
@@ -487,7 +531,13 @@ export default function App() {
     if (c) {
       setCaseOwner(c['case.owner'] || '')
       setCaseCollaborators((c['case.collaborators'] || []).join(', '))
-      setCaseTimeline_(await caseTimeline(id, 30).catch((e) => { message.error(`时间线加载失败: ${e.message}`); return [] }))
+      const alertIds = c['alert_ids'] || []
+      const [timeline, linked] = await Promise.all([
+        caseTimeline(id, 30).catch((e) => { message.error(`时间线加载失败: ${e.message}`); return [] }),
+        Promise.all(alertIds.slice(0, 50).map((alertId) => getAlert(alertId).then((alert) => [alertId, alert]).catch(() => [alertId, null]))),
+      ])
+      setCaseTimeline_(timeline)
+      setCaseAlertDetails((prev) => ({ ...prev, ...Object.fromEntries(linked.filter(([, alert]) => alert)) }))
     }
   }
 
@@ -508,6 +558,7 @@ export default function App() {
     if (!verdict) { message.warning('结案必选 verdict'); return }
     try {
       await updateCaseStatus(id, 'resolved', verdict)
+      await reloadAlerts()
       await reloadCases()
       openCaseDetail(id)
       message.success('案件已结案,内部告警批量 closed')
@@ -536,6 +587,7 @@ export default function App() {
     try {
       await addCaseAlerts(id, ids)
       setSelAlerts(new Set())
+      await reloadAlerts()
       openCaseDetail(id)
     } catch (e) { message.error(e.message) }
   }
@@ -543,6 +595,7 @@ export default function App() {
   async function handleRemoveFromCase(id, alertId) {
     try {
       await removeCaseAlert(id, alertId)
+      await reloadAlerts()
       openCaseDetail(id)
     } catch (e) { message.error(e.message) }
   }
@@ -669,6 +722,9 @@ export default function App() {
               <Typography.Text strong style={{ fontSize: 16 }}>{MENU_ITEMS.find((m) => m.key === activeKey)?.label}</Typography.Text>
             </Space>
             <Space size="middle">
+              <Typography.Text type="secondary" style={{ fontSize: 12 }} title="Elasticsearch 中的事件时间和告警生成时间以 UTC ISO-8601 保存，页面按浏览器本地时区显示">
+                时间：{LOCAL_TIME_LABEL} · {formatPlatformTime(now)}
+              </Typography.Text>
               <Badge count={openAlertCount} size="small"><Button icon={<AlertOutlined />} onClick={() => navigate('alerts')}>告警</Button></Badge>
               <Badge count={unreadCount} size="small"><Button icon={<BellOutlined />} onClick={() => navigate('notify')}>通知</Button></Badge>
               <Space>
@@ -727,6 +783,7 @@ export default function App() {
                     columns={[
                       { title: '规则 ID', dataIndex: 'id', render: (v) => <code>{v}</code> },
                       { title: '名称', dataIndex: 'name' },
+                      { title: '近 7d 命中', render: (_, r) => ruleHits[r.id] == null ? <Typography.Text type="secondary">—</Typography.Text> : <Badge count={ruleHits[r.id]} showZero color={ruleHits[r.id] > 0 ? '#1677ff' : '#bfbfbf'} /> },
                       { title: '类别', dataIndex: 'category', render: (v) => <Tag>{v}</Tag> },
                       { title: 'type', dataIndex: 'type', render: (v) => <code>{v}</code> },
                       { title: '风险分', dataIndex: 'riskScore', sorter: (a, b) => a.riskScore - b.riskScore, render: (v) => <Tag color={RISK_COLOR(v)}>{v}</Tag> },
@@ -769,6 +826,7 @@ export default function App() {
                     rowKey="_id"
                     dataSource={alerts}
                     size="small"
+                    scroll={{ x: 1280 }}
                     pagination={{ pageSize: 15, showTotal: (t) => `共 ${t} 条告警` }}
                     rowSelection={{
                       selectedRowKeys: [...selAlerts],
@@ -777,6 +835,9 @@ export default function App() {
                     expandable={{
                       expandedRowRender: (r) => (
                         <Space direction="vertical" size="small" style={{ width: '100%' }}>
+                          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                            时间说明：事件时间用于检测窗口；告警生成时间表示系统发现并写入告警的时间。原始 JSON 按 UTC 保存，页面字段按 {LOCAL_TIME_LABEL} 显示。
+                          </Typography.Text>
                           <Space wrap>
                             <Button size="small" onClick={() => handleAlertStatus(r._id, 'acknowledged')}>ack</Button>
                             <Button size="small" onClick={() => handleAlertStatus(r._id, 'investigating')}>investigating</Button>
@@ -797,8 +858,15 @@ export default function App() {
                       { title: 'severity', dataIndex: 'alert.severity', render: (v) => <Tag color={v === 'critical' ? 'red' : v === 'high' ? 'orange' : v === 'medium' ? 'gold' : 'blue'}>{v}</Tag> },
                       { title: '状态', dataIndex: 'alert.status', render: (v) => <Tag color={STATUS_TAG[v]}>{v}</Tag> },
                       { title: 'verdict', dataIndex: 'alert.analyst_verdict', render: (v) => v ? <Tag color={VERDICT_TAG[v]}>{v}</Tag> : <Typography.Text type="secondary">—</Typography.Text> },
-                      { title: '来源', dataIndex: 'source.ip', render: (v, r) => v || r['user.name'] || '—' },
-                      { title: '时间', dataIndex: '@timestamp', width: 180, render: (v) => <Typography.Text type="secondary" style={{ fontSize: 11 }}>{v}</Typography.Text> },
+                      { title: '来源/实体', dataIndex: 'source.ip', render: (v, r) => (
+                        <Space direction="vertical" size={0}>
+                          <Typography.Text>{alertSource(r)}</Typography.Text>
+                          <Typography.Text type="secondary" style={{ fontSize: 11 }}>{v || r['user.name'] || r['alert.entity'] || '—'}</Typography.Text>
+                        </Space>
+                      ) },
+                      { title: '案件', dataIndex: 'alert.case_id', render: (v) => v ? <Tag color="blue">{v}</Tag> : <Typography.Text type="secondary">未归案</Typography.Text> },
+                      { title: '事件时间/窗口结束', dataIndex: '@timestamp', width: 180, render: (v) => <TimeText value={v} /> },
+                      { title: '告警生成', dataIndex: 'alert.created_at', width: 180, render: (v) => <TimeText value={v} /> },
                     ]}
                   />
                   <details>
@@ -820,7 +888,7 @@ export default function App() {
             {/* ===== 调查台 ===== */}
             {activeKey === 'cases' && (
               <CasesView
-                cases={cases} setCases={setCases} caseFilter={caseFilter} setCaseFilter={setCaseFilter}
+                cases={cases} setCases={setCases} alerts={alerts} caseAlertDetails={caseAlertDetails} caseFilter={caseFilter} setCaseFilter={setCaseFilter}
                 selAlerts={selAlerts} setSelAlerts={setSelAlerts} caseTitle={caseTitle} setCaseTitle={setCaseTitle}
                 caseWindow={caseWindow} setCaseWindow={setCaseWindow} caseThreshold={caseThreshold} setCaseThreshold={setCaseThreshold}
                 caseGroupByRule={caseGroupByRule} setCaseGroupByRule={setCaseGroupByRule}
@@ -848,6 +916,12 @@ export default function App() {
                         <Space>
                           <strong>{s.sourceName || '(未命名)'}</strong>
                           <code style={{ fontSize: 12, color: '#999' }}>{s.sourceId}</code>
+                          {(() => {
+                            const source = sources.find((item) => item.id === s.sourceId)
+                            if (!source) return null
+                            const endpoint = source.protocol === 'file' ? source.path : `${source.protocol}:${source.port}`
+                            return <Tag color="blue">接入 {endpoint}</Tag>
+                          })()}
                           {s.status && <Tag color={s.status === 'active' ? (s.anomalous ? 'orange' : 'green') : s.status === 'failed' ? 'red' : 'default'}>{s.status}</Tag>}
                           {s.anomalous && <Tag color="red">⚠ 解析异常({s.reason})</Tag>}
                         </Space>
@@ -859,7 +933,7 @@ export default function App() {
                         <span>总尝试 <b>{s.totalEvents1h ?? s.events1h}</b> 条</span>
                         <span>近 24h <b>{s.events24h}</b> 条</span>
                         <span>失败率 <b style={{ color: s.failRate > 5 ? '#f5222d' : '#52c41a' }}>{s.failRate}%</b> ({s.failures1h} 条)</span>
-                        <span>最后收到 <b>{s.lastSeen ? new Date(s.lastSeen).toLocaleString() : '—'}</b></span>
+                        <span>最后收到 <b><TimeText value={s.lastSeen} /></b></span>
                       </Space>
                       {healthDetail && healthDetail.sourceId === s.sourceId && (
                         <div style={{ marginTop: 12 }}>
@@ -880,7 +954,7 @@ export default function App() {
                               <div style={{ maxHeight: 200, overflow: 'auto', marginTop: 6 }}>
                                 {healthDetail.failures.map((f, i) => (
                                   <div key={i} style={{ fontSize: 12, marginBottom: 4 }}>
-                                    <code>{f['@timestamp']}</code> {f.message}
+                                    <TimeText value={f['@timestamp']} /> {f.message}
                                   </div>
                                 ))}
                               </div>
@@ -915,7 +989,7 @@ export default function App() {
                   <Table rowKey="id" size="small" pagination={{ pageSize: 8 }} dataSource={tasks}
                     columns={[{ title: '任务', dataIndex: 'type' }, { title: '资源', dataIndex: 'resourceId' },
                       { title: '状态', dataIndex: 'status' }, { title: '进度', dataIndex: 'progress', render: (v) => `${v}%` },
-                      { title: '消息', dataIndex: 'message' }, { title: '更新时间', dataIndex: 'updatedAt' }]} />
+                      { title: '消息', dataIndex: 'message' }, { title: '更新时间', dataIndex: 'updatedAt', render: (v) => <TimeText value={v} /> }]} />
                 </>}
               </Card>
             )}
@@ -969,7 +1043,7 @@ export default function App() {
                     }}>
                       <div>
                         <Tag color="blue">{n.type}</Tag> {n.message}
-                        <div style={{ fontSize: 11, color: '#999' }}>{n.timestamp}</div>
+                        <div style={{ fontSize: 11, color: '#999' }}><TimeText value={n.timestamp} /></div>
                       </div>
                       <Space>
                         {!n.read && <Button size="small" onClick={() => handleReadNotif(n.id)}>已读</Button>}
@@ -1030,7 +1104,7 @@ export default function App() {
                         <div style={{ maxHeight: 300, overflow: 'auto' }}>
                           {audit.slice().reverse().map((a, i) => (
                             <div key={i} style={{ fontSize: 12, padding: '3px 0' }}>
-                              <code>{a.timestamp}</code> {a.action} → {a.target}
+                              <TimeText value={a.timestamp} /> {a.action} → {a.target}
                             </div>
                           ))}
                         </div>
@@ -1210,7 +1284,7 @@ function WizardView({ step, setStep, templates, selectedId, setSelectedId, selec
 }
 
 // ================= 子组件:调查台 =================
-function CasesView({ cases, setCases, caseFilter, setCaseFilter, selAlerts, setSelAlerts, caseTitle, setCaseTitle,
+function CasesView({ cases, setCases, alerts, caseAlertDetails, caseFilter, setCaseFilter, selAlerts, setSelAlerts, caseTitle, setCaseTitle,
   caseWindow, setCaseWindow, caseThreshold, setCaseThreshold, caseGroupByRule, setCaseGroupByRule,
   detailCase, setDetailCase, caseTimeline_, openCaseDetail, handleCreateCase, handleAggregate,
   handleInvestigateCase, handleResolveCase, handleAddToCase, handleRemoveFromCase, handleDeleteCase,
@@ -1225,10 +1299,16 @@ function CasesView({ cases, setCases, caseFilter, setCaseFilter, selAlerts, setS
             onChange={(v) => { setCaseFilter(v || ''); listCases(v || '').then(setCases).catch((e) => message.error(`案件筛选失败: ${e.message}`)) }}
             options={['open', 'investigating', 'resolved'].map((s) => ({ value: s, label: s }))} />
           <Button type="primary" onClick={handleAggregate}>触发一轮自动聚合</Button>
-          <Input type="number" min={1} max={1440} style={{ width: 110 }} value={caseWindow}
-            onChange={(e) => setCaseWindow(e.target.value)} addonBefore="窗口" addonAfter="分" />
-          <Input type="number" min={2} max={1000} style={{ width: 110 }} value={caseThreshold}
-            onChange={(e) => setCaseThreshold(e.target.value)} addonBefore="阈值" />
+          <Space direction="vertical" size={2}>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>聚合窗口（分钟）</Typography.Text>
+            <InputNumber min={1} max={1440} precision={0} style={{ width: 130 }} value={Number(caseWindow)}
+              onChange={(value) => setCaseWindow(value ?? 30)} />
+          </Space>
+          <Space direction="vertical" size={2}>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>最少告警数</Typography.Text>
+            <InputNumber min={2} max={1000} precision={0} style={{ width: 130 }} value={Number(caseThreshold)}
+              onChange={(value) => setCaseThreshold(value ?? 2)} />
+          </Space>
           <Select value={caseGroupByRule} onChange={setCaseGroupByRule} style={{ width: 140 }}
             options={[{ value: false, label: '按实体分组' }, { value: true, label: '按规则+实体' }]} />
           <Button onClick={() => setSelAlerts(new Set())}>清空告警勾选</Button>
@@ -1236,6 +1316,13 @@ function CasesView({ cases, setCases, caseFilter, setCaseFilter, selAlerts, setS
           <Button type="primary" onClick={handleCreateCase}>手动聚合勾选告警为案件</Button>
           <Typography.Text type="secondary">已勾选 {selAlerts.size} 条 open 告警</Typography.Text>
         </Space>
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginTop: 12 }}
+          message={`当前自动聚合条件：${Number(caseWindow)} 分钟内，同一实体至少 ${Number(caseThreshold)} 条 open 告警${caseGroupByRule ? '，且按同一规则分组' : ''}`}
+          description={`聚合依据是事件时间（页面按${LOCAL_TIME_LABEL}显示）；生成案件后，可在案件详情查看告警、实体和近 24 小时事件时间线。`}
+        />
       </Card>
 
       <Card>
@@ -1255,8 +1342,11 @@ function CasesView({ cases, setCases, caseFilter, setCaseFilter, selAlerts, setS
                   <Tag>{c['case.aggregation'] === 'auto' ? '自动聚合' : '手动聚合'}</Tag>
                 </Space>
                 <div style={{ marginTop: 4, fontSize: 12, color: '#888' }}>
-                  {c['alert_ids']?.length} 告警 · 负责人 {c['case.owner'] || '-'} · 更新 {c['case.updated_at']}
+                  {c['alert_ids']?.length} 告警 · 负责人 {c['case.owner'] || '-'} · 更新 <TimeText value={c['case.updated_at']} />
                 </div>
+                <Space size={4} wrap style={{ marginTop: 6 }}>
+                  {(c.entities || []).map((entity) => <Tag key={`${entity.type}:${entity.value}`} color="blue">{entity.type}:{entity.value}</Tag>)}
+                </Space>
               </div>
               <Space>
                 <Button size="small" onClick={() => openCaseDetail(c['case.id'])}>详情</Button>
@@ -1292,8 +1382,8 @@ function CasesView({ cases, setCases, caseFilter, setCaseFilter, selAlerts, setS
               <Descriptions.Item label="操作者">{detailCase['case.operator']}</Descriptions.Item>
               <Descriptions.Item label="负责人">{detailCase['case.owner'] || '—'}</Descriptions.Item>
               <Descriptions.Item label="实体">{(detailCase['entities'] || []).map((e) => <Tag key={e.type + e.value}>{e.type}:{e.value}</Tag>)}</Descriptions.Item>
-              <Descriptions.Item label="创建时间">{detailCase['case.created_at']}</Descriptions.Item>
-              <Descriptions.Item label="结案时间">{detailCase['case.closed_at'] || '—'}</Descriptions.Item>
+              <Descriptions.Item label="创建时间"><TimeText value={detailCase['case.created_at']} /></Descriptions.Item>
+              <Descriptions.Item label="结案时间"><TimeText value={detailCase['case.closed_at']} /></Descriptions.Item>
             </Descriptions>
 
             <Space wrap style={{ marginBottom: 12 }}>
@@ -1322,11 +1412,14 @@ function CasesView({ cases, setCases, caseFilter, setCaseFilter, selAlerts, setS
 
             <Divider style={{ margin: '12px 0' }}>案内告警({(detailCase['alert_ids'] || []).length})</Divider>
             <Space wrap>
-              {(detailCase['alert_ids'] || []).map((id) => (
-                <Tag key={id} closable onClose={() => handleRemoveFromCase(detailCase['case.id'], id)} color="blue">
-                  <code>{id.slice(0, 12)}</code>
-                </Tag>
-              ))}
+              {(detailCase['alert_ids'] || []).map((id) => {
+                const linkedAlert = caseAlertDetails[id] || alerts.find((item) => item._id === id)
+                return (
+                  <Tag key={id} closable onClose={() => handleRemoveFromCase(detailCase['case.id'], id)} color="blue">
+                    {linkedAlert?.['alert.rule_name'] || '告警'} · {linkedAlert?.['alert.severity'] || '未知级别'} · <code>{id.slice(0, 12)}</code>
+                  </Tag>
+                )
+              })}
             </Space>
 
             <Divider style={{ margin: '16px 0' }}>关联事件时间线(实时查 siem-events,近 24h)</Divider>
@@ -1334,7 +1427,7 @@ function CasesView({ cases, setCases, caseFilter, setCaseFilter, selAlerts, setS
               ? <Empty description="近 24h 无关联事件(历史案件的事件可能已过期)" image={Empty.PRESENTED_IMAGE_SIMPLE} />
               : <Table rowKey={(_, i) => i} size="small" pagination={{ pageSize: 10 }} dataSource={caseTimeline_}
                   columns={[
-                    { title: '时间', dataIndex: '@timestamp', width: 200 },
+                    { title: '事件时间', dataIndex: '@timestamp', width: 200, render: (v) => <TimeText value={v} /> },
                     { title: 'action', dataIndex: 'event.action', render: (v) => <Tag color="blue">{v}</Tag> },
                     { title: 'message', dataIndex: 'message', ellipsis: true },
                   ]} />}

@@ -193,6 +193,8 @@
   - **verdict 强制**:仅接受 true_positive/false_positive/duplicate 三值(下划线,与 ES 数据一致);结案未选 verdict→阻止并提示必选;提交非三值→API 400。
   - **批量操作**:列表多选 → 批量 ack / 批量 close(单次批量 ≤500 条,对齐 Story 04);批量 close 前置校验 = 所选告警**均已打 verdict**,未打→阻止并列出缺 verdict 的告警(先批量设 verdict 再结案);反馈 = 成功计数 + 失败项列表;每项仍走并发保护。
   - **FP 回流(对齐 04-§4.3)**:FP 率 = 该规则已打 verdict 告警中 false_positive/(TP+FP),**不含 duplicate**;>50% 且样本达豁免阈值→高亮「需 review」,点击跳转该规则详情(加反条件/调阈值/退役,对接 Story 03 启停);样本过少→不误高亮;自动退役列 P1/P2。
+  - **跨页签关联**:告警列表同时展示规则、数据源/实体、案件归属、事件时间和告警生成时间；规则页展示近 7d 命中数；案件详情展示关联告警摘要、实体和时间线；健康页展示数据源端点，形成「数据源 → 事件 → 规则 → 告警 → 案件」主链。
+  - **时间口径**:ES 原始时间字段统一保存为 UTC ISO-8601；页面按浏览器本地时区显示，并明确区分事件时间(`@timestamp`，窗口告警为窗口结束时间)和告警生成时间(`alert.created_at`)。原始 JSON 保留 UTC，鼠标悬停可查看原始值。
 - **首个可验收能力**(引用 Story 04 §7):**Given** 一条 open 告警 **When** 依次流转 open→acknowledged→investigating→resolved/closed 并选 verdict **Then** 状态与 verdict 落库,记录 operator + status_updated_at。
 
 #### 5.5 数据健康
@@ -248,6 +250,7 @@
   - **生命周期**:案件三态 `open / investigating / resolved`(案件维度;告警仍是五态);
   - **与 story-04 联动**:案件结案(resolved)→ 该案件下所有告警**批量 closed + 统一 verdict**(先为未打 verdict 的告警批量补 verdict,再批量 closed,与 §5.4 批量操作一致);告警详情可见所属 `case_id`。
 - **关键交互(字段级)**:告警台多选告警 →「聚合成案件」(按实体/窗自动分组,或手动归并)→ 案件详情(时间线/关联实体/原始日志)→ 结案 → 告警批量 closed + verdict。
+- **自动聚合参数**:调查台使用明确可见的数字控件填写窗口(分钟)和最少告警数，并在按钮附近显示当前生效条件；默认 30 分钟、2 条，按事件时间、实体(`source.ip` 优先，其次 `user.name`)聚合。
 - **首个可验收能力**(引用 Story 07 §7):相关告警可聚合成一个案件,案件内能看到时间线和关联实体;案件生命周期完整,结案后可回溯。
 
 ## 6. 产品优先级与 MVP

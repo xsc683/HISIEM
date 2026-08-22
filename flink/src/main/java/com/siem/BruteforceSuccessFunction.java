@@ -69,7 +69,7 @@ public class BruteforceSuccessFunction extends PatternProcessFunction<Event, Str
         alert.put("rule.status", status);
         alert.put("rule.version", version);
 
-        for (String f : new String[]{"source.ip", "user.name", "host.name"}) {
+        for (String f : new String[]{"log.source_id", "log.source_name", "source.ip", "user.name", "host.name"}) {
             Object v = fields.get(f);
             if (v != null) {
                 alert.put(f, v);
