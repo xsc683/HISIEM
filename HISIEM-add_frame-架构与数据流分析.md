@@ -55,7 +55,8 @@
 8. **已修复：认证管理 API 使用脱敏 DTO。** `GET /api/auth/users` 不返回 BCrypt；V6 强制首次登录改密，轮换前业务 API 返回 428。`src/main/java/com/xscsiem/hsiem_platform/auth/AuthUserView.java`、`src/main/resources/db/migration/V6__password_rotation.sql`
 9. **已修复：前端请求正确处理 204、超时和失败提示。** 删除/登出等 204 不再被误报，初始化和详情加载错误会展示，数据源轮询采用指数退避。
 10. **已优化：前端统一时间口径和跨页签关联。** 页面按浏览器本地时区展示时间，并区分事件/窗口结束时间与告警生成时间；告警、规则、案件、数据健康通过规则命中数、数据源、案件 ID、实体和时间线互相串联。调查台的聚合窗口/阈值改为可见数字控件并显示当前生效条件。
-11. **仍需补充跨组件验收。** 单元、迁移和 Flink 算子回归已覆盖；浏览器 E2E、真实 Logstash/WSL 故障注入及 Kafka→Flink→ES 故障演练仍属于发布前验收项。
+11. **已修复：宿主机 Kafka 健康探针被内部 advertised listener 误导。** Compose 默认使用 INTERNAL `kafka:9092` 与 EXTERNAL `localhost:9092` 双监听，宿主机 AdminClient 不再被重定向到 Docker 内部主机名；Kafka topic/metadata 检查已在当前运行态验证通过。Logstash 9600 仍因镜像默认只绑定容器回环地址而显示明确的 degraded TCP 探针，但容器 pipeline 仍由 healthcheck 确认。
+12. **仍需补充跨组件验收。** 单元、迁移和 Flink 算子回归已覆盖；浏览器 E2E、真实 Logstash/WSL 故障注入及 Kafka→Flink→ES 故障演练仍属于发布前验收项。
 
 ## 3. 系统总体架构
 
@@ -1616,7 +1617,7 @@ flowchart LR
 | 14 | 204 成功响应被前端当 JSON 解析 | `web/src/api.js` | 删除/标记操作 UX | 已修复 | 读取 text 后兼容空 body/204，并保留错误 message |
 | 15 | Auth 审计 actor 固定 system，不是实际操作者 | `src/main/java/com/xscsiem/hsiem_platform/auth/AuthService.java` | 审计可信度 | 已修复 | 从 SecurityContext 取 actor；剩余增强项是 request id/IP metadata |
 | 16 | 开发默认 ES security off、Kafka PLAINTEXT；生产若误用会暴露 | `ProductionSafetyValidator`、Compose、`infra/SECURITY.md` | 权限绕过/数据泄露 | 中（门禁已补） | 首启一次性 secret/强制改密已落地；生产必须通过 SASL_SSL、ES HTTPS、凭据和 RF≥2 门禁 |
-| 17 | 健康探针把任意 HTTP <500 判 UP，Logstash 仅 TCP | `OperationalHealthService` | 假健康 | 已缓解 | Flink/Kibana/Logstash 语义检查；Kafka topic、consumer group、lag 已接入；尚缺真实安全集群验证 |
+| 17 | 健康探针把任意 HTTP <500 判 UP，Logstash 仅 TCP | `OperationalHealthService`、`infra/docker-compose.yml` | 假健康 | 已缓解 | Flink/Kibana/Logstash 语义检查；Kafka topic、consumer group、lag 已接入；Compose 双监听已修复宿主机 metadata 超时；Logstash API 仍需镜像支持外部绑定，当前降级状态已明确标注 |
 | 18 | 动态 DataHealth 失败率依赖 raw 索引，但动态失败不入 raw | `src/main/java/com/xscsiem/hsiem_platform/health/DataHealthService.java`、Logstash generator | 健康误判 | 已修复 | parse/date failure 统一 raw-only，并增加生成器断言；真实 Logstash E2E 仍需补 |
 | 19 | 规则部署 cancel 后恢复失败会使 Job 下线 | `ProcessRulesDeployer` | 检测中断 | 中（已缓解） | revision staging、savepoint、RUNNING 验证和旧 revision 回退已落地；仍需真实 Job 故障演练 |
 | 20 | Case service 测试主要是纯校验，未覆盖真实双写链 | `src/test/java/com/xscsiem/hsiem_platform/investigation/CaseServiceTest.java:26-70` | 回归漏检 | 中 | Testcontainers PG + ES 故障注入；marker/rollback/并发测试 |
@@ -1640,6 +1641,8 @@ flowchart LR
 | `docker exec ... flink list -a` | 成功 | 1 个 `SIEM Detection Engine (RUNNING)` |
 | Logstash `/_node/pipelines` | 成功 | green，main + 5 per-source |
 | Kafka topic describe | 成功 | siem-events 3 partitions、RF=1、retention 259200000ms |
+| 宿主机 Kafka AdminClient（`localhost:9092`） | 成功 | 双监听元数据返回 `siem-events`，不再重定向到 `kafka:9092` |
+| `docker compose config --quiet` | 成功 | Compose 双监听、Kafka 显式数据卷配置有效 |
 | ES `_cat/indices`、PG schema history | 代码/测试成功 | 事件/告警/案件索引有数据；V1-V7 迁移已通过 H2/真实 PostgreSQL 测试；运行实例需重启后应用 V7 |
 
 README/CLAUDE 中的历史测试数字仍可能落后于本轮 74/33，应在下一次文档整理时统一。
@@ -1654,12 +1657,12 @@ README/CLAUDE 中的历史测试数字仍可能落后于本轮 74/33，应在下
 - 真实 WSL/rsync/Logstash config test/recreate 故障注入与旧态恢复；
 - Logstash→Kafka→Flink→ES 自动 E2E；
 - Case PG/ES 双写中任一点失败与 reconciliation；
-- Kafka topic metadata/consumer lag 探针；
+- 真实 Kafka SASL_SSL 集群下的 topic metadata/consumer lag 探针；
 - Case 删除镜像 tombstone/outbox，以及多实例任务 lease/自动重试。
 
 ### 13.3 回滚与可观测性说明
 
-本次没有修改业务代码或运行配置。构建只更新已存在且 Git 忽略的 `target/`、`flink/target/`、`web/dist/` 生成物；业务回滚不适用。可观测性依据为命令退出码、Surefire 汇总、Vite build 汇总和只读运行态 API。
+本次没有修改业务代码；运行配置新增 Kafka INTERNAL/EXTERNAL 双监听和显式 `kafka-data` 卷，并已在当前 Docker Desktop 实例完成数据保留式重建。构建只更新已存在且 Git 忽略的 `target/`、`flink/target/`、`web/dist/` 生成物；业务回滚不适用。可观测性依据为命令退出码、Compose 校验、Kafka topic/metadata、容器 healthcheck 和只读运行态 API。
 
 ## 14. 待确认问题
 
