@@ -43,6 +43,8 @@ MSYS_NO_PATHCONV=1 wsl bash /mnt/d/Project/SIEM/infra/deploy.sh --start-job
 Compose 项目名固定为 `infra`，这样 `container_name`、卷和手动启动保持一致；
 Elasticsearch 备份卷会在启动前由一次性初始化服务修正为 ES 用户可写。
 
+Kafka 的默认开发配置使用双监听：容器内的 Logstash/Flink 连接 `kafka:9092`，宿主机上的 API 和运维脚本连接 `localhost:9092`（宿主机端口映射到容器的 EXTERNAL 监听）。不要把 `KAFKA_ADVERTISED_LISTENERS` 改成只有 `kafka:9092`，否则宿主机 Kafka AdminClient 首次连接后会被元数据重定向到 Docker 内部主机名，运行态扫描会报 `Timed out waiting for a node assignment`。
+
 Spring Boot 应用启动时默认读取 PostgreSQL:
 
 ```bash
@@ -134,7 +136,7 @@ curl -s http://localhost:8080/api/ops/health-scan -H "Authorization: Bearer $TOK
 
 `/actuator/health` 公开用于存活探针；`/actuator/metrics`、`/actuator/prometheus` 需要 admin 权限。
 
-运行态扫描会检查 PostgreSQL、Elasticsearch、Kafka、Logstash、Flink 和 Kibana；Flink/Kibana 校验响应语义，Logstash 优先检查 pipeline API，API 不可用时才返回明确标记为 degraded 的 TCP 结果。备份恢复演练只操作临时索引：
+运行态扫描会检查 PostgreSQL、Elasticsearch、Kafka、Logstash、Flink 和 Kibana；Flink/Kibana 校验响应语义，Logstash 优先检查 pipeline API，API 不可用时才返回明确标记为 degraded 的 TCP 结果（当前镜像默认把 9600 绑定在容器回环地址，宿主机看到该提示属于预期降级，不代表 pipeline 停止）。备份恢复演练只操作临时索引：
 
 ```bash
 bash /mnt/d/Project/SIEM/infra/elasticsearch/backup-restore-rehearsal.sh
