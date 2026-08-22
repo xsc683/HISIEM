@@ -1,59 +1,72 @@
-# docs — 设计文档索引
+# HISIEM 文档中心
 
-| 文档 | 内容 |
-| --- | --- |
-| [architecture.md](architecture.md) | 系统架构、数据流、Schema、规则引擎概览 |
-| [deployment.md](deployment.md) | **新机器部署指南**(换环境必备) |
-| [design-decisions.md](design-decisions.md) | 设计决策(为什么这么做)+ 踩坑记录 |
-| [event-alert-schema.md](event-alert-schema.md) | Event/Alert Schema 详细设计(ECS 对齐、@timestamp、扁平存储) |
-| [rule-engine.md](rule-engine.md) | 规则引擎使用与扩展(加单事件/窗口规则) |
+本目录按“当前事实 → 操作交付 → 设计参考 → Story 验收 → 学习资料”分层。日常不需要在所有阶段文档之间来回拼接结论；先从本页选择入口，再按需要深入细节。
 
-## Phase 3 设计(业界对标)
+## 推荐阅读路径
 
-> 基于成熟商业 SIEM 对标 + ES/Logstash/Kafka/Flink 最佳实践的系统化设计,指导 Phase 3+ 演进。
+### 1. 运行和使用项目
 
-| 文档 | 内容 |
-| --- | --- |
-| [design/README.md](design/README.md) | 设计文档索引 + 核心结论 + P0 清单 |
-| [design/01-requirements.md](design/01-requirements.md) | 需求分析(现状盘点、业界对标、功能/非功能需求、明确不做) |
-| [design/02-architecture.md](design/02-architecture.md) | 目标架构(分层、数据流、组件演进、数据模型、决策 H-N) |
-| [design/03-component-best-practices.md](design/03-component-best-practices.md) | 组件最佳实践与落地清单(ES/Logstash/Kafka/Flink/Kibana) |
-| [design/04-detection-engineering.md](design/04-detection-engineering.md) | 检测工程化(规则元数据/MITRE/Sigma/告警生命周期/富化) |
-| [design/05-roadmap.md](design/05-roadmap.md) | 实施路线图(Phase 3.0-3.5) |
-| [roadmap-next.md](roadmap-next.md) | 后续改进路线 + 项目结合学习路线(Phase 4+) |
-| [design/06-user-onboarding.md](design/06-user-onboarding.md) | 用户接入层技术设计(日志接入 + 解析规则管理) |
-| [design/07-product-design.md](design/07-product-design.md) | 产品设计(接入模块:角色、体验、竞品对标) |
-| [design/08-product-design.md](design/08-product-design.md) | 产品设计总览(ELK 流程、定位、完整模块地图、MVP) |
+1. [项目 README](../README.md)：项目能力、目录和最短启动路径。
+2. [当前状态](current-status.md)：最近一次验证的能力、环境和未闭环风险。
+3. [部署指南](deployment.md)：新机器、重建和升级部署。
+4. [运行与排障手册](operations.md)：日常健康扫描、端到端冒烟和回滚。
+5. [系统架构](architecture.md)：组件边界、数据流和 Schema 总览。
 
-## Story(需求拆解)
+### 2. 开发和维护功能
 
-> 按产品模块拆分为 Story,每份按模板填写(用户旅程 + 后端架构 + 数据流 + 验收)。
+| 目标 | 首选文档 | 补充文档 |
+| --- | --- | --- |
+| 规则编写/扩展 | [规则引擎](rule-engine.md) | [检测工程化设计](design/04-detection-engineering.md) |
+| Event/Alert 字段 | [事件与告警 Schema](event-alert-schema.md) | [OCSF 映射](design/ocsf-mapping.md) |
+| 控制面决策 | [设计决策](design-decisions.md) | [安全与 RBAC](design/security-rbac.md) |
+| 接入与解析 | [用户接入设计](design/06-user-onboarding.md) | [解析 Story](story/story-02-parser.md)、[模板 Story](story/story-09-parser-templates.md) |
+| 项目阶段和优先级 | [统一路线图](roadmap.md) | [Phase 3 细节](design/05-roadmap.md)、[Phase 4 细节](roadmap-next.md) |
 
-| 文档 | 说明 |
-| --- | --- |
-| [story/README.md](story/README.md) | Story 索引(模块 → Story 映射) |
-| [story/_template.md](story/_template.md) | Story 设计文档模板(联网参考最佳实践生成) |
-| [story/story-01-onboarding.md](story/story-01-onboarding.md) | 数据源接入向导(MVP) |
-| [story/story-02-parser.md](story/story-02-parser.md) | 解析模板库与自定义解析 |
-| [story/story-03-detection-rules.md](story/story-03-detection-rules.md) | 检测规则管理 |
-| [story/story-04-alert-triage.md](story/story-04-alert-triage.md) | 告警三线处置 |
-| [story/story-05-data-health.md](story/story-05-data-health.md) | 数据源健康监控 |
-| [story/story-06-settings.md](story/story-06-settings.md) | 系统设置·资产关键度 |
-| [story/story-07-investigation.md](story/story-07-investigation.md) | 调查台·案件聚合(已实现) |
-| [story/story-08-rbac.md](story/story-08-rbac.md) | 用户与权限(RBAC) |
-| [story/story-09-parser-templates.md](story/story-09-parser-templates.md) | 预置解析模板扩充 |
-| [story/story-10-notification.md](story/story-10-notification.md) | 通知与告警路由(P1,原 Could) |
+### 3. 产品验收和用户旅程
 
-## 入门功课(基础概念与关键组件)
+[Story 索引](story/README.md)是模块验收入口，描述用户旅程、接口、数据流和验收条件。Story 是需求/验收契约，不是运行态真相；功能状态以[当前状态](current-status.md)为准。具体 Story 仍按模块保留，避免一份超长文档难以评审。
 
-> 系统性讲解 SIEM 概念、事件→告警流程称谓与关键组件(Kafka/ES/Flink/Logstash)的核心原理,以**定义 + 场景举例**方式组织,全部锚定本项目实际代码。
+### 4. 学习组件
 
-| 文档 | 内容 |
-| --- | --- |
-| [learn/README.md](learn/README.md) | 学习地图 + 建议阅读顺序 |
-| [learn/01-siem-basics.md](learn/01-siem-basics.md) | SIEM 定义、事件→告警术语链、TP/FP、severity/risk_score |
-| [learn/02-pipeline-walkthrough.md](learn/02-pipeline-walkthrough.md) | 本项目管道全流程走一遍(日志→事件→告警) |
-| [learn/03-kafka.md](learn/03-kafka.md) | Kafka 概念(topic/分区/offset/消费组/retention) |
-| [learn/04-elasticsearch.md](learn/04-elasticsearch.md) | Elasticsearch 概念(索引/mapping/分片/查询/ILM) |
-| [learn/05-flink.md](learn/05-flink.md) | Flink 概念(DataStream/窗口/watermark/状态/checkpoint) |
-| [learn/06-logstash.md](learn/06-logstash.md) | Logstash 概念(input/filter/output/grok/队列) |
+[学习地图](learn/README.md)按“SIEM 基础 → 全链路 → Kafka → Elasticsearch → Flink → Logstash”组织。学习文档中的简化示例用于理解原理，不替代 `infra/` 的实际配置。
+
+## 文档分层与权威性
+
+| 层级 | 目录/文件 | 维护内容 | 权威性 |
+| --- | --- | --- | --- |
+| 当前事实 | `current-status.md`、`architecture.md` | 已验证能力、运行基线、风险和当前架构 | 最高，跟随代码/`infra/` 验证更新 |
+| 交付操作 | `deployment.md`、`operations.md` | 安装、升级、健康检查、排障和回滚 | 操作权威 |
+| 决策与方案 | `design-decisions.md`、`design/` | 为什么这样设计、目标方案、组件细节 | 设计参考；未标记“已完成”的内容不是当前事实 |
+| 验收契约 | `story/` | 用户旅程、接口、验收和边界 | 需求/验收权威 |
+| 学习资料 | `learn/` | 概念解释、实验和阅读顺序 | 教学参考 |
+| 审计证据 | [`HISIEM-add_frame-架构与数据流分析.md`](../HISIEM-add_frame-架构与数据流分析.md) | 分析过程、证据、历史风险和修复记录 | 保留归档，不作为日常入口 |
+
+## 设计参考索引
+
+- [`design/README.md`](design/README.md)：设计文档说明、适用范围和 P0 清单。
+- `design/01-requirements.md`、`02-architecture.md`、`03-component-best-practices.md`、`04-detection-engineering.md`、`05-roadmap.md`：Phase 3 的需求、目标架构、组件实践、检测工程和实施细节。
+- `design/06-user-onboarding.md`、`07-product-design.md`、`08-product-design.md`：接入层、产品体验和完整模块地图。
+- `design/mitre-coverage.md`、`design/ocsf-mapping.md`、`design/security-rbac.md`、`design/threat-intel.md`：专项设计。
+
+## Story 索引
+
+完整映射、状态和 Story 之间的关系见 [`story/README.md`](story/README.md)。当前包含：数据源接入、解析器、检测规则、告警处置、数据健康、系统设置、调查台、RBAC、解析模板和通知路由（`story-01` 至 `story-10`）。模板见 [`story/_template.md`](story/_template.md)。
+
+## 基础设施局部说明
+
+部署时以 `infra/` 文件为唯一来源；其中的 README 只解释局部组件：
+
+- [`infra/README.md`](../infra/README.md)；
+- [`infra/elasticsearch/README.md`](../infra/elasticsearch/README.md)；
+- [`infra/kafka/README.md`](../infra/kafka/README.md)；
+- [`infra/kibana/README.md`](../infra/kibana/README.md)；
+- [`infra/simulator/README.md`](../infra/simulator/README.md)。
+
+局部 README 不重复维护项目路线图或当前完成度。若局部配置与文档冲突，以 Compose、脚本、模板和实际探针结果为准，并回写[当前状态](current-status.md)。
+
+## 文档变更规则
+
+1. 新增结论先更新 `current-status.md` 或 `roadmap.md`，不要只在某个 Story 中声明“已完成”。
+2. 新功能先补对应 Story 的验收，再补架构/Schema/规则等技术细节。
+3. 部署和排障命令只维护在 `deployment.md`、`operations.md` 或 `infra/` 脚本中。
+4. 阶段性原始材料和审计证据保留，但在索引中标记为参考/归档，避免与当前事实混淆。

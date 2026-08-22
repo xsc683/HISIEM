@@ -1,11 +1,11 @@
 # Phase 3 设计 — 需求分析
 
-> 状态:设计稿 · Phase 3.0-3.5 检测基线与 Phase 4.0-4.3 控制面能力已实现;后续能力仍按本文优先级管理
+> 状态:设计稿/参考 · Phase 3.0-3.5 检测基线与 Phase 4.0-4.4.1 控制面能力已实现；后续能力仍按 [`../roadmap.md`](../roadmap.md) 优先级管理
 > 本文档基于「成熟商业 SIEM 对标(Splunk ES / IBM QRadar / MS Sentinel / Elastic Security / Google SecOps / Wazuh)+ ES/Logstash/Kafka/Flink 组件最佳实践」研究产出,是 Phase 3 系统化设计的**需求层**。架构与落地见同目录 `02-architecture.md` / `03-component-best-practices.md` / `04-detection-engineering.md`,执行顺序见 `05-roadmap.md`。
 
 ## 1. 背景与目标
 
-当前系统的数据面已完成 Phase 1/2 管道与 Phase 3.0-3.5 检测基线，Phase 4.0-4.3 已补齐控制台、PostgreSQL 控制面、安全和运维闭环，端到端链路验证通过。下一步目标是:**对照业界成熟 SIEM 的能力模型,把"能跑通"继续升级为"符合业界标准做法的 SIEM"**,重点解决当前最突出的三个问题:
+当前系统的数据面已完成 Phase 1/2 管道与 Phase 3.0-3.5 检测基线，Phase 4.0-4.4.1 已补齐控制台、PostgreSQL 控制面、安全和运维闭环，端到端链路验证通过。下一步目标是:**对照业界成熟 SIEM 的能力模型,把"能跑通"继续升级为"符合业界标准做法的 SIEM"**,重点解决当前最突出的三个问题:
 
 1. **告警疲劳**:早期单事件规则是"1 事件 1 告警",告警会淹没分析师(业界数据:62% SOC 告警被直接无视);Phase 3 已通过告警抑制/风险评分/实体聚合减噪(见 §2.1),当前共 6 条规则。
 2. **可靠性边界**:Flink checkpoint 无持久化目录、ES sink 无确定性 `_id`(重启重放会重复告警)、窗口 watermark 无 idle 处理、无 ILM 留存策略 → 均已解决(见 §2.1)。

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 # HISIEM 平台 — 项目速览
 
-轻量级 SIEM(Elastic Stack + Flink)。Phase 3.0-3.5 检测引擎基线与 Phase 4.0-4.3 控制台/运维能力已完成；控制面为 Spring Boot + PostgreSQL/Flyway，数据面为 Elastic Stack + Kafka + Flink。详细设计见 [docs/](docs/README.md)。
+轻量级 SIEM(Elastic Stack + Flink)。Phase 3.0-3.5 检测引擎基线与 Phase 4.0-4.4.1 控制台/运维能力已完成；控制面为 Spring Boot + PostgreSQL/Flyway，数据面为 Elastic Stack + Kafka + Flink。当前事实与未闭环风险见 [docs/current-status.md](docs/current-status.md)，文档导航见 [docs/](docs/README.md)。
 
 ## 数据链路
 
@@ -67,7 +67,7 @@ bash /mnt/d/Project/SIEM/infra/simulator/brute-force-test.sh
 8. **Flink checkpoint 默认在 cancel 时删除**(cleanup-mode=DELETE_ON_CANCELLATION),cancel 后无法从 checkpoint 恢复。**cancel→restore 演练用 savepoint**:`flink cancel -s file:///opt/flink/savepoints <jobid>`(Flink 2.x 推荐 `flink stop -p <dir> <jobid>`);savepoint 目录需 `chown flink:flink`(docker exec 以 root 创建会使 Flink 进程写失败,报 `Failed to create savepoint directory`)。已演练通过(2026-08-16)。
 9. **Kibana dashboard** 对象必须带 `kibanaSavedObjectMeta.searchSourceJSON`。
 10. **Kafka topic 必须手动建**:`apache/kafka:3.8` 默认 `auto.create.topics.enable=false`,Flink KafkaSource 的元数据订阅不会触发建主题(只有生产者写入才建)。提交 Flink job 前先跑 `infra/kafka/create-topics.sh`(deploy.sh 只同步脚本,不执行)。
-11. **Flink checkpoint 偶发卡滞 → 告警批量吐出(2026-08-16 观察到)**:现象 = Kafka consumer group `siem-detection` LAG 持续不降,告警在恢复后突然批量新增;日志报 `Checkpoint expired before completing`(checkpoint 5min 超时到期)。**根因**:瞬时负载(如 Logstash 重启时 ES 写入压力、大批日志涌入)使 ES sink 的 `maxInFlightRequests(5)/maxBufferedRequests(1000)` 缓冲积压,checkpoint barrier 被阻塞超时。**处置**:`flink cancel <jobid>` + 重新 `flink run -d`,重启后 checkpoint 恢复正常(60s 间隔 / 9-16ms 完成)。**待调优**:ES sink 缓冲参数、checkpoint timeout 或间隔需在真实负载下评估(记录为已知问题,05-roadmap 待办)。
+11. **Flink checkpoint 曾出现卡滞(2026-08-16)**:现象 = Kafka consumer group `siem-detection` LAG 持续不降,告警在恢复后批量新增;日志报 `Checkpoint expired before completing`。本轮已统一 `RuntimeTuning` 参数并完成 2000 条事件负载验证，作业保持 `RUNNING` 且连续完成 checkpoint。后续仍需在生产容量和升级场景下持续压测，见 [当前状态](docs/current-status.md) 的生产风险。
 
 ## 告警/事件快速查询
 
@@ -79,8 +79,8 @@ curl -s "http://localhost:9200/siem-alerts/_count"
 ## 测试
 
 ```bash
-./mvnw test                                                # 根项目全部 65 个测试
-./mvnw -f flink/pom.xml test                              # Flink 模块全部 30 个测试
+./mvnw test                                                # 根项目全部 74 个测试
+./mvnw -f flink/pom.xml test                              # Flink 模块全部 33 个测试
 ./mvnw -f flink/pom.xml test -Dtest=RuleEngineTest        # 单个测试类
 ./mvnw -f flink/pom.xml test "-Dtest=WindowRuleTest#bruteForceAlertHasCountAndRelatedEvents"  # 单个方法
 ```

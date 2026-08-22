@@ -1,5 +1,7 @@
 # 系统架构
 
+> 定位：当前实现的架构总览。运行态和风险以 [`current-status.md`](current-status.md) 为准，部署命令以 [`deployment.md`](deployment.md) 和 [`operations.md`](operations.md) 为准；目标演进方案见 `design/`。
+>
 > 当前实现分为两条链路：Elastic Stack + Kafka + Flink 组成数据面，Spring Boot + PostgreSQL/Flyway 组成控制面。数据面负责事件检测，控制面负责配置、处置、权限和运维状态。
 
 ## 1. 整体架构

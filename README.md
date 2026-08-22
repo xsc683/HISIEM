@@ -2,7 +2,7 @@
 
 基于 **Elastic Stack + Flink** 的轻量级 SIEM(Security Information and Event Management),覆盖日志采集、解析、实时检测、告警存储与可视化。
 
-**项目状态:Phase 3.0-3.5 检测引擎基线、Phase 4.0-4.3 控制台与运维能力均已完成并验证。**当前数据面由 Elastic Stack + Kafka + Flink 承载，控制面由 Spring Boot + PostgreSQL/Flyway 承载。
+**项目状态:Phase 3.0-3.5 检测引擎基线、Phase 4.0-4.4.1 控制台与运维能力均已完成并验证。**当前数据面由 Elastic Stack + Kafka + Flink 承载，控制面由 Spring Boot + PostgreSQL/Flyway 承载。生产安全、高可用和跨存储一致性仍见[当前状态](docs/current-status.md)。
 
 ## 数据链路
 
@@ -47,14 +47,19 @@ SIEM/
 
 ## 文档入口
 
+日常先看[当前状态](docs/current-status.md)，再按目标选择部署、运行、架构或 Story 文档；阶段设计和学习资料作为深入参考。
+
 | 文档 | 内容 |
 | --- | --- |
+| [docs/current-status.md](docs/current-status.md) | 最近一次验证的能力、部署基线和未闭环生产风险 |
 | [docs/architecture.md](docs/architecture.md) | 系统架构、数据流、Schema、规则引擎概览 |
 | [docs/deployment.md](docs/deployment.md) | **新机器部署指南**(换环境必备) |
+| [docs/operations.md](docs/operations.md) | 日常启动、健康扫描、端到端冒烟、排障和回滚 |
 | [docs/design-decisions.md](docs/design-decisions.md) | 设计决策 + 踩坑记录 |
 | [docs/event-alert-schema.md](docs/event-alert-schema.md) | Event/Alert Schema 详细设计 |
 | [docs/rule-engine.md](docs/rule-engine.md) | 规则引擎使用与扩展 |
-| [docs/roadmap-next.md](docs/roadmap-next.md) | 后续改进主线与项目学习主线 |
+| [docs/roadmap.md](docs/roadmap.md) | 统一阶段路线图、验收基线和后续优先级 |
+| [docs/story/README.md](docs/story/README.md) | 按模块组织的用户旅程与验收契约 |
 | [docs/learn/README.md](docs/learn/README.md) | 从 SIEM 基础到 Kafka/ES/Flink/Logstash 的学习地图 |
 
 ## 快速开始(新机器)
@@ -95,4 +100,4 @@ npm --prefix web run dev
 - ✅ Flink checkpointing(重启不重放历史)
 - ✅ Spring Boot 控制面:PostgreSQL/Flyway、登录会话、RBAC、审计、案件、通知、后台任务
 - ✅ 运维能力:六组件健康扫描、Actuator/Micrometer、数据源停用/删除回滚、ES 备份恢复演练
-- ✅ 测试:根项目 65 个测试、Flink 模块 30 个测试,前端生产构建通过
+- ✅ 测试:根项目 74 个测试、Flink 模块 33 个测试,前端生产构建通过

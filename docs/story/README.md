@@ -1,5 +1,7 @@
 # docs/story — 需求拆解为 Story
 
+> 本目录是用户旅程与验收契约层。当前实现和运行风险以 [`../current-status.md`](../current-status.md) 为准，阶段优先级以 [`../roadmap.md`](../roadmap.md) 为准；不要在每份 Story 中复制一份全局完成度。
+>
 > 按 [08 产品设计](../design/08-product-design.md) 的产品模块,把需求拆成一个个 Story。
 > 每个 Story 一份设计文档(按 `_template.md` 模板填写):用户故事、用户旅程、需求明细、后端架构、数据流、验收标准、业界参考。
 

@@ -1,6 +1,6 @@
 # docs/learn — 入门功课(基础概念与关键组件)
 
-> 本系列为**基础性学习材料**,系统讲解 SIEM 平台设计概念、事件→告警→案件流程的称谓,以及关键组件(Kafka、Elasticsearch、Flink、Logstash)的核心原理。控制面实践还应结合 `src/`、PostgreSQL/Flyway 与 `docs/roadmap-next.md` 阅读。
+> 本系列为**基础性学习材料**,系统讲解 SIEM 平台设计概念、事件→告警→案件流程的称谓,以及关键组件(Kafka、Elasticsearch、Flink、Logstash)的核心原理。控制面实践还应结合 `src/`、PostgreSQL/Flyway 与统一路线图 [`docs/roadmap.md`](../roadmap.md) 阅读。
 > 每一份文档均以 **正式定义 + 场景举例 + 本项目对应** 的方式组织,并锚定本项目的实际代码与配置,可作为理解 `docs/design/` 设计文档的基础。
 
 ## 阅读建议(推荐顺序)

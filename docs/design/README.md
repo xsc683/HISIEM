@@ -1,7 +1,9 @@
-# docs/design — Phase 3 系统设计
+# docs/design — 详细设计参考
 
-> 状态:设计稿 · 已实现基线:Phase 3.0-3.5 全部落地(2026-08-16,commit 7e86478~664f6a6;详见 [05-roadmap.md](05-roadmap.md) 状态列)
-> 基于**成熟商业 SIEM 对标 + ES/Logstash/Kafka/Flink 组件最佳实践**(2025-2026 研究)产出的系统化设计,指导 Phase 3+ 演进。与现有文档的关系:现有 docs/ 记录**已实现**(Phase 1+2 + Phase 3.0-3.5),本目录记录**下一步设计**(Phase 3 收尾 + 4.x 产品层)。
+> 日常入口是 [`../current-status.md`](../current-status.md)、[`../architecture.md`](../architecture.md) 和 [`../roadmap.md`](../roadmap.md)。本目录保留阶段设计、目标方案和专项说明：它解释“为什么这样设计/计划怎样演进”，不替代运行态验证。
+
+> 状态:详细设计/参考稿 · 已实现基线:Phase 3.0-3.5 全部落地(2026-08-16,commit 7e86478~664f6a6;详见 [05-roadmap.md](05-roadmap.md) 状态列)
+> 基于**成熟商业 SIEM 对标 + ES/Logstash/Kafka/Flink 组件最佳实践**(2025-2026 研究)产出的系统化设计,指导 Phase 3+ 演进。Phase 4 的实际交付以 [`../roadmap.md`](../roadmap.md) 和 [`../current-status.md`](../current-status.md) 为准；本目录保留目标架构、阶段细节和专项设计，未标记为已完成的内容仍属于后续方案。
 
 ## 当前已实现基线
 
