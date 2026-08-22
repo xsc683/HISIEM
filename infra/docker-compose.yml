@@ -129,7 +129,7 @@ services:
       KAFKA_INTER_BROKER_LISTENER_NAME: ${SIEM_KAFKA_INTER_BROKER_LISTENER:-INTERNAL}
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: ${SIEM_KAFKA_OFFSETS_REPLICATION_FACTOR:-1}
     volumes:
-      - kafka-data:/var/lib/kafka/data
+      - kafka-data:/tmp/kafka-logs
   flink-jobmanager:
     image: flink:2.1-java21
     container_name: siem-flink-jobmanager
