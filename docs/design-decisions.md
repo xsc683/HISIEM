@@ -33,11 +33,11 @@
 - **Logstash 8.14 没有 `naming_strategy` 选项**(配置会报 Unknown setting),无法强制输出扁平/嵌套
 - ES 索引模板用嵌套对象 mapping(`source.properties.ip`),扁平 key 按点分路径正确索引
 
-### 决策 E:规则引擎用 Java 对象(声明式)
+### 决策 E:规则声明使用 YAML，检测逻辑仍由 Flink 类型化实现
 
-**决策**:规则定义为 Java 对象(`Rule` + `Condition`),集中注册在 `RuleRegistry`。加规则 = 加一行。
+**决策**:规则元数据、条件和 `enabled` 状态以 `infra/rules/*.yaml` 为唯一声明来源；Flink 仍使用类型化的 `Rule`、`Condition`、窗口/CEP/基线函数执行检测。控制台只读展示和启停，规则逻辑变更走代码评审与测试。
 
-**理由**:类型安全、IDE 补全、编译期检查、可 JUnit 单测。先代码内声明式,以后要外置 JSON 再迁移。
+**理由**:规则运营信息需要可审计、可 diff 和可部署；检测执行仍需要 Java 类型安全和 JUnit/Flink harness 覆盖。这样避免控制台维护第二份规则状态，也避免把复杂检测逻辑塞进不可测试的自由文本。
 
 ### 决策 F:时间窗口关联用事件时间
 

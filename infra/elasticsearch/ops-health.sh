@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# ops-health.sh — ES 运维基线巡检(03-E7,在 WSL 内执行)
+# ops-health.sh — ES 运维基线巡检(在 WSL 内执行)
 #
-# 检查项(判读口径见 docs/design/03-component-best-practices.md §E7):
+# 检查项(判读口径见 docs/operations.md 的 Elasticsearch 小节):
 #   1. 集群健康:green / yellow / red
 #   2. 索引大小排行:siem-events-20* 按天递增、raw 桶单独观察、无 restored_* 残留
 #   3. segment 数:单索引 < 几十(merge 正常);持续上升提示 forcemerge

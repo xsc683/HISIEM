@@ -12,7 +12,7 @@
 第 4 步  04-elasticsearch.md          数据如何存储与检索(ES 概念)
 第 5 步  05-flink.md                  数据如何被检测(Flink 概念)
 第 6 步  06-logstash.md               数据如何被解析(Logstash 概念)
-读完     → 回看 docs/design/01-requirements.md 的能力域模型,再用控制台 API 验证案件/权限/运维控制面
+读完     → 回看 docs/product-contract.md 的模块与 API,再用控制台验证案件/权限/运维控制面
 ```
 
 > 前置要求:能跑通本项目部署(见 `docs/deployment.md`),并发送过一条测试日志。当前部署与端到端验证已完成；学习者仍需自行完成每篇文档末尾的自测。
@@ -43,6 +43,6 @@
 
 - 能否画出本项目的完整数据流(日志 → 事件 → 命中 → 告警),并指出每个阶段的组件与文件?
 - 能否解释:`@timestamp` 为何采用事件时间、watermark 的作用、确定性 `_id` 防什么、mapping 为何创建后不可修改?
-- 能否看懂 `docs/design/03-component-best-practices.md` 中每条落地项改动哪个文件、为什么?
+- 能否从 `docs/architecture.md`、`docs/operations.md` 和 `infra/` 配置解释每个组件改动哪个文件、为什么?
 
 > 若某份文档仍有疑问,请指出具体段落,可针对性补充讲解。

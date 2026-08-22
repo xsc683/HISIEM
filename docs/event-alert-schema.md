@@ -1,172 +1,90 @@
-# Event / Alert Schema 设计
+# Event / Alert Schema（当前版本）
 
-> 状态:草稿 · Phase 2 · 待 review
-> 目标:定义规范化事件与告警结构,为规则引擎、ES mapping、Kibana dashboard 打地基。
+> 定位：当前 ES 事件和告警字段契约。字段以 `infra/elasticsearch/*template.json`、Logstash pipeline 和 Flink 告警构建器为准；新增字段必须同步 mapping、生产端和消费端测试。
 
-## 1. 设计目标
+## 1. 时间与索引
 
-1. **时间字段修正**:`@timestamp` 必须语义正确(事件 = 日志发生时间,告警 = 检测时间)。
-2. **字段规范化**:统一字段命名,消除 `src_ip`/`user`/`host` 这类随意命名。
-3. **可扩展**:新增日志类型(网络、进程等)和新增规则时,不改 schema。
-4. **生态对齐**:尽量对齐 ECS(Elastic Common Schema),为未来 Kibana 安全可视化、ES Security 集成留路。
-
-## 2. 关键决策(需确认)
-
-### 决策 A:事件字段采用 ECS 对齐子集(推荐)
-
-现状是自定义平铺字段(`src_ip`、`user`、`host`、`event_type`)。ECS 是 Elastic 生态的事实标准,Security 相关可视化/集成开箱即用,值得迁移。
-
-- 自定义字段名 `src_ip` → `source.ip`、`user` → `user.name`、`host` → `host.name`
-- `event_type` → `event.action`(规则触发字段),并补充 `event.category` / `event.outcome` / `event.type`
-- 保留 Logstash 自动加的一些 ECS 字段(`event.original`)
-
-**代价**:logstash.conf 字段映射 + Flink 检测逻辑要同步改(反正 Phase 2 规则引擎要重写这部分)。
-
-> 备选 B:保留自定义扁平 schema,仅加 `@timestamp`。改动最小,但与生态脱节。**不推荐**。
-
-### 决策 B:`@timestamp` 语义
-
-| 对象 | @timestamp 含义 | 修正方式 |
-| --- | --- | --- |
-| 事件 | 日志发生时间 | Logstash `date` filter 解析 grok 提取的 `timestamp` 字符串 |
-| 告警 | 检测时间(规则命中时刻) | Flink 生成告警时写入 `Instant.now()`(时间窗口规则用窗口结束时间,Phase 2.8) |
-
-### 决策 C:索引命名与别名
-
-- 事件索引:`siem-auth-%{+YYYY.MM.dd}` → **`siem-events-%{+YYYY.MM.dd}`**(管道将容纳多种日志类型,不再叫 auth)
-- 建别名 `siem-events`(查询稳定,不受按天索引影响)
-- 告警索引:`siem-alerts`(保持不变)
-- 索引模板(含 mapping)属于 Phase 2.5 的 ES Mapping 落地物
-
-### 决策 D:扁平字段存储(实测修正 2026-08-01)
-
-ECS 的点分字段名(`source.ip`)是**扁平字段名**。实测验证结果:
-
-- Logstash 的 mutate/grok 建的点分字段(`event.action`、`source.ip`、`user.name`、`host.name` 等)在 ES `_source` 里是**扁平 key**;只有 ECS 自动加的 `event.original` 是嵌套对象。
-- ES 索引模板用**嵌套对象 mapping**(`source.properties.ip`),扁平 key 按点分路径正确索引进对应字段,`source.ip` 正确映射为 `ip` 类型。
-- **注意**:Logstash 8.14 elasticsearch output **没有 `naming_strategy` 选项**(曾误以为有,实测报 `Unknown setting`),无法配置输出扁平/嵌套,保持默认即可。
-
-**实际结论**:无论 `_source` 里是扁平 key 还是嵌套对象,ES 查询都用同一点分路径(`source.ip`),**查询行为不受存储结构影响**。之前顾虑的"查询要写 object.param1"本质是字段名的点分写法,与扁平/嵌套无关。
-
-**嵌套只在真有"整体结构查询"需求时用**:时间窗口关联的 `related_events` 列表用 `nested` 类型(Phase 2.8),其余一律按点分路径查询。
-
-> 该决策直接影响 Alert 设计:告警**不再整体嵌套嵌入触发事件**,改为顶层提升关键字段 + `event.raw` 扁平字符串(见 4.1)。
-
-## 3. Event Schema
-
-### 3.1 字段表
-
-| ECS 字段 | 类型 | 生产者 | 说明 | 现状 |
-| --- | --- | --- | --- | --- |
-| `@timestamp` | date | Logstash `date` filter | 日志发生时间(解析 `timestamp`) | ❌ 摄入时间 |
-| `event.category` | keyword | mutate | `authentication` | ❌ 无 |
-| `event.action` | keyword | mutate | `authentication_failure`(规则触发字段) | ❌ 用 `event_type` 替代 |
-| `event.outcome` | keyword | mutate | `failure` | ❌ 无 |
-| `event.type` | keyword | mutate | `denied` | ❌ 无 |
-| `event.original` | match_only_text | Logstash 默认 | 原始日志全文 | ✅ 已有 |
-| `event.schema_version` | keyword | mutate | `1.0` | ❌ 无 |
-| `source.ip` | ip | grok | 攻击源 IP | ✅ `src_ip` |
-| `user.name` | keyword | grok | 被攻击用户名 | ✅ `user` |
-| `host.name` | keyword | grok | 目标主机 | ✅ `host` |
-| `related.ip` | keyword | mutate | `[source.ip]` 便于关联分析 | ❌ 无 |
-| `message` | text | Logstash 默认 | 人类可读 | ✅ 已有 |
-| `pipeline` | keyword | mutate | `mini-siem` 来源标记 | ✅ 已有 |
-
-### 3.2 Logstash 端改动(实现期)
-
-```ruby
-# grok(提取 timestamp 字符串 + IP/用户/主机)
-grok {
-  match => { "message" => "%{SYSLOGTIMESTAMP:timestamp} %{HOSTNAME:host.name} sshd.*Failed password for %{USERNAME:user.name} from %{IP:source.ip}" }
-}
-
-# 时间解析(修复 @timestamp = 日志发生时间)
-date {
-  match => [ "timestamp", "MMM dd HH:mm:ss", "MMM  d HH:mm:ss" ]
-  timezone => "Asia/Shanghai"
-  target => "@timestamp"
-}
-
-# 字段规范化(ECS 对齐)
-mutate {
-  add_field => {
-    "pipeline" => "mini-siem"
-    "event.category" => "authentication"
-    "event.action" => "authentication_failure"
-    "event.outcome" => "failure"
-    "event.type" => "denied"
-    "event.schema_version" => "1.0"
-  }
-  add_field => { "related.ip" => "%{source.ip}" }
-  rename => {
-    "timestamp" => "timestamp_parsed"   # 或直接 remove_field,避免与 @timestamp 混淆
-  }
-}
-```
-
-> 注:`SYSLOGTIMESTAMP` 不含年份,`date` filter 默认补当年并处理年末回绕;单数字日需要双空格 pattern(`MMM  d`)。
-
-## 4. Alert Schema
-
-### 4.1 字段表
-
-告警采用**扁平字段**:关键事件字段提升到告警顶层,完整事件存为扁平字符串(`event.raw`),避免嵌套对象导致的 `object.param1` 路径查询问题(见决策 D)。
-
-| 字段 | 类型 | 生产者 | 说明 |
+| 对象 | 索引 | `@timestamp` | 系统处理时间 |
 | --- | --- | --- | --- |
-| `@timestamp` | date | Flink | 触发事件时间(事件 `@timestamp` 的拷贝) |
-| `alert.created_at` | date | Flink | 检测时间(规则命中时刻) |
-| `alert.id` | keyword | Flink | 告警唯一 ID(UUID) |
-| `alert.rule_id` | keyword | Flink | 命中规则 ID(对应规则引擎) |
-| `alert.rule_name` | keyword | Flink | 规则显示名 |
-| `alert.type` | keyword | Flink | 告警类型,如 `ssh_authentication_failure` |
-| `alert.severity` | keyword | Flink | `info/low/medium/high/critical` |
-| `alert.description` | text | Flink | 人类可读描述 |
-| `source.ip` | ip | Flink(提升) | 攻击源 IP,顶层可筛选/聚合 |
-| `user.name` | keyword | Flink(提升) | 被攻击用户名 |
-| `host.name` | keyword | Flink(提升) | 目标主机 |
-| `event.action` | keyword | Flink(提升) | 触发动作 |
-| `event.category` | keyword | Flink(提升) | 事件分类 |
-| `event.raw` | match_only_text | Flink | 触发事件完整 JSON(扁平字符串,取证查看) |
-| `event_count` | integer | Flink | 关联事件数(时间窗口规则 > 1) |
-| `related_events` | nested | Flink | 关联事件列表(时间窗口关联,Phase 2.8,唯一用 nested 处) |
+| 正常事件 | `siem-events-*` | 日志发生时间（Logstash `date` 解析） | `event.ingested`（若有） |
+| 解析失败事件 | `siem-events-raw-*` | 可解析则使用原始时间，否则使用处理时间 | 以 raw 文档为准 |
+| 告警 | `siem-alerts` | 单事件使用事件时间；窗口/关联告警使用窗口结束时间 | `alert.created_at` |
 
-### 4.2 与规则引擎的关系
+页面和接口必须同时展示事件时间与告警生成时间；不能把二者都称为“平台时间”。原始存储使用 UTC ISO-8601，前端按浏览器本地时区展示并提供原始值提示。
 
-规则引擎(Phase 2.3)将产出规则元数据,Alert 直接引用。告警文档形态(扁平,参考 Elastic Security 告警):
+## 2. 事件字段
 
-```json
-{
-  "@timestamp": "2026-08-01T08:00:00.000Z",
-  "alert.created_at": "2026-08-01T08:00:00.500Z",
-  "alert.id": "a1b2c3d4-...",
-  "alert.rule_id": "rule-ssh-auth-failure-001",
-  "alert.rule_name": "SSH 认证失败",
-  "alert.type": "ssh_authentication_failure",
-  "alert.severity": "medium",
-  "alert.description": "检测到 SSH 认证失败",
-  "source.ip": "172.16.1.20",
-  "user.name": "test",
-  "host.name": "server03",
-  "event.action": "authentication_failure",
-  "event.category": "authentication",
-  "event.raw": "{\"@timestamp\":\"...\",\"source.ip\":\"172.16.1.20\",...}"
-}
-```
+事件以 ECS 对齐的点分字段存储。以下是检测、健康和调查链路依赖的最小集合：
 
-## 5. 迁移影响
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `@timestamp` | date | 事件发生时间 |
+| `event.original` | match_only_text | 原始日志 |
+| `event.category` | keyword | 例如 `authentication` |
+| `event.action` | keyword | 例如 `authentication_failure` |
+| `event.outcome` | keyword | `failure`/`success` |
+| `event.type` | keyword | `denied`/`allowed` |
+| `event.schema_version` | keyword | 当前事件规范版本 |
+| `source.ip` | ip | 来源 IP |
+| `related.ip` | keyword | 关联 IP |
+| `user.name` | keyword | 用户 |
+| `host.name` | keyword | 主机 |
+| `log.source_id` | keyword | 数据源稳定 ID，健康页和调查关联键 |
+| `log.source_name` | keyword | 数据源展示名 |
+| `message` | text | 可读消息 |
+| `pipeline` | keyword | Logstash pipeline 标识 |
+| `tags` | keyword[] | 解析状态等标签，失败事件通常含 `_parsefailure` |
 
-| 位置 | 改动 |
-| --- | --- |
-| Logstash | grok 字段改名 + `date` filter + ECS mutate |
-| Flink | 检测逻辑从 `json.contains("authentication_failure")` 改为按 `event.action` 判断(随规则引擎重写) |
-| ES | 事件索引 `siem-events-*` + 别名 `siem-events`;`source.ip` 用 ip 类型等 mapping |
-| 历史数据 | 旧索引 `siem-auth-*`、`siem-events-2026.07.29`、旧字段告警保留不动(只读) |
+正常事件进入 Elasticsearch 和 Kafka；解析失败事件进入 `siem-events-raw-*`，不进入正常检测链路。DataHealth 必须合并正常桶和 raw 桶统计同一数据源。
 
-## 6. 下一步
+## 3. 告警字段
 
-1. 确认本文档(尤其决策 A / B / C)
-2. 实现 Logstash 配置(3.2)
-3. 设计并实现规则引擎抽象 + DetectionJob 重写(可读入 schema 字段)
-4. ES 索引模板与 mapping
-5. Kibana dashboard
+告警是扁平文档，保留触发事件的关键字段并附加规则、处置和关联上下文：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `alert.id` | keyword | 告警稳定 ID |
+| `alert.created_at` | date | 告警生成时间 |
+| `alert.status` | keyword | `open`、`acknowledged`、`investigating`、`resolved`、`closed` |
+| `alert.status_updated_at` | date | 最近一次处置时间 |
+| `alert.operator` | keyword | 最近一次真实操作者 |
+| `alert.analyst_verdict` | keyword | `true_positive`、`false_positive`、`duplicate` |
+| `alert.case_id` | keyword | 所属案件，可为空 |
+| `alert.rule_id` | keyword | 规则 ID |
+| `alert.rule_name` | keyword | 规则名称 |
+| `alert.type` | keyword | 规则类型 |
+| `alert.severity` | keyword | `info`/`low`/`medium`/`high`/`critical` |
+| `alert.description` | text | 告警描述 |
+| `alert.risk_score` | integer | 0–100 风险分 |
+| `alert.entity` | keyword | 主要实体 |
+| `rule.tags` | keyword[] | MITRE 等规则标签 |
+| `rule.status` | keyword | 规则生命周期状态 |
+| `rule.version` | keyword | 规则版本 |
+| `event.raw` | match_only_text/object | 触发事件原文/完整内容 |
+| `event_count` | integer | 关联事件数量 |
+| `related_events` | nested | 窗口或关联规则的事件列表 |
+| `ocsf.*` | object | 已落地的最小 OCSF 辅助视图，非主 Schema |
+
+Flink sink 使用保护分析师字段的 partial update；后续检测写入不能覆盖 `alert.status`、`alert.analyst_verdict`、`alert.operator`、`alert.case_id` 等处置字段。
+
+## 4. 规则与告警关联
+
+- 单事件规则：一条事件可命中多条规则，每个命中生成独立告警。
+- 窗口规则：按事件时间、watermark、实体键和阈值聚合，窗口结束时写入 `event_count` 与 `related_events`。
+- CEP/基线规则：沿用相同告警字段，规则类型在 `alert.type` 和规则 YAML 中区分。
+- 规则声明唯一来源是 `infra/rules/*.yaml`；`alert.rule_id` 必须能反查规则详情和近 7 天命中。
+
+## 5. 控制面关联
+
+案件的事实状态在 PostgreSQL；ES 中保留案件兼容镜像和告警的 `alert.case_id` 便于检索。案件详情通过 `alert_ids` 反查告警，再按实体和时间范围查询事件，生成时间线缓存。案件结案必须携带 verdict，并联动更新案内告警。
+
+## 6. 变更检查清单
+
+新增或修改字段时必须同时检查：
+
+1. Logstash/Flink 生产端是否写入同样的字段和类型；
+2. ES 新模板、动态模板和已有索引兼容性；
+3. Spring Boot DTO、查询字段白名单和前端展示；
+4. 告警 partial update 是否保护分析师处置字段；
+5. 事件、告警、案件、健康页和备份恢复测试；
+6. [当前产品契约](product-contract.md)和[当前状态](current-status.md)是否需要同步。

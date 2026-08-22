@@ -40,14 +40,14 @@ SIEM/
 │   ├── kibana/             dashboard 创建脚本 + NDJSON 导出
 │   ├── simulator/          日志模拟器(含暴力破解测试脚本)
 │   └── deploy.sh           同步仓库 → 部署环境 + 构建 + 拷贝 jar
-├── docs/                   设计、部署、学习路线与 Story 文档
+├── docs/                   当前状态、产品契约、部署、学习与专项技术参考
 ├── web/                    React/Vite 控制台
 └── CLAUDE.md               面向 AI 会话的项目速览
 ```
 
 ## 文档入口
 
-日常先看[当前状态](docs/current-status.md)，再按目标选择部署、运行、架构或 Story 文档；阶段设计和学习资料作为深入参考。
+日常先看[当前状态](docs/current-status.md)，再按目标选择部署、运行、架构或产品契约文档；专项设计和学习资料作为深入参考。
 
 | 文档 | 内容 |
 | --- | --- |
@@ -59,7 +59,7 @@ SIEM/
 | [docs/event-alert-schema.md](docs/event-alert-schema.md) | Event/Alert Schema 详细设计 |
 | [docs/rule-engine.md](docs/rule-engine.md) | 规则引擎使用与扩展 |
 | [docs/roadmap.md](docs/roadmap.md) | 统一阶段路线图、验收基线和后续优先级 |
-| [docs/story/README.md](docs/story/README.md) | 按模块组织的用户旅程与验收契约 |
+| [docs/product-contract.md](docs/product-contract.md) | 当前页面、API、用户旅程和验收契约 |
 | [docs/learn/README.md](docs/learn/README.md) | 从 SIEM 基础到 Kafka/ES/Flink/Logstash 的学习地图 |
 
 ## 快速开始(新机器)
@@ -94,6 +94,7 @@ npm --prefix web run dev
 - ✅ Flink 规则引擎:
   - 单事件规则 3 条(SSH 认证失败 / root 认证失败 / 常见账号爆破)
   - 时间窗口规则 1 条(同源 IP 5 分钟 ≥5 次失败 → 暴力破解 critical 告警)
+  - CEP 攻击链、认证失败基线异常和实体风险能力已接入统一规则声明
 - ✅ 告警扁平 Schema(`siem-alerts`,含 `event.raw`、`event_count`、`related_events`)
 - ✅ ES 索引模板(`siem-events-*`、`siem-alerts`)
 - ✅ Kibana "SIEM 总览" dashboard

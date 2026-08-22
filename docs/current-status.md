@@ -14,7 +14,7 @@ HISIEM 已完成检测链路、控制面、接入向导、告警处置、调查�
 | --- | --- | --- |
 | 数据链路 | Logstash → Elasticsearch/Kafka → Flink → 告警索引链路可运行 | [架构](architecture.md)、`infra/` |
 | 控制面 | Spring Boot + PostgreSQL/Flyway，认证、RBAC、案件、审计、通知和后台任务可用 | [部署](deployment.md)、[路线图](roadmap.md) |
-| 前端 | React/Vite 控制台可构建并访问控制面 API | `web/`、[Story 索引](story/README.md) |
+| 前端 | React/Vite 控制台可构建并访问控制面 API | `web/`、[当前产品契约](product-contract.md) |
 | 运行态 | PostgreSQL、Elasticsearch、Kafka、Logstash、Flink、Kibana 均有健康扫描 | [运维手册](operations.md) |
 | 自动化验证 | 根项目 74 个测试、Flink 33 个测试、前端生产构建通过 | [路线图](roadmap.md) |
 | 备份恢复 | ES 临时索引备份恢复演练通过 | `infra/elasticsearch/backup-restore-rehearsal.sh` |
@@ -51,8 +51,8 @@ HISIEM 已完成检测链路、控制面、接入向导、告警处置、调查�
 - “现在是什么”：先看本页、[架构](architecture.md)和[运维手册](operations.md)。
 - “怎么部署”：看[部署指南](deployment.md)；不要从 Story 或学习文档复制部署命令。
 - “为什么这样设计”：看[设计决策](design-decisions.md)和 `docs/design/`。
-- “怎么验收一个功能”：看 `docs/story/`；Story 是验收契约，不是运行态真相。
+- “怎么验收一个功能”：看[当前产品契约](product-contract.md)；它是当前验收契约，不复制历史 Story 长文。
 - “怎么学习组件”：看 `docs/learn/`；学习文档允许保留简化示例，不替代生产配置。
-- “历史审计证据”：根目录的 [HISIEM-add_frame-架构与数据流分析.md](../HISIEM-add_frame-架构与数据流分析.md)。它保留分析过程和风险证据，不作为日常入口。
+- “历史审计证据”：看 [`archive/architecture-audit-2026-08.md`](archive/architecture-audit-2026-08.md)。它保留分析过程和风险证据，不作为日常入口。
 
-状态有变化时，先更新本页和[路线图](roadmap.md)，再同步受影响的 Story/设计文档，避免在多个文档中维护互相矛盾的状态表。
+状态有变化时，先更新本页、[路线图](roadmap.md)和[当前产品契约](product-contract.md)，避免在多个模块文档中维护互相矛盾的状态表。

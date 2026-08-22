@@ -1,12 +1,12 @@
 # 项目路线图与完成基线
 
-> 定位：统一收纳阶段计划、已交付能力和后续优先级。原有阶段细节仍保留在 [`design/05-roadmap.md`](design/05-roadmap.md) 与 [`roadmap-next.md`](roadmap-next.md)，但日常只以本页的状态为准。
+> 定位：统一收纳阶段计划、已交付能力和后续优先级。旧阶段稿已删除；本页是唯一的路线图入口，日常只以本页的状态为准。
 
 ## 已交付阶段
 
 | 阶段 | 主题 | 状态 | 说明 |
 | --- | --- | --- | --- |
-| 3.0–3.5 | 检测引擎基线 | 已完成 | 事件标准化、Kafka/Flink、单事件与窗口规则、告警 Schema；详见 [`design/05-roadmap.md`](design/05-roadmap.md) |
+| 3.0–3.5 | 检测引擎基线 | 已完成 | 事件标准化、Kafka/Flink、单事件/窗口/CEP/基线规则、告警 Schema；详见[架构](architecture.md)和[规则引擎](rule-engine.md) |
 | 4.0 | 业务正确性 | 已完成 | DataHealth、告警/案件状态机、重复归属校验 |
 | 4.1 | 控制面持久化 | 已完成 | PostgreSQL/Flyway、认证、案件、通知、审计、后台任务 |
 | 4.2 | 安全与工程化 | 已完成 | Spring Security、会话持久化、失败限制、Actuator、任务查询 |

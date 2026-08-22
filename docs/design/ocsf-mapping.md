@@ -39,6 +39,6 @@
 - **存储以 ECS 为准**:OCSF 是"额外的可查询视图",不替换 ECS 字段。
 - **最小合规子集(AWS Security Lake 对接前必备)**:`category_uid` / `time` / `metadata.version` / `type_uid`。其中除 `type_uid` 尚未落地(由 class_uid + activity_id 派生,见导出脚本)外,`category_uid` / `time` / `metadata.version` 目前亦为**设计值待 `Ocsf.java` 补写**(见 §1),对接前需一并补齐。
 - **导出脚本思路**:读 `siem-alerts` 的 `ocsf.*` 扁平字段 → nest 成 OCSF 结构化 JSON(如 `ocsf.src_endpoint.ip` → `{src_endpoint:{ip:…}}`)→ 补齐 `type_uid` → 写出独立 OCSF 主题/文件(批量导出优先)。
-- **与 `docs/event-alert-schema.md` 的关系**:该 schema 文档为 Phase 2 产物,未收录 `alert.risk_score` / `rule.*` / `ocsf.*` / `anomaly.*` 等生产字段,引用时需注明"待同步更新"。
+- **与 `docs/event-alert-schema.md` 的关系**:事件与告警的 ECS 主 Schema 以当前版本文档为准；本文件只补充 `ocsf.*` 辅助视图，不能替代主 Schema。
 - **完整 OCSF 合规后置**:activity_id / type_uid / 必填字段集合等,待有明确对接需求(如 AWS Security Lake)时再补。
 - **事件侧未加 OCSF**:事件量大,加字段会膨胀存储;如需事件级 OCSF,可在 Logstash 输出侧单独产出 OCSF 主题。
