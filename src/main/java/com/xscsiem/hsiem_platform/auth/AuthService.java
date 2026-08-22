@@ -7,6 +7,8 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -271,15 +273,27 @@ public class AuthService {
     }
 
     private void audit(String action, String target) {
+        String actor = currentActor();
         if (control != null) {
-            control.audit("system", action, target);
+            control.audit(actor, action, target);
             return;
         }
         Map<String, String> entry = new LinkedHashMap<>();
         entry.put("timestamp", Instant.now().toString());
+        entry.put("actor", actor);
         entry.put("action", action);
         entry.put("target", target);
         auditLogs.add(entry);
+    }
+
+    private static String currentActor() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null || !authentication.isAuthenticated()
+                || authentication.getName() == null
+                || "anonymousUser".equals(authentication.getName())) {
+            return "system";
+        }
+        return authentication.getName();
     }
 
     private AuthUser find(String username) {

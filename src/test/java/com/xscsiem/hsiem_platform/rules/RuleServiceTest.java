@@ -69,6 +69,23 @@ class RuleServiceTest {
     }
 
     @Test
+    void toggle_changesOnlyEnabledLine_andPreservesComments() throws Exception {
+        writeRule("rule-a", true);
+        Path file = temp.resolve("rule-a.yaml");
+        String original = Files.readString(file);
+        String withComment = "# keep this review context\n" + original;
+        Files.writeString(file, withComment);
+
+        svc().toggle("rule-a");
+
+        String updated = Files.readString(file);
+        assertTrue(updated.startsWith("# keep this review context\n"));
+        assertTrue(updated.contains("enabled: false"));
+        assertFalse(updated.startsWith("---"));
+        assertEquals(withComment.replace("enabled: true", "enabled: false"), updated);
+    }
+
+    @Test
     void toggle_missingRule_throws404() throws Exception {
         assertThrows(NotFoundException.class, () -> svc().toggle("nope"));
     }

@@ -8,6 +8,9 @@ protocol: tcp
 ecs:
   event.category: authentication
 patterns:
+  # Windows Event Forwarding 的常见文本形态(Story 09 验收样例):
+  # Account Name / Logon Type / Source Network Address 均直接映射 ECS。
+  - '%{SYSLOGTIMESTAMP:timestamp} %{HOSTNAME:host.name} Security %{NUMBER:event.code} %{DATA:winlog.audit_outcome}: Account Name: %{USERNAME:user.name}; Logon Type: %{NUMBER:logon.type}; Source Network Address: %{IP:source.ip}'
   # 带 client ip 的形态(4625 失败登录常用):提取 user.name/domain/source.ip
   - '%{SYSLOGTIMESTAMP:timestamp} %{HOSTNAME:host.name} WinEvtLog: .*\(%{NUMBER:event.code}\): account: %{USERNAME:user.name}: domain: %{WORD:winlog.domain}: .*client ip: %{IP:source.ip}'
   # 通用形态(4624 成功登录 / 4732 加组等):提取 user.name/domain,可选 logon type
@@ -17,17 +20,17 @@ timestamp:
   formats: ["MMM dd HH:mm:ss", "MMM  d HH:mm:ss"]
   timezone: Asia/Shanghai
 actions:
-  - match: "/\\(4625\\)/"
+  - match: "/(?:\\(4625\\)|Security 4625 )/"
     fields:
       event.action: authentication_failure
       event.outcome: failure
       event.type: denied
-  - match: "/\\(4624\\)/"
+  - match: "/(?:\\(4624\\)|Security 4624 )/"
     fields:
       event.action: authentication_success
       event.outcome: success
       event.type: allowed
-  - match: "/\\(4732\\)/"
+  - match: "/(?:\\(4732\\)|Security 4732 )/"
     fields:
       event.action: user_member_added
       event.outcome: success
@@ -53,6 +56,20 @@ tests:
       event.code: "4732"
       user.name: carol
       event.action: user_member_added
+  - sample: "Aug 16 10:20:00 dc01 Security 4625 Audit Failure: Account Name: test; Logon Type: 3; Source Network Address: 172.16.1.20"
+    expect:
+      event.code: "4625"
+      user.name: test
+      logon.type: "3"
+      source.ip: 172.16.1.20
+      event.action: authentication_failure
+  - sample: "Aug 16 10:20:05 dc01 Security 4624 Audit Success: Account Name: admin; Logon Type: 10; Source Network Address: 10.0.0.8"
+    expect:
+      event.code: "4624"
+      user.name: admin
+      logon.type: "10"
+      source.ip: 10.0.0.8
+      event.action: authentication_success
 negative:
   - "Aug 1 10:20:00 server03 sshd[9999]: Failed password for test from 172.16.1.20"
   - '127.0.0.1 - - [10/Oct/2000:13:55:36 -0700] "GET /index.html HTTP/1.1" 200 2326'

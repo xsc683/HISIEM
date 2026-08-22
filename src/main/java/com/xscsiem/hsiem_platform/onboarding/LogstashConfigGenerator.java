@@ -61,7 +61,7 @@ public class LogstashConfigGenerator {
      * 生成每数据源自包含的完整 Logstash pipeline(input + filter + output)。
      * - input:tcp 监听该源端口,add_field 注入 log.source_id / log.source_name(story-05 聚合维度)。
      * - filter:模板 grok/date/ecs/actions + 规范化(remove timestamp、pipeline、schema_version、related.ip)+ geoip。
-     * - output:与主 pipeline 一致(ES siem-events-* + Kafka siem-events,进入检测链)。
+     * - output:成功事件写 ES siem-events-* + Kafka siem-events;解析失败只写 siem-events-raw-*。
      * 该片段写入 infra/logstash/pipeline/log-sources/&lt;id&gt;.conf 并在 pipelines.yml 注册为独立 pipeline。
      */
     public String generatePipeline(LogSource s, ParserTemplate t) {
@@ -91,22 +91,29 @@ public class LogstashConfigGenerator {
         sb.append("  }\n");
         sb.append("}\n\n");
 
-        // output:与主 pipeline 一致
+        // output:解析失败只进 raw 桶,不写 Kafka,避免未知日志进入 Flink 检测链。
         sb.append("output {\n");
-        sb.append("  elasticsearch {\n");
-        sb.append("    hosts => [\"http://elasticsearch:9200\"]\n");
-        sb.append("    index => \"siem-events-%{+YYYY.MM.dd}\"\n");
-        sb.append("  }\n\n");
-        sb.append("  kafka {\n");
-        sb.append("    bootstrap_servers => \"kafka:9092\"\n");
-        sb.append("    topic_id => \"siem-events\"\n");
-        sb.append("    codec => json\n");
-        sb.append("    acks => \"all\"\n");
-        sb.append("    retries => 5\n");
-        sb.append("    retry_backoff_ms => 1000\n");
-        sb.append("    compression_type => \"zstd\"\n");
-        sb.append("    batch_size => 131072\n");
-        sb.append("    linger_ms => 5\n");
+        sb.append("  if \"_parsefailure\" in [tags] {\n");
+        sb.append("    elasticsearch {\n");
+        sb.append("      hosts => [\"http://elasticsearch:9200\"]\n");
+        sb.append("      index => \"siem-events-raw-%{+YYYY.MM.dd}\"\n");
+        sb.append("    }\n");
+        sb.append("  } else {\n");
+        sb.append("    elasticsearch {\n");
+        sb.append("      hosts => [\"http://elasticsearch:9200\"]\n");
+        sb.append("      index => \"siem-events-%{+YYYY.MM.dd}\"\n");
+        sb.append("    }\n\n");
+        sb.append("    kafka {\n");
+        sb.append("      bootstrap_servers => \"kafka:9092\"\n");
+        sb.append("      topic_id => \"siem-events\"\n");
+        sb.append("      codec => json\n");
+        sb.append("      acks => \"all\"\n");
+        sb.append("      retries => 5\n");
+        sb.append("      retry_backoff_ms => 1000\n");
+        sb.append("      compression_type => \"zstd\"\n");
+        sb.append("      batch_size => 131072\n");
+        sb.append("      linger_ms => 5\n");
+        sb.append("    }\n");
         sb.append("  }\n");
         sb.append("}\n");
         return sb.toString();

@@ -32,7 +32,9 @@ public class BearerSessionFilter extends OncePerRequestFilter {
             if (user != null) {
                 var authorities = auth.authorities(user).stream()
                         .map(SimpleGrantedAuthority::new).toList();
-                var authentication = new UsernamePasswordAuthenticationToken(user, token, authorities);
+                // principal 使用用户名而不是 AuthUser 对象,保证 Authentication#getName
+                // 在审计、操作人和后台任务中得到稳定的 admin/analyst 字符串。
+                var authentication = new UsernamePasswordAuthenticationToken(user.username, token, authorities);
                 authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
                 SecurityContextHolder.getContext().setAuthentication(authentication);
             }

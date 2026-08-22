@@ -96,18 +96,22 @@ curl -s -X PUT "http://localhost:9200/_index_template/siem-entity-risk" \
   --data-binary @"$REPO/siem-entity-risk-template.json"
 echo
 
-echo "==> 已存在的 siem-events-* 索引套用 ILM(模板只对新索引生效)"
-curl -s -X PUT "http://localhost:9200/siem-events-*/_settings" \
+echo "==> 已存在的正常事件索引套用 ILM(排除 siem-events-raw-* 避免重复统计)"
+curl -s -X PUT "http://localhost:9200/siem-events-20*/_settings" \
   -H 'Content-Type: application/json' \
   -d '{"index.lifecycle.name": "siem-events-retention"}'
 echo
 
-echo "==> 已存在的 siem-* 索引关闭副本(单节点无法分配副本,replica=1 只会 yellow + 写放大)"
-curl -s -X PUT "http://localhost:9200/siem-events-*/_settings" \
+echo "==> 已存在的 SIEM 索引关闭副本(单节点无法分配副本,replica=1 只会 yellow + 写放大)"
+curl -s -X PUT "http://localhost:9200/siem-events-20*/_settings" \
   -H 'Content-Type: application/json' \
   -d '{"index.number_of_replicas": 0}'
 echo
 curl -s -X PUT "http://localhost:9200/siem-alerts/_settings" \
+  -H 'Content-Type: application/json' \
+  -d '{"index.number_of_replicas": 0}'
+echo
+curl -s -X PUT "http://localhost:9200/siem-cases/_settings" \
   -H 'Content-Type: application/json' \
   -d '{"index.number_of_replicas": 0}'
 echo

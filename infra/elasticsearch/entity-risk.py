@@ -48,23 +48,44 @@ def load_criticality():
     return {"ip": {}, "user": {}, "host": {}}
 
 
+def aggregation_field(field):
+    """选择跨历史/新模板索引都可聚合的字段。
+
+    早期 siem-alerts 自动映射把 source.ip/user.name 建成 text+.keyword,
+    新模板则直接使用 ip/keyword。优先使用历史 multifield,没有时退回主字段,
+    避免风险重算因旧索引 mapping 冲突失败。
+    """
+    try:
+        caps = api("GET", f"/{ALERTS}/_field_caps?fields={field},{field}.keyword")
+        fields = caps.get("fields", {})
+        keyword = fields.get(f"{field}.keyword", {})
+        if any(bool(meta.get("aggregatable")) for meta in keyword.values()):
+            return f"{field}.keyword"
+        return field
+    except Exception:
+        return field
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--days", type=int, default=30, help="聚合窗口(天)")
     p.add_argument("--write", action="store_true", help="写入 siem-entity-risk(默认只打印)")
     args = p.parse_args()
     crit = load_criticality()
+    ip_field = aggregation_field("source.ip")
+    user_field = aggregation_field("user.name")
+    alert_id_field = aggregation_field("alert.id")
 
     body = {
         "size": 0,
         "query": {"range": {"alert.created_at": {"gte": f"now-{args.days}d/d"}}},
         "aggs": {
-            "by_ip": {"terms": {"field": "source.ip", "size": 100},
+            "by_ip": {"terms": {"field": ip_field, "size": 100},
                       "aggs": {"risk": {"sum": {"field": "alert.risk_score"}},
-                               "alerts": {"value_count": {"field": "alert.id"}}}},
-            "by_user": {"terms": {"field": "user.name", "size": 100},
+                               "alerts": {"value_count": {"field": alert_id_field}}}},
+            "by_user": {"terms": {"field": user_field, "size": 100},
                         "aggs": {"risk": {"sum": {"field": "alert.risk_score"}},
-                                 "alerts": {"value_count": {"field": "alert.id"}}}},
+                                 "alerts": {"value_count": {"field": alert_id_field}}}},
         },
     }
     result = api("POST", f"/{ALERTS}/_search", body)

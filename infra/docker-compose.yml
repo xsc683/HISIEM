@@ -1,3 +1,5 @@
+name: infra
+
 services:
   postgres:
     image: postgres:16.4
@@ -20,6 +22,9 @@ services:
   elasticsearch:
     image: elasticsearch:8.14.0
     container_name: siem-elasticsearch
+    depends_on:
+      elasticsearch-backups-init:
+        condition: service_completed_successfully
     environment:
       - discovery.type=single-node
       - xpack.security.enabled=false
@@ -39,6 +44,15 @@ services:
       # 快照失效,容器重启报 mount: no such file or directory(exit 127)。
       - ./elasticsearch/config:/usr/share/elasticsearch/config
       - es-backups:/usr/share/elasticsearch/backups
+
+  # named volume 首次创建时通常属于 root;ES 以 uid 1000 运行,快照写入会失败。
+  # 该一次性初始化容器在 ES 启动前修正目录属主,不会改变业务数据。
+  elasticsearch-backups-init:
+    image: alpine:3.20
+    volumes:
+      - es-backups:/backups
+    command: ["sh", "-c", "chown -R 1000:0 /backups && chmod 750 /backups"]
+    restart: "no"
 
   kibana:
     image: kibana:8.14.0

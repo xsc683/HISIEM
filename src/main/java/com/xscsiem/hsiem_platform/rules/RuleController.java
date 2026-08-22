@@ -4,11 +4,14 @@ import com.xscsiem.hsiem_platform.notify.NotificationService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 
 import java.util.List;
 import java.util.Map;
@@ -52,12 +55,37 @@ public class RuleController {
 
     /** 启停:翻转 enabled 写回 YAML(生效需调用 deploy → 重启检测 job)。 */
     @PostMapping("/{id}/toggle")
-    @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST')")
+    @PreAuthorize("hasRole('ADMIN')")
     public Map<String, Object> toggle(@PathVariable String id) {
-        Map<String, Object> updated = rules.toggle(id);
+        Map<String, Object> updated = rules.toggle(id, operator());
         updated.put("deployed", false);
+        updated.put("redeployRequired", true);
         updated.put("note", "已写回 infra/rules,需 POST /api/detection-rules/deploy 重启检测 job 后生效");
         return updated;
+    }
+
+    /** 兼容 Story 03/08 约定的 PATCH 语义:可显式指定 enabled,不传则执行翻转。 */
+    @PatchMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public Map<String, Object> patch(@PathVariable String id,
+                                     @org.springframework.web.bind.annotation.RequestBody(required = false)
+                                     Map<String, Object> body) {
+        Map<String, Object> current = rules.get(id);
+        Object requested = body == null ? null : body.get("enabled");
+        Map<String, Object> updated = current;
+        if (!(requested instanceof Boolean desired) || desired != Boolean.TRUE.equals(current.get("enabled"))) {
+            updated = rules.toggle(id, operator());
+        }
+        updated.put("deployed", false);
+        updated.put("redeployRequired", true);
+        updated.put("note", "已写回 infra/rules,需 POST /api/detection-rules/deploy 重启检测 job 后生效");
+        return updated;
+    }
+
+    private String operator() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        return authentication == null || authentication.getName() == null
+                ? "system" : authentication.getName();
     }
 
     /** MITRE 覆盖矩阵(由规则 tags 动态聚合;Blind 盲区见 mitre-coverage.md)。 */

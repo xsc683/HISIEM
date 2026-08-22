@@ -38,9 +38,17 @@ public class CriticalityRecalcCoordinator {
                 notifications.notify("criticality", "entity-risk", "实体风险已按最新资产关键度重算");
                 control.audit(actor == null ? "anonymous" : actor, "criticality.recalc", taskId);
             } catch (Exception e) {
-                control.updateTask(taskId, "failed", 100, "实体风险重算失败", e.getMessage());
+                control.updateTask(taskId, "failed", 100, "实体风险重算失败", safeError(e));
             }
         });
         return taskId;
+    }
+
+    private static String safeError(Exception e) {
+        String message = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+        // WSL 在 Windows 主机上可能把 UTF-16 转发为带 NUL 的字符串,PostgreSQL
+        // 不接受 0x00。错误信息仍保留,但清洗为可持久化文本并限制长度。
+        String cleaned = message.replace("\u0000", "");
+        return cleaned.substring(0, Math.min(cleaned.length(), 4000));
     }
 }

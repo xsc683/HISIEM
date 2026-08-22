@@ -1,6 +1,8 @@
 package com.xscsiem.hsiem_platform.health;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.xscsiem.hsiem_platform.onboarding.LogSource;
+import com.xscsiem.hsiem_platform.onboarding.LogSourceStore;
 import com.xscsiem.hsiem_platform.search.ElasticsearchGateway;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -10,8 +12,8 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.time.Duration;
 import java.time.Instant;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
@@ -29,20 +31,25 @@ public class DataHealthService {
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private final String esUrl;
     private final ElasticsearchGateway gateway;
+    private final LogSourceStore sourceStore;
 
     @Value("${app.health.minimum-samples:20}")
     private int minimumSamples = 20;
 
+    @Value("${app.health.expected-interval:PT15M}")
+    private Duration expectedInterval = Duration.ofMinutes(15);
+
     @Autowired
     public DataHealthService(@Value("${app.elasticsearch.url:http://localhost:9200}") String esUrl,
-                             ElasticsearchGateway gateway) {
+                             ElasticsearchGateway gateway,
+                             LogSourceStore sourceStore) {
         this.esUrl = esUrl;
         this.gateway = gateway;
+        this.sourceStore = sourceStore;
     }
 
     public DataHealthService(String esUrl) {
-        this.esUrl = esUrl;
-        this.gateway = null;
+        this(esUrl, null, null);
     }
 
     /**
@@ -50,27 +57,32 @@ public class DataHealthService {
      * siem-events-raw-* 取)。两个索引的 source_id 取并集,保证只有失败事件的数据源也能显示。
      */
     public List<Map<String, Object>> sources() {
+        String eventSourceIdField = aggregationField("siem-events-20*", "log.source_id");
+        String eventSourceNameField = aggregationField("siem-events-20*", "log.source_name");
+        String rawSourceIdField = aggregationField("siem-events-raw-*", "log.source_id");
+        String rawSourceNameField = aggregationField("siem-events-raw-*", "log.source_name");
         // 总事件数(事件桶,不含解析失败)
-        Map<String, Object> respEvents = esPost("/siem-events-*/_search", """
-                {"size":0,"aggs":{"sources":{"terms":{"field":"log.source_id","size":100},
+        // 20* 只匹配按日正常索引,不会把 siem-events-raw-* 重复计入成功事件。
+        Map<String, Object> respEvents = esPost("/siem-events-20*/_search", """
+                {"size":0,"aggs":{"sources":{"terms":{"field":"%s","size":100},
                   "aggs":{
-                    "source_name":{"terms":{"field":"log.source_name","size":1}},
+                    "source_name":{"terms":{"field":"%s","size":1}},
                     "events24h":{"filter":{"range":{"@timestamp":{"gte":"now-24h"}}}},
                     "events1h":{"filter":{"range":{"@timestamp":{"gte":"now-1h"}}}},
                     "events_prev1h":{"filter":{"range":{"@timestamp":{"gte":"now-2h","lt":"now-1h"}}}},
                     "last_seen":{"max":{"field":"@timestamp"}}
                   }}}}
-                """);
+                """.formatted(eventSourceIdField, eventSourceNameField));
         // 解析失败数(raw 桶,L9:失败事件路由到 siem-events-raw-*)
         Map<String, Object> respRaw = esPost("/siem-events-raw-*/_search", """
-                {"size":0,"aggs":{"sources":{"terms":{"field":"log.source_id","size":100},
+                {"size":0,"aggs":{"sources":{"terms":{"field":"%s","size":100},
                   "aggs":{
-                    "source_name":{"terms":{"field":"log.source_name","size":1}},
+                    "source_name":{"terms":{"field":"%s","size":1}},
                     "failures1h":{"filter":{"range":{"@timestamp":{"gte":"now-1h"}}}},
                     "failures_prev1h":{"filter":{"range":{"@timestamp":{"gte":"now-2h","lt":"now-1h"}}}},
                     "last_failure":{"max":{"field":"@timestamp"}}
                   }}}}
-                """);
+                """.formatted(rawSourceIdField, rawSourceNameField));
         Map<String, Map<String, Object>> rawBySource = new LinkedHashMap<>();
         for (Map<String, Object> b : list(map(respRaw, "aggregations"), "sources", "buckets")) {
             rawBySource.put(String.valueOf(b.get("key")), b);
@@ -81,6 +93,19 @@ public class DataHealthService {
         }
         LinkedHashSet<String> sourceIds = new LinkedHashSet<>(eventsBySource.keySet());
         sourceIds.addAll(rawBySource.keySet());
+        Map<String, LogSource> configured = new LinkedHashMap<>();
+        if (sourceStore != null) {
+            for (LogSource source : sourceStore.list()) {
+                if (source.id != null) {
+                    configured.put(source.id, source);
+                    sourceIds.add(source.id);
+                }
+                if (source.sourceId != null && !source.sourceId.equals(source.id)) {
+                    configured.put(source.sourceId, source);
+                    sourceIds.add(source.sourceId);
+                }
+            }
+        }
 
         List<Map<String, Object>> out = new ArrayList<>();
         for (String sourceId : sourceIds) {
@@ -93,19 +118,28 @@ public class DataHealthService {
             long failuresPrev = docCount(raw, "failures_prev1h");
             HealthMetrics metrics = calculateMetrics(
                     successful1h, successfulPrev, failures1h, failuresPrev, minimumSamples);
+            String lastSeen = latestTimestamp(
+                    nested(b, "last_seen", "value_as_string"),
+                    nested(raw, "last_failure", "value_as_string"));
+            LogSource source = configured.get(sourceId);
+            String sourceStatus = source == null ? null : source.status;
+            boolean stale = source != null && "active".equals(source.status)
+                    && (lastSeen == null || isBefore(lastSeen, Instant.now().minus(expectedInterval.multipliedBy(2))));
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("sourceId", sourceId);
-            row.put("sourceName", firstBucketKey(b, "source_name", firstBucketKey(raw, "source_name", null)));
+            row.put("sourceName", source == null
+                    ? firstBucketKey(b, "source_name", firstBucketKey(raw, "source_name", null))
+                    : source.name);
+            row.put("status", sourceStatus);
             row.put("events1h", successful1h);
             row.put("events24h", successful24h);
             row.put("totalEvents1h", metrics.total1h());
             row.put("failRate", Math.round(metrics.failRate() * 1000) / 10.0); // 百分比,一位小数
             row.put("failures1h", failures1h);
-            row.put("lastSeen", latestTimestamp(
-                    nested(b, "last_seen", "value_as_string"),
-                    nested(raw, "last_failure", "value_as_string")));
-            row.put("anomalous", metrics.anomalous());                       // U1 判定(前端高亮)
-            row.put("reason", metrics.high() ? "失败率>5%且样本达标"
+            row.put("lastSeen", lastSeen);
+            row.put("anomalous", metrics.anomalous() || stale);              // U1 + 停采判定
+            row.put("reason", stale ? "超过 2×预期到达间隔未收到事件"
+                    : metrics.high() ? "失败率>5%且样本达标"
                     : metrics.spike() ? "失败率环比≥2×且失败样本达标" : "");
             out.add(row);
         }
@@ -114,14 +148,16 @@ public class DataHealthService {
 
     /** 某源最近 24h 逐小时事件/失败趋势(L9:事件从 siem-events-*,失败从 siem-events-raw-*)。 */
     public List<Map<String, Object>> trend(String sourceId) {
-        Map<String, Object> respEvents = esPost("/siem-events-*/_search", """
-                {"size":0,"query":{"term":{"log.source_id":"%s"}},
+        String eventSourceIdField = aggregationField("siem-events-20*", "log.source_id");
+        String rawSourceIdField = aggregationField("siem-events-raw-*", "log.source_id");
+        Map<String, Object> respEvents = esPost("/siem-events-20*/_search", """
+                {"size":0,"query":{"term":{"%s":"%s"}},
                   "aggs":{"hours":{"date_histogram":{"field":"@timestamp","fixed_interval":"1h","min_doc_count":0}}}}
-                """.formatted(sourceId));
+                """.formatted(eventSourceIdField, sourceId));
         Map<String, Object> respRaw = esPost("/siem-events-raw-*/_search", """
-                {"size":0,"query":{"term":{"log.source_id":"%s"}},
+                {"size":0,"query":{"term":{"%s":"%s"}},
                   "aggs":{"hours":{"date_histogram":{"field":"@timestamp","fixed_interval":"1h","min_doc_count":0}}}}
-                """.formatted(sourceId));
+                """.formatted(rawSourceIdField, sourceId));
         Map<String, Long> eventsByHour = new LinkedHashMap<>();
         for (Map<String, Object> b : list(map(respEvents, "aggregations"), "hours", "buckets")) {
             eventsByHour.put(String.valueOf(b.get("key_as_string")), numericCount(b.get("doc_count")));
@@ -149,10 +185,11 @@ public class DataHealthService {
 
     /** 某源最近解析失败日志(原文下钻,查 siem-events-raw-*)。 */
     public List<Map<String, Object>> failures(String sourceId, int size) {
+        String rawSourceIdField = aggregationField("siem-events-raw-*", "log.source_id");
         String body = """
-                {"size":%d,"query":{"term":{"log.source_id":"%s"}},
+                {"size":%d,"query":{"term":{"%s":"%s"}},
                   "sort":[{"@timestamp":"desc"}],"_source":["@timestamp","message","log.source_name","host.name"]}
-                """.formatted(Math.min(size, 100), sourceId);
+                """.formatted(Math.min(size, 100), rawSourceIdField, sourceId);
         Map<String, Object> resp = esPost("/siem-events-raw-*/_search", body);
         List<Map<String, Object>> out = new ArrayList<>();
         List<Map<String, Object>> hits = list(resp, "hits", "hits");
@@ -191,6 +228,33 @@ public class DataHealthService {
         } catch (Exception e) {
             throw new IllegalStateException("ES 不可达: " + e.getMessage(), e);
         }
+    }
+
+    /** 兼容历史自动映射(text+.keyword)与新索引模板(keyword/ip)的聚合字段。 */
+    @SuppressWarnings("unchecked")
+    private String aggregationField(String indexPattern, String field) {
+        try {
+            HttpRequest req = HttpRequest.newBuilder()
+                    .uri(URI.create(esUrl + "/" + indexPattern + "/_field_caps?fields="
+                            + field + "," + field + ".keyword"))
+                    .timeout(Duration.ofSeconds(3)).GET().build();
+            HttpResponse<String> response = HttpClient.newHttpClient()
+                    .send(req, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() / 100 != 2) return field;
+            Map<String, Object> caps = MAPPER.readValue(response.body(), Map.class);
+            Object rawFields = caps.get("fields");
+            if (rawFields instanceof Map<?, ?> fields) {
+                Object keyword = fields.get(field + ".keyword");
+                if (keyword instanceof Map<?, ?> types
+                        && types.values().stream().anyMatch(v -> v instanceof Map<?, ?> m
+                        && Boolean.TRUE.equals(m.get("aggregatable")))) {
+                    return field + ".keyword";
+                }
+            }
+        } catch (Exception ignored) {
+            // 字段能力探测失败时返回主字段,由后续 ES 请求报告真实错误。
+        }
+        return field;
     }
 
     static HealthMetrics calculateMetrics(long successful1h, long successfulPrev1h,
@@ -268,6 +332,14 @@ public class DataHealthService {
             return Instant.parse(a).isAfter(Instant.parse(b)) ? a : b;
         } catch (Exception ignored) {
             return a.compareTo(b) >= 0 ? a : b;
+        }
+    }
+
+    private static boolean isBefore(String value, Instant threshold) {
+        try {
+            return Instant.parse(value).isBefore(threshold);
+        } catch (Exception ignored) {
+            return false;
         }
     }
 

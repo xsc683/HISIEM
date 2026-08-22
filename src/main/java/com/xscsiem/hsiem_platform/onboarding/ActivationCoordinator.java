@@ -72,7 +72,7 @@ public class ActivationCoordinator {
 
             deployer.syncLogstash();
             if (!deployer.validateConfig(containerPath)) {
-                rollback(confFile, pipelines, pipelinesBackup, compose, composeBackup);
+                rollbackAndResync(confFile, pipelines, pipelinesBackup, compose, composeBackup);
                 throw new ActivationFailedException("Logstash 配置校验失败(" + s.id + "),已回滚");
             }
             if (portProtocol(s)) {
@@ -84,10 +84,10 @@ public class ActivationCoordinator {
         } catch (ActivationFailedException e) {
             throw e;
         } catch (IOException e) {
-            rollback(confFile, pipelines, pipelinesBackup, compose, composeBackup);
+            rollbackAndResync(confFile, pipelines, pipelinesBackup, compose, composeBackup);
             throw new ActivationFailedException("生效失败(写入/同步): " + e.getMessage(), e);
         } catch (RuntimeException e) {
-            rollback(confFile, pipelines, pipelinesBackup, compose, composeBackup);
+            rollbackAndResync(confFile, pipelines, pipelinesBackup, compose, composeBackup);
             throw new ActivationFailedException("生效失败(同步/重启): " + e.getMessage(), e);
         }
     }
@@ -219,6 +219,18 @@ public class ActivationCoordinator {
             }
         } catch (IOException e) {
             System.err.println("[ActivationCoordinator] 回滚失败: " + e.getMessage());
+        }
+    }
+
+    /** 回滚仓库文件后再次同步,避免 deployer 已经同步成功但后续校验/重启失败时,
+     * WSL 部署目录继续残留半套配置。同步失败只记录日志,不掩盖原始激活错误。 */
+    private void rollbackAndResync(Path confFile, Path pipelines, String pipelinesBackup,
+                                   Path compose, String composeBackup) {
+        rollback(confFile, pipelines, pipelinesBackup, compose, composeBackup);
+        try {
+            deployer.syncLogstash();
+        } catch (RuntimeException syncFailure) {
+            System.err.println("[ActivationCoordinator] 回滚后同步失败: " + syncFailure.getMessage());
         }
     }
 

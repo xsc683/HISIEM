@@ -13,6 +13,11 @@
 #
 set -euo pipefail
 
+# Docker Desktop 下容器使用固定 container_name,因此所有入口必须使用同一个
+# Compose project。否则 WSL 当前目录名会创建 mini-siem_* 卷并与既有 infra
+# 容器冲突。允许调用方显式覆盖,默认固定为 infra。
+export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-infra}"
+
 # 仓库根目录 = 本脚本(infra/deploy.sh)所在目录的上一级,不依赖具体挂载路径
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$SCRIPT_DIR/.." && pwd)"

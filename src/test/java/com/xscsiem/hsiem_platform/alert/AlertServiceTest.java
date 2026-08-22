@@ -1,12 +1,21 @@
 package com.xscsiem.hsiem_platform.alert;
 
+import com.xscsiem.hsiem_platform.search.ElasticsearchGateway;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * 告警三线(story-04)校验逻辑(纯逻辑,不触 ES):
@@ -48,6 +57,34 @@ class AlertServiceTest {
     void batch_invalidVerdict_rejected() {
         assertThrows(IllegalArgumentException.class,
                 () -> svc.batch(List.of("a"), "acknowledged", "yes", "alice"));
+    }
+
+    @Test
+    void batch_verdictOnly_loadsCurrentDocuments_andUpdatesAll() {
+        ElasticsearchGateway gateway = mock(ElasticsearchGateway.class);
+        for (String id : List.of("a", "b")) {
+            Map<String, Object> source = new LinkedHashMap<>();
+            source.put("alert.status", "open");
+            source.put("alert.id", id);
+            Map<String, Object> getBody = new LinkedHashMap<>();
+            getBody.put("found", true);
+            getBody.put("_id", id);
+            getBody.put("_source", source);
+            getBody.put("_seq_no", 1);
+            getBody.put("_primary_term", 1);
+            when(gateway.request(eq("GET"), eq("/siem-alerts/_doc/" + id), isNull()))
+                    .thenReturn(new ElasticsearchGateway.Response(200, getBody));
+            when(gateway.request(eq("POST"),
+                    org.mockito.ArgumentMatchers.startsWith("/siem-alerts/_update/" + id), anyString()))
+                    .thenReturn(new ElasticsearchGateway.Response(200, Map.of()));
+        }
+
+        AlertService service = new AlertService("http://unused", gateway);
+        Map<String, Object> result = service.batch(List.of("a", "b"), null,
+                "false_positive", "alice");
+
+        assertEquals(2, result.get("succeeded"));
+        assertEquals(List.of(), result.get("failed"));
     }
 
     @Test

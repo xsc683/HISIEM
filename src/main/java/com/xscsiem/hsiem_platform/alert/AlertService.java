@@ -127,11 +127,13 @@ public class AlertService {
         Map<String, Map<String, Object>> currentById = new LinkedHashMap<>();
         List<String> missingVerdict = new ArrayList<>();
         List<String> invalidTransitions = new ArrayList<>();
-        if (status != null) {
-            // 所有状态先校验,确保批量操作不会在发现非法项后留下部分写入。
-            for (String id : ids) {
-                Map<String, Object> a = esGet("/siem-alerts/_doc/" + id);
-                currentById.put(id, a);
+        // 无论是批量状态还是仅批量 verdict,都必须先读取当前文档拿到
+        // _seq_no/_primary_term;否则 verdict-only 请求会把 null 传给乐观锁更新,
+        // 导致全部条目被当作失败。
+        for (String id : ids) {
+            Map<String, Object> a = esGet("/siem-alerts/_doc/" + id);
+            currentById.put(id, a);
+            if (status != null) {
                 if (a == null) {
                     if ("resolved".equals(status) || "closed".equals(status)) {
                         missingVerdict.add(id);

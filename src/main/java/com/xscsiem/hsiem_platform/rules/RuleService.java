@@ -3,6 +3,7 @@ package com.xscsiem.hsiem_platform.rules;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import com.xscsiem.hsiem_platform.onboarding.NotFoundException;
+import com.xscsiem.hsiem_platform.control.ControlPlaneStore;
 import com.xscsiem.hsiem_platform.search.ElasticsearchGateway;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -10,6 +11,8 @@ import org.springframework.stereotype.Service;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -20,6 +23,8 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * 检测规则管理(story-03):读 infra/rules/*.yaml(检测即代码单一来源,与 Flink 同一份)。
@@ -32,14 +37,17 @@ public class RuleService {
     private final String rulesDir;
     private final String esUrl;
     private final ElasticsearchGateway gateway;
+    private final ControlPlaneStore control;
 
     @Autowired
     public RuleService(@Value("${app.rules-dir:infra/rules}") String rulesDir,
                        @Value("${app.elasticsearch.url:http://localhost:9200}") String esUrl,
-                       ElasticsearchGateway gateway) {
+                       ElasticsearchGateway gateway,
+                       ControlPlaneStore control) {
         this.rulesDir = rulesDir;
         this.esUrl = esUrl;
         this.gateway = gateway;
+        this.control = control;
     }
 
     /** 纯逻辑单元测试构造器。 */
@@ -47,6 +55,7 @@ public class RuleService {
         this.rulesDir = rulesDir;
         this.esUrl = esUrl;
         this.gateway = null;
+        this.control = null;
     }
 
     public List<Map<String, Object>> list() {
@@ -78,11 +87,37 @@ public class RuleService {
 
     /** 翻转 enabled 并写回 YAML(生效需 deploy → 重启检测 job)。 */
     public Map<String, Object> toggle(String id) {
+        return toggle(id, "system");
+    }
+
+    public Map<String, Object> toggle(String id, String actor) {
         Map<String, Object> m = get(id);
         boolean enabled = Boolean.TRUE.equals(m.get("enabled"));
         m.put("enabled", !enabled);
-        write(m, id);
+        writeEnabledOnly(id, !enabled);
+        if (control != null) {
+            control.audit(actor == null || actor.isBlank() ? "system" : actor,
+                    "rule_toggle", id);
+        }
         return m;
+    }
+
+    /** 规则是检测即代码,启停只应产生一行可 review 的 diff,不能重排/丢失 YAML 注释。 */
+    private void writeEnabledOnly(String id, boolean enabled) {
+        Path path = new File(rulesDir, id + ".yaml").toPath();
+        try {
+            String original = Files.readString(path);
+            Pattern pattern = Pattern.compile("(?m)^([ \\t]*enabled:[ \\t]*)(true|false)([ \\t]*)(\\r?)$");
+            Matcher matcher = pattern.matcher(original);
+            if (!matcher.find()) {
+                throw new IllegalStateException("规则缺少 enabled 字段: " + id);
+            }
+            String replacement = matcher.group(1) + enabled + matcher.group(3) + matcher.group(4);
+            String updated = matcher.replaceFirst(Matcher.quoteReplacement(replacement));
+            Files.writeString(path, updated);
+        } catch (IOException e) {
+            throw new IllegalStateException("规则保存失败: " + id, e);
+        }
     }
 
     private void write(Map<String, Object> rule, String id) {

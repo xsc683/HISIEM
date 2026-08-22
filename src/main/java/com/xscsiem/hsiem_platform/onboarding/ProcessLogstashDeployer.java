@@ -4,7 +4,11 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * 生产实现:通过进程调起外部命令完成生效链路。
@@ -65,7 +69,8 @@ public class ProcessLogstashDeployer implements LogstashDeployer {
         // 失败时回退 docker restart(至少让配置变更生效,端口映射缺失可后续 compose up 补)。
         String composeFile = deployDir + "/" + composeName;
         if (!exitOk("wsl", "bash", "-c",
-                "cd " + deployDir + " && docker compose -f " + composeName + " up -d logstash")) {
+                "cd " + deployDir + " && COMPOSE_PROJECT_NAME=\"${COMPOSE_PROJECT_NAME:-infra}\" "
+                        + "docker compose -f " + composeName + " up -d logstash")) {
             throw new IllegalStateException("重建 Logstash 容器失败: " + composeFile
                     + "(配置已同步,可手动 docker compose up -d logstash)");
         }
@@ -81,14 +86,28 @@ public class ProcessLogstashDeployer implements LogstashDeployer {
     private boolean exitOk(String... cmd) {
         try {
             Process p = new ProcessBuilder(cmd).redirectErrorStream(true).start();
-            // 顺序读输出(阻塞到进程结束),便于排查
-            p.getInputStream().transferTo(System.out);
+            // 并发读取输出,避免子进程输出管道写满后导致 waitFor 永久阻塞。
+            CompletableFuture<String> output = CompletableFuture.supplyAsync(() -> {
+                try {
+                    return new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+                } catch (IOException e) {
+                    return "[读取外部命令输出失败] " + e.getMessage();
+                }
+            });
             if (!p.waitFor(TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
                 p.destroyForcibly();
+                output.cancel(true);
                 return false;
             }
+            try {
+                System.out.print(output.get(5, TimeUnit.SECONDS));
+            } catch (ExecutionException | TimeoutException e) {
+                System.out.print(e.getCause() == null ? e.getMessage() : e.getCause().getMessage());
+            }
             return p.exitValue() == 0;
-        } catch (IOException | InterruptedException e) {
+        } catch (IOException e) {
+            return false;
+        } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return false;
         }

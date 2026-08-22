@@ -90,10 +90,10 @@ if [ "$REQUIRE_CONTROL_PLANE_SCHEMA" = "1" ]; then
     flyway_version="$(docker exec siem-postgres psql -U siem -d siem -tAc \
         "SELECT version FROM flyway_schema_history WHERE success = TRUE ORDER BY installed_rank DESC LIMIT 1" \
         2>/dev/null | tr -d '[:space:]' || true)"
-    if [ "$flyway_version" = "3" ]; then
-        echo "  [ok] Flyway V3 案件负责人/证据迁移"
+    if [ -n "$flyway_version" ] && [ "$flyway_version" -ge 5 ] 2>/dev/null; then
+        echo "  [ok] Flyway V${flyway_version} 控制面迁移已完成"
     else
-        fail "Flyway 当前版本为 ${flyway_version:-unknown},预期 V3"
+        fail "Flyway 当前版本为 ${flyway_version:-unknown},预期至少 V5"
     fi
 fi
 if curl -fsS "$ES/_cluster/health?filter_path=status" | grep -qE 'green|yellow'; then

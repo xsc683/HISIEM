@@ -40,6 +40,9 @@ MSYS_NO_PATHCONV=1 wsl bash /mnt/d/Project/SIEM/infra/deploy.sh --start-job
 5. WSL 内 `mvn clean package` 构建 jar,拷贝到 JobManager,并原地重建规则目录
 6. `--start-job` 下仅当检测作业不存在时提交,避免重复运行
 
+Compose 项目名固定为 `infra`，这样 `container_name`、卷和手动启动保持一致；
+Elasticsearch 备份卷会在启动前由一次性初始化服务修正为 ES 用户可写。
+
 Spring Boot 应用启动时默认读取 PostgreSQL:
 
 ```bash
@@ -170,10 +173,10 @@ Windows 侧用 **IDEA 自带的 Maven**(已验证:3.9.16 + Java 21,依赖已缓�
 MVN="D:/application/IntelliJ IDEA 2026.2.0.1/plugins/maven-plugin/lib/maven3/bin/mvn.cmd"
 
 # Flink 检测 job —— 注意用 -f flink/pom.xml(根 pom.xml 是 Spring Boot 控制面,不是它)
-"$MVN" -f flink/pom.xml clean package          # 含 30 个 Flink 测试
+"$MVN" -f flink/pom.xml clean package          # 含 32 个 Flink 测试
 "$MVN" -f flink/pom.xml clean package -DskipTests   # 部署时加快
 
-# Spring Boot 控制面(根 pom,含 65 个测试)
+# Spring Boot 控制面(根 pom,含 71 个测试)
 "$MVN" -f pom.xml clean package
 ```
 
