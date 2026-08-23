@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { ConfigProvider, Layout, Menu, Button, Input, InputNumber, Select, Table, Card, Tag, Steps, Space, Descriptions, Badge, Tabs, Alert, Typography, Divider, Empty, Modal, message, theme } from 'antd'
+import { lazy, Suspense, useEffect, useState } from 'react'
+import { ConfigProvider, Layout, Menu, Button, Input, Card, Space, Badge, Alert, Typography, Modal, message, theme } from 'antd'
 import {
   LoginOutlined, LogoutOutlined, BellOutlined, SafetyCertificateOutlined,
   AlertOutlined, DeploymentUnitOutlined, BarChartOutlined, TagOutlined, TeamOutlined,
@@ -21,52 +21,19 @@ import {
   updateCaseMetadata, updateCaseCollaborators, healthScan, listTasks,
 } from './api.js'
 import { pathFromRouteKey, routeKeyFromPath } from './routes.js'
+import { AvatarUser, formatPlatformTime, LOCAL_TIME_LABEL } from './components/common.jsx'
 
 const { Header, Sider, Content } = Layout
 
-// 状态 → Tag 颜色
-const STATUS_TAG = {
-  open: 'red', acknowledged: 'orange', investigating: 'gold', resolved: 'blue', closed: 'default',
-}
-const VERDICT_TAG = {
-  true_positive: 'red', false_positive: 'green', duplicate: 'gray',
-}
-const RISK_COLOR = (score) => {
-  if (score >= 80) return 'red'
-  if (score >= 60) return 'orange'
-  if (score >= 40) return 'gold'
-  return 'green'
-}
-
-const LOCAL_TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
-const LOCAL_TIME_LABEL = LOCAL_TIME_ZONE === 'Asia/Shanghai' ? '北京时间 (UTC+8)' : LOCAL_TIME_ZONE
-
-function formatPlatformTime(value) {
-  if (!value) return '—'
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return String(value)
-  return new Intl.DateTimeFormat('zh-CN', {
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
-  }).format(date)
-}
-
-function timeTitle(value) {
-  return value ? `原始 UTC：${value}；页面显示：${LOCAL_TIME_LABEL}` : undefined
-}
-
-function TimeText({ value }) {
-  return <Typography.Text title={timeTitle(value)}>{formatPlatformTime(value)}</Typography.Text>
-}
-
-function alertSource(alert) {
-  const direct = alert?.['log.source_name'] || alert?.['log.source_id']
-  if (direct) return direct
-  const related = Array.isArray(alert?.related_events)
-    ? alert.related_events.find((event) => event?.['log.source_name'] || event?.['log.source_id'])
-    : null
-  return related?.['log.source_name'] || related?.['log.source_id'] || '未标记数据源'
-}
+const WizardView = lazy(() => import('./pages/WizardView.jsx'))
+const RulesView = lazy(() => import('./pages/RulesView.jsx'))
+const AlertsView = lazy(() => import('./pages/AlertsView.jsx'))
+const CasesView = lazy(() => import('./pages/CasesView.jsx'))
+const HealthView = lazy(() => import('./pages/HealthView.jsx'))
+const OpsHealthView = lazy(() => import('./pages/OpsHealthView.jsx'))
+const CriticalityView = lazy(() => import('./pages/CriticalityView.jsx'))
+const NotificationsView = lazy(() => import('./pages/NotificationsView.jsx'))
+const RbacView = lazy(() => import('./pages/RbacView.jsx'))
 
 const MENU_ITEMS = [
   { key: 'wizard', icon: <ApiOutlined />, label: '接入向导' },
@@ -525,8 +492,8 @@ export default function App() {
     } catch (e) { message.error(e.message) }
   }
 
-  async function reloadAlerts() {
-    try { setAlerts(await listAlerts(alertFilter)) }
+  async function reloadAlerts(status = alertFilter) {
+    try { setAlerts(await listAlerts(status)) }
     catch (e) { message.error(`告警刷新失败: ${e.message}`) }
   }
 
@@ -770,373 +737,48 @@ export default function App() {
                 style={{ marginBottom: 16 }}
               />
             )}
-            {/* ===== 接入向导(四步合一) ===== */}
-            {activeKey === 'wizard' && (
-              <WizardView
-                step={wizardStep} setStep={setWizardStep}
-                templates={templates} selectedId={selectedId} setSelectedId={setSelectedId}
-                selected={selected} sample={sample} setSample={setSample}
-                testResult={testResult} handleTest={handleTest} busy={busy}
-                name={name} setName={setName} port={port} setPort={setPort}
-                protocol={protocol} setProtocol={setProtocol} sourcePath={sourcePath} setSourcePath={setSourcePath}
-                config={config} handlePreview={handlePreview}
-                srcName={srcName} setSrcName={setSrcName} srcPort={srcPort} setSrcPort={setSrcPort}
-                srcProtocol={srcProtocol} setSrcProtocol={setSrcProtocol} srcPath={srcPath} setSrcPath={setSrcPath}
-                handleCreateSource={handleCreateSource}
-                sources={sources} activating={activating} handleActivate={handleActivate}
-                handleDeactivate={handleDeactivate} handleDeleteSource={handleDeleteSource}
-              />
-            )}
-
-            {/* ===== 检测规则 ===== */}
-            {activeKey === 'rules' && (
-              <Card>
-                <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-                  <Space>
-                    <Button type="primary" icon={<ThunderboltOutlined />} loading={deploying} onClick={handleDeployRules}>
-                      {deploying ? '部署生效中(约 15-35s)…' : '部署生效(同步规则 + 重启检测 job)'}
-                    </Button>
-                    {deployMsg && <Tag color={deployMsg.startsWith('部署失败') ? 'red' : 'green'}>{deployMsg}</Tag>}
-                  </Space>
-                  <Table
-                    rowKey="id"
-                    dataSource={detRules}
-                    size="small"
-                    pagination={{ pageSize: 10, showTotal: (t) => `共 ${t} 条规则` }}
-                    columns={[
-                      { title: '规则 ID', dataIndex: 'id', render: (v) => <code>{v}</code> },
-                      { title: '名称', dataIndex: 'name' },
-                      { title: '近 7d 命中', render: (_, r) => ruleHits[r.id] == null ? <Typography.Text type="secondary">—</Typography.Text> : <Badge count={ruleHits[r.id]} showZero color={ruleHits[r.id] > 0 ? '#1677ff' : '#bfbfbf'} /> },
-                      { title: '类别', dataIndex: 'category', render: (v) => <Tag>{v}</Tag> },
-                      { title: 'type', dataIndex: 'type', render: (v) => <code>{v}</code> },
-                      { title: '风险分', dataIndex: 'riskScore', sorter: (a, b) => a.riskScore - b.riskScore, render: (v) => <Tag color={RISK_COLOR(v)}>{v}</Tag> },
-                      { title: 'MITRE', dataIndex: 'tags', render: (tags) => (tags || []).map((t, i) => <Tag key={i} color="blue">{t}</Tag>) },
-                      { title: '状态', dataIndex: 'enabled', render: (en) => en ? <Tag color="green">启用</Tag> : <Tag>停用</Tag> },
-                      { title: '启停', render: (_, r) => <Button size="small" danger={r.enabled} onClick={() => handleToggleRule(r.id)}>{r.enabled ? '停用' : '启用'}</Button> },
-                    ]}
-                  />
-                  {mitre.coverage && mitre.coverage.length > 0 && (
-                    <details>
-                      <summary>MITRE ATT&CK 覆盖({mitre.coverage.length} 条)</summary>
-                      <Table rowKey={(_, i) => i} size="small" pagination={false}
-                        dataSource={mitre.coverage}
-                        columns={[
-                          { title: '技术', dataIndex: 'technique', render: (v) => <code>{v}</code> },
-                          { title: '规则', dataIndex: 'ruleId' },
-                          { title: '覆盖', dataIndex: 'coverage' },
-                        ]} />
-                    </details>
-                  )}
-                </Space>
-              </Card>
-            )}
-
-            {/* ===== 告警台 ===== */}
-            {activeKey === 'alerts' && (
-              <Card>
-                <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-                  <Space wrap>
-                    <Select value={alertFilter} style={{ width: 160 }} onChange={(v) => { setAlertFilter(v); listAlerts(v).then(setAlerts).catch((e) => message.error(`告警筛选失败: ${e.message}`)) }}
-                      options={['open', 'acknowledged', 'investigating', 'resolved', 'closed'].map((s) => ({ value: s, label: s }))} />
-                    <Button type="primary" onClick={handleCreateCase}>选中直接建案</Button>
-                    <Button onClick={() => handleBatchStatus('acknowledged')}>批量 ack</Button>
-                    <Button danger onClick={() => handleBatchStatus('closed')}>批量 close</Button>
-                    <Select placeholder="批量 verdict…" style={{ width: 180 }} onChange={(v) => v && handleBatchVerdict(v)}
-                      options={['true_positive', 'false_positive', 'duplicate'].map((v) => ({ value: v, label: v }))} />
-                    <Typography.Text type="secondary">已勾选 {selAlerts.size} 条</Typography.Text>
-                  </Space>
-                  <Table
-                    rowKey="_id"
-                    dataSource={alerts}
-                    size="small"
-                    scroll={{ x: 1280 }}
-                    pagination={{ pageSize: 15, showTotal: (t) => `共 ${t} 条告警` }}
-                    rowSelection={{
-                      selectedRowKeys: [...selAlerts],
-                      onChange: (keys) => setSelAlerts(new Set(keys)),
-                    }}
-                    expandable={{
-                      expandedRowRender: (r) => (
-                        <Space direction="vertical" size="small" style={{ width: '100%' }}>
-                          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                            时间说明：事件时间用于检测窗口；告警生成时间表示系统发现并写入告警的时间。原始 JSON 按 UTC 保存，页面字段按 {LOCAL_TIME_LABEL} 显示。
-                          </Typography.Text>
-                          <Space wrap>
-                            <Button size="small" onClick={() => handleAlertStatus(r._id, 'acknowledged')}>ack</Button>
-                            <Button size="small" onClick={() => handleAlertStatus(r._id, 'investigating')}>investigating</Button>
-                            <Button size="small" danger onClick={() => handleAlertStatus(r._id, 'closed')}>close</Button>
-                            <Select size="small" placeholder="verdict…" style={{ width: 160 }}
-                              onChange={(v) => handleAlertVerdict(r._id, v)}
-                              options={['true_positive', 'false_positive', 'duplicate'].map((v) => ({ value: v, label: v }))} />
-                          </Space>
-                          <pre style={{ background: '#0f1d33', color: '#a8d4ff', padding: 10, borderRadius: 6, fontSize: 12, maxHeight: 420, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                            {JSON.stringify(r, null, 2)}
-                          </pre>
-                        </Space>
-                      ),
-                    }}
-                    columns={[
-                      { title: '风险', dataIndex: 'alert.risk_score', width: 70, sorter: (a, b) => a['alert.risk_score'] - b['alert.risk_score'], render: (v) => <Tag color={RISK_COLOR(v)}>{v}</Tag> },
-                      { title: '规则', dataIndex: 'alert.rule_name', render: (v, r) => <>{v} <Typography.Text type="secondary" style={{ fontSize: 11 }}>{r['alert.rule_id']}</Typography.Text></> },
-                      { title: 'severity', dataIndex: 'alert.severity', render: (v) => <Tag color={v === 'critical' ? 'red' : v === 'high' ? 'orange' : v === 'medium' ? 'gold' : 'blue'}>{v}</Tag> },
-                      { title: '状态', dataIndex: 'alert.status', render: (v) => <Tag color={STATUS_TAG[v]}>{v}</Tag> },
-                      { title: 'verdict', dataIndex: 'alert.analyst_verdict', render: (v) => v ? <Tag color={VERDICT_TAG[v]}>{v}</Tag> : <Typography.Text type="secondary">—</Typography.Text> },
-                      { title: '来源/实体', dataIndex: 'source.ip', render: (v, r) => (
-                        <Space direction="vertical" size={0}>
-                          <Typography.Text>{alertSource(r)}</Typography.Text>
-                          <Typography.Text type="secondary" style={{ fontSize: 11 }}>{v || r['user.name'] || r['alert.entity'] || '—'}</Typography.Text>
-                        </Space>
-                      ) },
-                      { title: '案件', dataIndex: 'alert.case_id', render: (v) => v ? <Tag color="blue">{v}</Tag> : <Typography.Text type="secondary">未归案</Typography.Text> },
-                      { title: '事件时间/窗口结束', dataIndex: '@timestamp', width: 180, render: (v) => <TimeText value={v} /> },
-                      { title: '告警生成', dataIndex: 'alert.created_at', width: 180, render: (v) => <TimeText value={v} /> },
-                    ]}
-                  />
-                  <details>
-                    <summary>按规则 FP 率({fpRates.filter((r) => r.high).length} 条 &gt;50% 需 review)</summary>
-                    <Table rowKey="ruleId" size="small" pagination={false} dataSource={fpRates}
-                      columns={[
-                        { title: '规则', dataIndex: 'ruleId', render: (v) => <code>{v}</code> },
-                        { title: '总数', dataIndex: 'total' },
-                        { title: 'FP', dataIndex: 'fp' },
-                        { title: 'TP', dataIndex: 'tp' },
-                        { title: 'FP 率', dataIndex: 'fpRate', render: (v, r) => <Tag color={r.high ? 'red' : 'green'}>{v}%</Tag> },
-                        { title: '标记', render: (_, r) => r.high ? <Tag color="red">需 review</Tag> : '—' },
-                      ]} />
-                  </details>
-                </Space>
-              </Card>
-            )}
-
-            {/* ===== 调查台 ===== */}
-            {activeKey === 'cases' && (
-              <CasesView
-                cases={cases} setCases={setCases} alerts={alerts} caseAlertDetails={caseAlertDetails} caseFilter={caseFilter} setCaseFilter={setCaseFilter}
-                selAlerts={selAlerts} setSelAlerts={setSelAlerts} caseTitle={caseTitle} setCaseTitle={setCaseTitle}
-                caseWindow={caseWindow} setCaseWindow={setCaseWindow} caseThreshold={caseThreshold} setCaseThreshold={setCaseThreshold}
-                caseGroupByRule={caseGroupByRule} setCaseGroupByRule={setCaseGroupByRule}
-                detailCase={detailCase} setDetailCase={setDetailCase} caseTimeline_={caseTimeline_} openCaseDetail={openCaseDetail}
-                handleCreateCase={handleCreateCase} handleAggregate={handleAggregate}
-                handleInvestigateCase={handleInvestigateCase} handleResolveCase={handleResolveCase}
-                handleAddToCase={handleAddToCase} handleRemoveFromCase={handleRemoveFromCase}
-                handleDeleteCase={handleDeleteCase} caseOwner={caseOwner} setCaseOwner={setCaseOwner}
-                evidenceTitle={evidenceTitle} setEvidenceTitle={setEvidenceTitle}
-                evidenceUri={evidenceUri} setEvidenceUri={setEvidenceUri}
-                handleUpdateCaseMetadata={handleUpdateCaseMetadata} caseCollaborators={caseCollaborators}
-                setCaseCollaborators={setCaseCollaborators} handleUpdateCollaborators={handleUpdateCollaborators}
-              />
-            )}
-
-            {/* ===== 数据健康 ===== */}
-            {activeKey === 'health' && (
-              <Card>
-                {health.length === 0 && <Empty description="暂无数据源事件(接入数据源并生效后,事件带 log.source_id 可聚合)" />}
-                <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-                  {health.map((s) => (
-                    <Card key={s.sourceId} size="small"
-                      style={s.anomalous ? { borderColor: '#f5222d' } : {}}
-                      title={
-                        <Space>
-                          <strong>{s.sourceName || '(未命名)'}</strong>
-                          <code style={{ fontSize: 12, color: '#999' }}>{s.sourceId}</code>
-                          {(() => {
-                            const source = sources.find((item) => item.id === s.sourceId)
-                            if (!source) return null
-                            const endpoint = source.protocol === 'file' ? source.path : `${source.protocol}:${source.port}`
-                            return <Tag color="blue">接入 {endpoint}</Tag>
-                          })()}
-                          {s.status && <Tag color={s.status === 'active' ? (s.anomalous ? 'orange' : 'green') : s.status === 'failed' ? 'red' : 'default'}>{s.status}</Tag>}
-                          {s.anomalous && <Tag color="red">⚠ 解析异常({s.reason})</Tag>}
-                        </Space>
-                      }
-                      extra={<Button size="small" loading={healthLoading} onClick={() => handleHealthDetail(s.sourceId)}>详情(趋势/失败日志)</Button>}
-                    >
-                      <Space size="large">
-                        <span>近 1h 成功 <b>{s.events1h}</b> 条</span>
-                        <span>总尝试 <b>{s.totalEvents1h ?? s.events1h}</b> 条</span>
-                        <span>近 24h <b>{s.events24h}</b> 条</span>
-                        <span>失败率 <b style={{ color: s.failRate > 5 ? '#f5222d' : '#52c41a' }}>{s.failRate}%</b> ({s.failures1h} 条)</span>
-                        <span>最后收到 <b><TimeText value={s.lastSeen} /></b></span>
-                      </Space>
-                      {healthDetail && healthDetail.sourceId === s.sourceId && (
-                        <div style={{ marginTop: 12 }}>
-                          {healthDetail.trend.length > 0 && (
-                            <div>
-                              <Typography.Text type="secondary" style={{ fontSize: 12 }}>近 24h 事件/失败趋势(红=失败):</Typography.Text>
-                              <div style={{ display: 'flex', alignItems: 'flex-end', gap: 2, height: 60, marginTop: 6 }}>
-                                  {healthDetail.trend.map((t, i) => (
-                                    <div key={i} title={`${t.bucket}: 事件 ${t.events} / 失败 ${t.failures}`}
-                                     style={{ width: 9, background: t.failures > 0 ? '#f5222d' : '#52c41a', height: Math.max(2, Math.min(60, (t.totalEvents || t.events || 0) * 3)), borderRadius: '2px 2px 0 0' }} />
-                                ))}
-                              </div>
-                            </div>
-                          )}
-                          {healthDetail.failures.length > 0 && (
-                            <details style={{ marginTop: 8 }}>
-                              <summary style={{ fontSize: 13 }}>最近解析失败日志({healthDetail.failures.length} 条)</summary>
-                              <div style={{ maxHeight: 200, overflow: 'auto', marginTop: 6 }}>
-                                {healthDetail.failures.map((f, i) => (
-                                  <div key={i} style={{ fontSize: 12, marginBottom: 4 }}>
-                                    <TimeText value={f['@timestamp']} /> {f.message}
-                                  </div>
-                                ))}
-                              </div>
-                            </details>
-                          )}
-                        </div>
-                      )}
-                    </Card>
-                  ))}
-                </Space>
-              </Card>
-            )}
-
-            {activeKey === 'ops-health' && (
-              <Card title="运行态健康扫描" extra={<Button onClick={() => {
-                healthScan().then(setOpsHealth).catch((e) => message.error(e.message))
-                listTasks(50).then(setTasks).catch((e) => message.error(`任务刷新失败: ${e.message}`))
-              }}>重新扫描</Button>}>
-                {!opsHealth && <Empty description="点击重新扫描检查 PostgreSQL、ES、Kafka、Logstash、Flink 和 Kibana" />}
-                {opsHealth && <>
-                  <Alert type={opsHealth.status === 'UP' ? 'success' : 'error'} showIcon
-                    message={`${opsHealth.status} · 扫描时间 ${opsHealth.scannedAt}`} style={{ marginBottom: 12 }} />
-                  <Table rowKey="name" size="small" pagination={false}
-                    dataSource={Object.values(opsHealth.components || {})}
-                    columns={[{ title: '组件', dataIndex: 'name' },
-                      { title: '状态', dataIndex: 'status', render: (v) => <Tag color={v === 'UP' ? 'green' : 'red'}>{v}</Tag> },
-                      { title: '延迟', dataIndex: 'latencyMs', render: (v) => `${v} ms` },
-                      { title: '探针', dataIndex: 'probe', render: (v, r) => r.degraded ? <Tag color="orange">降级 TCP</Tag> : (v || 'HTTP') },
-                      { title: '错误', dataIndex: 'error' },
-                      { title: '提示', dataIndex: 'warning', render: (v) => v && <Typography.Text type="warning">{v}</Typography.Text> }]} />
-                  <Divider>后台任务进度</Divider>
-                  <Table rowKey="id" size="small" pagination={{ pageSize: 8 }} dataSource={tasks}
-                    columns={[{ title: '任务', dataIndex: 'type' }, { title: '资源', dataIndex: 'resourceId' },
-                      { title: '状态', dataIndex: 'status' }, { title: '进度', dataIndex: 'progress', render: (v) => `${v}%` },
-                      { title: '消息', dataIndex: 'message' }, { title: '更新时间', dataIndex: 'updatedAt', render: (v) => <TimeText value={v} /> }]} />
-                </>}
-              </Card>
-            )}
-
-            {/* ===== 资产关键度 ===== */}
-            {activeKey === 'criticality' && (
-              <Card title="资产关键度(infra/elasticsearch/asset-criticality.json)">
-                <Space wrap style={{ marginBottom: 12 }}>
-                  <Select value={critType} style={{ width: 100 }} onChange={setCritType}
-                    options={[{ value: 'ip', label: 'IP' }, { value: 'user', label: '用户' }, { value: 'host', label: '主机' }]} />
-                  <Input style={{ width: 180 }} value={critKey} onChange={(e) => setCritKey(e.target.value)} placeholder="IP/用户名/主机名" />
-                  <Select value={critLevel} style={{ width: 140 }} onChange={setCritLevel}
-                    options={['low', 'medium', 'high', 'extreme'].map((l) => ({ value: l, label: l }))} />
-                  <Button type="primary" onClick={handleCritAdd}>新增/更新</Button>
-                  <Button onClick={handleRecalc} loading={recalcMsg === '重算中(约数秒)…'}>触发实体风险重算</Button>
-                </Space>
-                {recalcMsg && <Alert type="info" message={recalcMsg} showIcon style={{ marginBottom: 12 }} />}
-                <Tabs items={['ip', 'user', 'host'].map((type) => ({
-                  key: type, label: type === 'ip' ? 'IP' : type === 'user' ? '用户' : '主机',
-                  children: Object.entries(crit[type] || {}).length === 0
-                    ? <Empty description="空" />
-                    : <Table rowKey="key" size="small" pagination={false} dataSource={Object.entries(crit[type] || {}).map(([k, v]) => ({ key: k, ...v }))}
-                        columns={[
-                          { title: '资产', dataIndex: 'key', render: (v) => <code>{v}</code> },
-                          { title: '级别', dataIndex: 'level', render: (v) => <Tag color={v === 'extreme' ? 'red' : v === 'high' ? 'orange' : v === 'medium' ? 'gold' : 'green'}>{v}</Tag> },
-                          { title: '权重', dataIndex: 'weight' },
-                          { title: '操作', render: (_, r) => (
-                            <Space>
-                              <Select size="small" value={r.level} style={{ width: 110 }}
-                                onChange={(v) => handleCritSet(type, r.key, v)}
-                                options={['low', 'medium', 'high', 'extreme'].map((l) => ({ value: l, label: l }))} />
-                              <Button size="small" danger onClick={() => handleCritDelete(type, r.key)}>删</Button>
-                            </Space>
-                          )},
-                        ]} />,
-                }))} />
-              </Card>
-            )}
-
-            {/* ===== 通知中心 ===== */}
-            {activeKey === 'notify' && (
-              <Card title={<>通知中心 {unreadCount > 0 && <Tag color="gold">🔔 {unreadCount} 条未读</Tag>}</>}
-                extra={<Button size="small" onClick={handleReadAllNotifs}>全部已读</Button>}>
-                {notifs.length === 0 && <Empty description="暂无通知(规则部署 / 实体风险重算 / 数据源健康异常会在此提示)" />}
-                <Space direction="vertical" style={{ width: '100%' }}>
-                  {notifs.slice().reverse().map((n) => (
-                    <div key={n.id} style={{
-                      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                      padding: '10px 14px', borderRadius: 8, border: '1px solid #f0f0f0',
-                      background: n.read ? '#fafafa' : '#fffbe6',
-                    }}>
-                      <div>
-                        <Tag color="blue">{n.type}</Tag> {n.message}
-                        <div style={{ fontSize: 11, color: '#999' }}><TimeText value={n.timestamp} /></div>
-                      </div>
-                      <Space>
-                        {!n.read && <Button size="small" onClick={() => handleReadNotif(n.id)}>已读</Button>}
-                        <Button size="small" danger onClick={() => handleDelNotif(n.id)}>删</Button>
-                      </Space>
-                    </div>
-                  ))}
-                </Space>
-              </Card>
-            )}
-
-            {/* ===== 用户与权限 ===== */}
-            {activeKey === 'rbac' && (
-              <Card title="用户与权限(RBAC,admin 可见)">
-                {!user || user.role !== 'admin' ? (
-                  <Alert type="info" message="需以 admin 登录后查看/管理用户、角色与审计日志。" />
-                ) : (
-                  <Tabs items={[
-                    {
-                      key: 'users', label: '用户管理',
-                      children: (
-                        <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-                          <Space wrap>
-                            <Input style={{ width: 140 }} value={newUname} onChange={(e) => setNewUname(e.target.value)} placeholder="新用户名" />
-                            <Input.Password style={{ width: 180 }} value={newPass} onChange={(e) => setNewPass(e.target.value)} placeholder="临时密码(≥12位)" />
-                            <Select value={newRole} style={{ width: 110 }} onChange={setNewRole}
-                              options={['analyst', 'ops', 'audit', 'admin'].map((r) => ({ value: r, label: r }))} />
-                            <Button type="primary" onClick={handleCreateUser}>新增用户</Button>
-                          </Space>
-                          <Table rowKey="username" size="small" dataSource={users}
-                            columns={[
-                              { title: '用户名', dataIndex: 'username' },
-                              { title: '角色', dataIndex: 'role', render: (v) => <Tag color={v === 'admin' ? 'red' : 'blue'}>{v}</Tag> },
-                              { title: '状态', dataIndex: 'status', render: (v) => <Tag color={v === 'active' ? 'green' : 'default'}>{v}</Tag> },
-                              { title: '操作', render: (_, u) => (
-                                <Space>
-                                  <Select size="small" value={u.role} style={{ width: 110 }}
-                                    onChange={(v) => handleRoleChange(u.username, v)}
-                                    options={['analyst', 'ops', 'audit', 'admin'].map((r) => ({ value: r, label: r }))} />
-                                  <Button size="small" danger onClick={() => handleDelUser(u.username)}>删</Button>
-                                </Space>
-                              )},
-                            ]} />
-                        </Space>
-                      ),
-                    },
-                    {
-                      key: 'roles', label: `角色矩阵(${roles.length})`,
-                      children: <Table rowKey="name" size="small" pagination={false} dataSource={roles}
-                        columns={[
-                          { title: '角色', dataIndex: 'name', render: (v) => <Tag color="blue">{v}</Tag> },
-                          { title: '权限', dataIndex: 'permissions', render: (p) => p.join(', ') },
-                        ]} />,
-                    },
-                    {
-                      key: 'audit', label: `审计日志(${audit.length})`,
-                      children: (
-                        <div style={{ maxHeight: 300, overflow: 'auto' }}>
-                          {audit.slice().reverse().map((a, i) => (
-                            <div key={i} style={{ fontSize: 12, padding: '3px 0' }}>
-                              <TimeText value={a.timestamp} /> {a.action} → {a.target}
-                            </div>
-                          ))}
-                        </div>
-                      ),
-                    },
-                  ]} />
-                )}
-              </Card>
-            )}
+            <Suspense fallback={<Card loading style={{ minHeight: 240 }} />}>
+              {activeKey === 'wizard' && (
+                <WizardView
+                  step={wizardStep} setStep={setWizardStep}
+                  templates={templates} selectedId={selectedId} setSelectedId={setSelectedId}
+                  selected={selected} sample={sample} setSample={setSample}
+                  testResult={testResult} handleTest={handleTest} busy={busy}
+                  name={name} setName={setName} port={port} setPort={setPort}
+                  protocol={protocol} setProtocol={setProtocol} sourcePath={sourcePath} setSourcePath={setSourcePath}
+                  config={config} handlePreview={handlePreview}
+                  srcName={srcName} setSrcName={setSrcName} srcPort={srcPort} setSrcPort={setSrcPort}
+                  srcProtocol={srcProtocol} setSrcProtocol={setSrcProtocol} srcPath={srcPath} setSrcPath={setSrcPath}
+                  handleCreateSource={handleCreateSource}
+                  sources={sources} activating={activating} handleActivate={handleActivate}
+                  handleDeactivate={handleDeactivate} handleDeleteSource={handleDeleteSource}
+                />
+              )}
+              {activeKey === 'rules' && <RulesView detRules={detRules} ruleHits={ruleHits} deploying={deploying} deployMsg={deployMsg} mitre={mitre} handleDeployRules={handleDeployRules} handleToggleRule={handleToggleRule} />}
+              {activeKey === 'alerts' && <AlertsView alerts={alerts} alertFilter={alertFilter} setAlertFilter={setAlertFilter} selAlerts={selAlerts} setSelAlerts={setSelAlerts} fpRates={fpRates} handleCreateCase={handleCreateCase} handleBatchStatus={handleBatchStatus} handleBatchVerdict={handleBatchVerdict} handleAlertStatus={handleAlertStatus} handleAlertVerdict={handleAlertVerdict} reloadAlerts={reloadAlerts} />}
+              {activeKey === 'cases' && (
+                <CasesView
+                  cases={cases} setCases={setCases} alerts={alerts} caseAlertDetails={caseAlertDetails} caseFilter={caseFilter} setCaseFilter={setCaseFilter}
+                  selAlerts={selAlerts} setSelAlerts={setSelAlerts} caseTitle={caseTitle} setCaseTitle={setCaseTitle}
+                  caseWindow={caseWindow} setCaseWindow={setCaseWindow} caseThreshold={caseThreshold} setCaseThreshold={setCaseThreshold}
+                  caseGroupByRule={caseGroupByRule} setCaseGroupByRule={setCaseGroupByRule}
+                  detailCase={detailCase} setDetailCase={setDetailCase} caseTimeline_={caseTimeline_} openCaseDetail={openCaseDetail}
+                  handleCreateCase={handleCreateCase} handleAggregate={handleAggregate}
+                  handleInvestigateCase={handleInvestigateCase} handleResolveCase={handleResolveCase}
+                  handleAddToCase={handleAddToCase} handleRemoveFromCase={handleRemoveFromCase}
+                  handleDeleteCase={handleDeleteCase} caseOwner={caseOwner} setCaseOwner={setCaseOwner}
+                  evidenceTitle={evidenceTitle} setEvidenceTitle={setEvidenceTitle}
+                  evidenceUri={evidenceUri} setEvidenceUri={setEvidenceUri}
+                  handleUpdateCaseMetadata={handleUpdateCaseMetadata} caseCollaborators={caseCollaborators}
+                  setCaseCollaborators={setCaseCollaborators} handleUpdateCollaborators={handleUpdateCollaborators}
+                />
+              )}
+              {activeKey === 'health' && <HealthView health={health} sources={sources} healthDetail={healthDetail} healthLoading={healthLoading} handleHealthDetail={handleHealthDetail} />}
+              {activeKey === 'ops-health' && <OpsHealthView opsHealth={opsHealth} tasks={tasks} healthScan={healthScan} listTasks={listTasks} setOpsHealth={setOpsHealth} setTasks={setTasks} />}
+              {activeKey === 'criticality' && <CriticalityView crit={crit} critType={critType} setCritType={setCritType} critKey={critKey} setCritKey={setCritKey} critLevel={critLevel} setCritLevel={setCritLevel} recalcMsg={recalcMsg} handleCritAdd={handleCritAdd} handleRecalc={handleRecalc} handleCritSet={handleCritSet} handleCritDelete={handleCritDelete} />}
+              {activeKey === 'notify' && <NotificationsView notifs={notifs} unreadCount={unreadCount} handleReadAllNotifs={handleReadAllNotifs} handleReadNotif={handleReadNotif} handleDelNotif={handleDelNotif} />}
+              {activeKey === 'rbac' && <RbacView user={user} users={users} roles={roles} audit={audit} newUname={newUname} setNewUname={setNewUname} newPass={newPass} setNewPass={setNewPass} newRole={newRole} setNewRole={setNewRole} handleCreateUser={handleCreateUser} handleRoleChange={handleRoleChange} handleDelUser={handleDelUser} />}
+            </Suspense>
           </Content>
           <Modal
             title="修改密码"
@@ -1162,318 +804,5 @@ export default function App() {
         </Layout>
       </Layout>
     </ConfigProvider>
-  )
-}
-
-// ================= 子组件:接入向导 =================
-function WizardView({ step, setStep, templates, selectedId, setSelectedId, selected, sample, setSample,
-  testResult, handleTest, busy, name, setName, port, setPort, protocol, setProtocol, sourcePath, setSourcePath, config, handlePreview,
-  srcName, setSrcName, srcPort, setSrcPort, srcProtocol, setSrcProtocol, srcPath, setSrcPath, handleCreateSource, sources, activating, handleActivate,
-  handleDeactivate, handleDeleteSource }) {
-
-  const steps = [
-    { title: '选模板', description: '选择日志类型' },
-    { title: '测样例', description: '验证解析' },
-    { title: '配预览', description: '生成配置' },
-    { title: '创建生效', description: '接入完成' },
-  ]
-
-  return (
-    <div>
-      <Card style={{ marginBottom: 16 }}>
-        <Steps current={step} items={steps} responsive />
-      </Card>
-
-      {step === 0 && (
-        <Card title="① 选择解析模板">
-          <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-            <Select showSearch style={{ width: '100%' }} value={selectedId || undefined}
-              placeholder="-- 请选择(来自模板库) --"
-              onChange={setSelectedId}
-              optionFilterProp="label"
-              options={templates.map((t) => ({ value: t.id, label: `${t.name} (${t.id})` }))} />
-            {selected && (
-              <Descriptions size="small" column={2} bordered>
-                <Descriptions.Item label="说明">{selected.description}</Descriptions.Item>
-                <Descriptions.Item label="协议">{selected.protocol}</Descriptions.Item>
-                <Descriptions.Item label="ID"><code>{selected.id}</code></Descriptions.Item>
-                <Descriptions.Item label="状态"><Tag color={selected.status === 'stable' ? 'green' : 'orange'}>{selected.status}</Tag></Descriptions.Item>
-              </Descriptions>
-            )}
-          </Space>
-        </Card>
-      )}
-
-      {step === 1 && (
-        <Card title="② 解析测试(粘贴样例日志)">
-          <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-            <Input.TextArea rows={3} maxLength={8192} showCount value={sample} onChange={(e) => setSample(e.target.value)}
-              placeholder="粘贴一条日志样例,如:Aug 1 10:20:00 server03 sshd[9999]: Failed password for test from 172.16.1.20" />
-            <Button type="primary" loading={busy} onClick={handleTest}>测试解析</Button>
-            {testResult && (
-              <div>
-                <Tag color={testResult.ok ? 'green' : 'red'}>
-                  {testResult.ok ? '✓ 解析成功' : '✗ 解析失败(未匹配任何 grok 模式)'}
-                </Tag>
-                {testResult.ok && (
-                  <Table rowKey="k" size="small" pagination={false} style={{ marginTop: 8 }}
-                    dataSource={Object.entries(testResult.fields).map(([k, v]) => ({ k, v: String(v) }))}
-                    columns={[
-                      { title: '字段', dataIndex: 'k', render: (v) => <code>{v}</code> },
-                      { title: '值', dataIndex: 'v', render: (v) => <code>{v}</code> },
-                    ]} />
-                )}
-              </div>
-            )}
-          </Space>
-        </Card>
-      )}
-
-      {step === 2 && (
-        <Card title="③ 数据源配置预览(声明 → 生成 Logstash 配置)">
-          <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-            <Space wrap>
-              <div>
-                <div style={{ marginBottom: 4, fontSize: 12, color: '#666' }}>数据源名称</div>
-                <Input style={{ width: 200 }} value={name} onChange={(e) => setName(e.target.value)} placeholder="如 ssh-auth-web-01" />
-              </div>
-              <div>
-                <div style={{ marginBottom: 4, fontSize: 12, color: '#666' }}>协议</div>
-                <Select style={{ width: 120 }} value={protocol} onChange={setProtocol}
-                  options={['tcp', 'syslog', 'file'].map((v) => ({ value: v, label: v }))} />
-              </div>
-              {protocol === 'file'
-                ? <Input style={{ width: 300 }} value={sourcePath} onChange={(e) => setSourcePath(e.target.value)} placeholder="/var/log/auth.log" />
-                : <div><div style={{ marginBottom: 4, fontSize: 12, color: '#666' }}>采集端口</div>
-                  <Input style={{ width: 140 }} type="number" value={port} onChange={(e) => setPort(e.target.value)} /></div>}
-            </Space>
-            <Button loading={busy} onClick={handlePreview}>生成配置</Button>
-            {config && <pre style={{ background: '#0f1d33', color: '#a8d4ff', padding: 14, borderRadius: 8, fontSize: 12, whiteSpace: 'pre-wrap' }}>{config}</pre>}
-          </Space>
-        </Card>
-      )}
-
-      {step === 3 && (
-        <Card title="④ 创建数据源并生效">
-          <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-            <Space wrap>
-              <div>
-                <div style={{ marginBottom: 4, fontSize: 12, color: '#666' }}>数据源名称</div>
-                <Input style={{ width: 200 }} value={srcName} onChange={(e) => setSrcName(e.target.value)} placeholder="如 ssh-web-01" />
-              </div>
-              <div>
-                <div style={{ marginBottom: 4, fontSize: 12, color: '#666' }}>协议</div>
-                <Select style={{ width: 120 }} value={srcProtocol} onChange={setSrcProtocol}
-                  options={['tcp', 'syslog', 'file'].map((v) => ({ value: v, label: v }))} />
-              </div>
-              {srcProtocol === 'file'
-                ? <Input style={{ width: 300 }} value={srcPath} onChange={(e) => setSrcPath(e.target.value)} placeholder="/var/log/auth.log" />
-                : <div><div style={{ marginBottom: 4, fontSize: 12, color: '#666' }}>采集端口</div>
-                  <Input style={{ width: 140 }} type="number" value={srcPort} onChange={(e) => setSrcPort(e.target.value)} /></div>}
-            </Space>
-            <Button type="primary" loading={busy} onClick={handleCreateSource}>创建数据源</Button>
-            {sources.length > 0 && (
-              <Table rowKey="id" size="small" dataSource={sources}
-                pagination={{ pageSize: 5, showTotal: (t) => `共 ${t} 个数据源` }}
-                columns={[
-                  { title: 'ID', dataIndex: 'id', render: (v) => <code>{v}</code> },
-                  { title: '名称', dataIndex: 'name' },
-                  { title: '模板', dataIndex: 'templateId' },
-                  { title: '协议', dataIndex: 'protocol' },
-                  { title: '端口/路径', render: (_, s) => s.protocol === 'file' ? s.path : s.port },
-                  { title: '状态', dataIndex: 'status', render: (v) => <Tag color={v === 'active' ? 'green' : v === 'failed' ? 'red' : 'orange'}>{v}</Tag> },
-                  { title: '操作', render: (_, s) => activating[s.id] ? <Tag color="processing">处理中…</Tag> : (
-                    <Space size="small">
-                      {(s.status === 'creating' || s.status === 'failed' || s.status === 'stopped') && <Button size="small" type="primary" onClick={() => handleActivate(s.id)}>生效</Button>}
-                      {s.status === 'active' && <Button size="small" onClick={() => handleDeactivate(s.id)}>停用</Button>}
-                      {s.status !== 'active' && <Button size="small" danger onClick={() => handleDeleteSource(s.id)}>删除</Button>}
-                    </Space>
-                  ) },
-                ]} />
-            )}
-          </Space>
-        </Card>
-      )}
-
-      <Card>
-        <Space style={{ width: '100%', justifyContent: step === 0 ? 'flex-end' : 'space-between' }}>
-          {step > 0 && <Button onClick={() => setStep(step - 1)}>上一步</Button>}
-          {step < 3 && <Button type="primary" onClick={() => setStep(step + 1)}>下一步</Button>}
-          {step === 3 && <Button type="primary" onClick={() => setStep(0)}>完成</Button>}
-        </Space>
-      </Card>
-    </div>
-  )
-}
-
-// ================= 子组件:调查台 =================
-function CasesView({ cases, setCases, alerts, caseAlertDetails, caseFilter, setCaseFilter, selAlerts, setSelAlerts, caseTitle, setCaseTitle,
-  caseWindow, setCaseWindow, caseThreshold, setCaseThreshold, caseGroupByRule, setCaseGroupByRule,
-  detailCase, setDetailCase, caseTimeline_, openCaseDetail, handleCreateCase, handleAggregate,
-  handleInvestigateCase, handleResolveCase, handleAddToCase, handleRemoveFromCase, handleDeleteCase,
-  caseOwner, setCaseOwner, evidenceTitle, setEvidenceTitle, evidenceUri, setEvidenceUri,
-  handleUpdateCaseMetadata, caseCollaborators, setCaseCollaborators, handleUpdateCollaborators }) {
-
-  return (
-    <div>
-      <Card style={{ marginBottom: 16 }}>
-        <Space wrap>
-          <Select style={{ width: 160 }} value={caseFilter || undefined} placeholder="全部状态" allowClear
-            onChange={(v) => { setCaseFilter(v || ''); listCases(v || '').then(setCases).catch((e) => message.error(`案件筛选失败: ${e.message}`)) }}
-            options={['open', 'investigating', 'resolved'].map((s) => ({ value: s, label: s }))} />
-          <Button type="primary" onClick={handleAggregate}>触发一轮自动聚合</Button>
-          <Space direction="vertical" size={2}>
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>聚合窗口（分钟）</Typography.Text>
-            <InputNumber min={1} max={1440} precision={0} style={{ width: 130 }} value={Number(caseWindow)}
-              onChange={(value) => setCaseWindow(value ?? 30)} />
-          </Space>
-          <Space direction="vertical" size={2}>
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>最少告警数</Typography.Text>
-            <InputNumber min={2} max={1000} precision={0} style={{ width: 130 }} value={Number(caseThreshold)}
-              onChange={(value) => setCaseThreshold(value ?? 2)} />
-          </Space>
-          <Select value={caseGroupByRule} onChange={setCaseGroupByRule} style={{ width: 140 }}
-            options={[{ value: false, label: '按实体分组' }, { value: true, label: '按规则+实体' }]} />
-          <Button onClick={() => setSelAlerts(new Set())}>清空告警勾选</Button>
-          <Input style={{ width: 220 }} value={caseTitle} onChange={(e) => setCaseTitle(e.target.value)} placeholder="案件标题(可选)" />
-          <Button type="primary" onClick={handleCreateCase}>手动聚合勾选告警为案件</Button>
-          <Typography.Text type="secondary">已勾选 {selAlerts.size} 条 open 告警</Typography.Text>
-        </Space>
-        <Alert
-          type="info"
-          showIcon
-          style={{ marginTop: 12 }}
-          message={`当前自动聚合条件：${Number(caseWindow)} 分钟内，同一实体至少 ${Number(caseThreshold)} 条 open 告警${caseGroupByRule ? '，且按同一规则分组' : ''}`}
-          description={`聚合依据是事件时间（页面按${LOCAL_TIME_LABEL}显示）；生成案件后，可在案件详情查看告警、实体和近 24 小时事件时间线。`}
-        />
-      </Card>
-
-      <Card>
-        {cases.length === 0 && <Empty description="暂无案件(同实体 ≥2 条 open 告警会自动聚合;或从告警台勾选手动建案)" />}
-        <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-          {cases.map((c) => (
-            <div key={c['case.id']} style={{
-              border: '1px solid #f0f0f0', borderRadius: 8, padding: '12px 16px',
-              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-              background: c['case.status'] === 'resolved' ? '#fafafa' : '#fff',
-            }}>
-              <div>
-                <Space>
-                  <strong>{c['case.title']}</strong>
-                  <code style={{ fontSize: 11, color: '#999' }}>{c['case.id']}</code>
-                  <Tag color={c['case.status'] === 'resolved' ? 'blue' : c['case.status'] === 'investigating' ? 'gold' : 'red'}>{c['case.status']}</Tag>
-                  <Tag>{c['case.aggregation'] === 'auto' ? '自动聚合' : '手动聚合'}</Tag>
-                </Space>
-                <div style={{ marginTop: 4, fontSize: 12, color: '#888' }}>
-                  {c['alert_ids']?.length} 告警 · 负责人 {c['case.owner'] || '-'} · 更新 <TimeText value={c['case.updated_at']} />
-                </div>
-                <Space size={4} wrap style={{ marginTop: 6 }}>
-                  {(c.entities || []).map((entity) => <Tag key={`${entity.type}:${entity.value}`} color="blue">{entity.type}:{entity.value}</Tag>)}
-                </Space>
-              </div>
-              <Space>
-                <Button size="small" onClick={() => openCaseDetail(c['case.id'])}>详情</Button>
-                {c['case.status'] === 'open' && <Button size="small" onClick={() => handleInvestigateCase(c['case.id'])}>接手</Button>}
-                <Button size="small" danger disabled={(c['alert_ids'] || []).length > 0}
-                  title={(c['alert_ids'] || []).length > 0 ? '请先移出全部告警' : '删除案件'}
-                  onClick={() => handleDeleteCase(c['case.id'])}>删</Button>
-              </Space>
-            </div>
-          ))}
-        </Space>
-      </Card>
-
-      {/* 案件详情:Modal 弹窗(点击「详情」即弹出,无需滚动) */}
-      <Modal
-        open={!!detailCase}
-        title={
-          <Space>
-            <strong>{detailCase?.['case.title']}</strong>
-            <Tag color={detailCase?.['case.status'] === 'resolved' ? 'blue' : detailCase?.['case.status'] === 'investigating' ? 'gold' : 'red'}>{detailCase?.['case.status']}</Tag>
-            {detailCase?.['case.verdict'] && <Tag color="green">{detailCase['case.verdict']}</Tag>}
-          </Space>
-        }
-        onCancel={() => setDetailCase(null)}
-        footer={null}
-        width={860}
-      >
-        {detailCase && (
-          <>
-            <Descriptions size="small" column={3} bordered style={{ marginBottom: 12 }}>
-              <Descriptions.Item label="案件 ID"><code>{detailCase['case.id']}</code></Descriptions.Item>
-              <Descriptions.Item label="聚合来源">{detailCase['case.aggregation']}</Descriptions.Item>
-              <Descriptions.Item label="操作者">{detailCase['case.operator']}</Descriptions.Item>
-              <Descriptions.Item label="负责人">{detailCase['case.owner'] || '—'}</Descriptions.Item>
-              <Descriptions.Item label="实体">{(detailCase['entities'] || []).map((e) => <Tag key={e.type + e.value}>{e.type}:{e.value}</Tag>)}</Descriptions.Item>
-              <Descriptions.Item label="创建时间"><TimeText value={detailCase['case.created_at']} /></Descriptions.Item>
-              <Descriptions.Item label="结案时间"><TimeText value={detailCase['case.closed_at']} /></Descriptions.Item>
-            </Descriptions>
-
-            <Space wrap style={{ marginBottom: 12 }}>
-              {detailCase['case.status'] === 'open' && <Button type="primary" onClick={() => handleInvestigateCase(detailCase['case.id'])}>接手调查</Button>}
-              {detailCase['case.status'] === 'investigating' && (
-                <Select placeholder="结案选 verdict…" style={{ width: 200 }} onChange={(v) => handleResolveCase(detailCase['case.id'], v)}
-                  options={['true_positive', 'false_positive', 'duplicate'].map((v) => ({ value: v, label: v }))} />
-              )}
-              <Button onClick={() => handleAddToCase(detailCase['case.id'])}>追加勾选告警</Button>
-            </Space>
-
-            <Divider style={{ margin: '12px 0' }}>处置负责人和证据</Divider>
-            <Space wrap>
-              <Input style={{ width: 180 }} value={caseOwner} onChange={(e) => setCaseOwner(e.target.value)} placeholder="负责人用户名" />
-              <Input style={{ width: 260 }} value={caseCollaborators} onChange={(e) => setCaseCollaborators(e.target.value)} placeholder="协作人(逗号分隔)" />
-              <Input style={{ width: 180 }} value={evidenceTitle} onChange={(e) => setEvidenceTitle(e.target.value)} placeholder="证据标题" />
-              <Input style={{ width: 260 }} value={evidenceUri} onChange={(e) => setEvidenceUri(e.target.value)} placeholder="证据 URI/链接" />
-              <Button type="primary" onClick={() => handleUpdateCaseMetadata(detailCase['case.id'])}>保存</Button>
-              <Button onClick={() => handleUpdateCollaborators(detailCase['case.id'])}>保存协作人</Button>
-            </Space>
-            {(detailCase.evidence || []).length > 0 && (
-              <div style={{ marginTop: 8, fontSize: 12 }}>
-                {(detailCase.evidence || []).map((e, i) => <div key={i}><Tag color="blue">{e.type || 'evidence'}</Tag>{e.title || '未命名'} {e.uri && <code>{e.uri}</code>}</div>)}
-              </div>
-            )}
-
-            <Divider style={{ margin: '12px 0' }}>案内告警({(detailCase['alert_ids'] || []).length})</Divider>
-            <Space wrap>
-              {(detailCase['alert_ids'] || []).map((id) => {
-                const linkedAlert = caseAlertDetails[id] || alerts.find((item) => item._id === id)
-                return (
-                  <Tag key={id} closable onClose={() => handleRemoveFromCase(detailCase['case.id'], id)} color="blue">
-                    {linkedAlert?.['alert.rule_name'] || '告警'} · {linkedAlert?.['alert.severity'] || '未知级别'} · <code>{id.slice(0, 12)}</code>
-                  </Tag>
-                )
-              })}
-            </Space>
-
-            <Divider style={{ margin: '16px 0' }}>关联事件时间线(实时查 siem-events,近 24h)</Divider>
-            {caseTimeline_.length === 0
-              ? <Empty description="近 24h 无关联事件(历史案件的事件可能已过期)" image={Empty.PRESENTED_IMAGE_SIMPLE} />
-              : <Table rowKey={(_, i) => i} size="small" pagination={{ pageSize: 10 }} dataSource={caseTimeline_}
-                  columns={[
-                    { title: '事件时间', dataIndex: '@timestamp', width: 200, render: (v) => <TimeText value={v} /> },
-                    { title: 'action', dataIndex: 'event.action', render: (v) => <Tag color="blue">{v}</Tag> },
-                    { title: 'message', dataIndex: 'message', ellipsis: true },
-                  ]} />}
-          </>
-        )}
-      </Modal>
-    </div>
-  )
-}
-
-// ================= 用户头像 =================
-function AvatarUser({ username, role }) {
-  const colors = { admin: '#f5222d', analyst: '#1677ff', ops: '#52c41a', audit: '#722ed1' }
-  return (
-    <Space size="small">
-      <div style={{
-        width: 28, height: 28, borderRadius: '50%', background: colors[role] || '#1677ff',
-        color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
-        fontSize: 13, fontWeight: 600,
-      }}>
-        {username[0]?.toUpperCase()}
-      </div>
-      <span>{username} · {role}</span>
-    </Space>
   )
 }

@@ -11,9 +11,9 @@ export default defineConfig({
         manualChunks(id) {
           if (!id.includes('node_modules')) return undefined
           const moduleId = id.replaceAll('\\', '/')
-          if (moduleId.includes('/antd/')) return 'antd'
           if (moduleId.includes('/react/') || moduleId.includes('/react-dom/')) return 'react'
-          // 其余依赖交给 Rollup 自动归并，避免通用 vendor 与 react 之间形成循环 chunk。
+          // Ant Design 按实际页面引用由 Rollup 自动拆分，避免首屏加载全部组件。
+          // 其余依赖也交给 Rollup 自动归并，避免通用 vendor 与 react 之间形成循环 chunk。
           return undefined
         },
       },
