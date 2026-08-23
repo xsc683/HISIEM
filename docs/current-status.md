@@ -12,18 +12,19 @@ HISIEM 已完成检测链路、控制面、接入向导、告警处置、调查�
 
 | 领域 | 当前结论 | 事实来源 |
 | --- | --- | --- |
-| 数据链路 | Logstash → Elasticsearch/Kafka → Flink → 告警索引链路可运行 | [架构](architecture.md)、`infra/` |
+| 数据链路 | Logstash → Elasticsearch/Kafka → Flink → 告警索引链路可运行；Flink 解析毒消息进入独立 Kafka DLQ | [架构](architecture.md)、`infra/` |
 | 控制面 | Spring Boot + PostgreSQL/Flyway，认证、RBAC、案件、审计、通知和后台任务可用 | [部署](deployment.md)、[路线图](roadmap.md) |
 | 前端 | Vue 3/Vite + vue-router + Ant Design Vue 控制台；规则 CRUD、深链详情与 Vue Flow SOAR 画布可构建 | `web/`、[当前产品契约](product-contract.md) |
 | 运行态 | PostgreSQL、Elasticsearch、Kafka、Logstash、Flink、Kibana 均有健康扫描 | [运维手册](operations.md) |
-| SOAR | 两个 lifecycle topic、六类 DAG 节点、字段/动作字典、持久 Wait/Human、节点 I/O、消息去重和 Vue Flow 编辑器可用 | [SOAR 设计](soar.md)、`src/main/java/**/soar/` |
-| 自动化验证 | 根项目 96 个测试、Flink 35 个测试、前端生产构建通过；包含真实 PostgreSQL V12、Handler 重试历史和 lifecycle/审批/等待测试 | [路线图](roadmap.md) |
+| SOAR | 两个 lifecycle topic、六类 DAG 节点、字段/动作字典、持久 Wait/Human、节点 I/O、消息去重、租约续期/fencing 和 Vue Flow 编辑器可用 | [SOAR 设计](soar.md)、`src/main/java/**/soar/` |
+| 自动化验证 | 根项目 99 个测试、Flink 38 个测试、前端 3 个单元测试、生产构建和 1 条 Playwright E2E 通过；包含真实 PostgreSQL V12、fencing/续租、Flink DLQ 与离开保存 | [路线图](roadmap.md) |
 | 备份恢复 | ES 临时索引备份恢复演练通过 | `infra/elasticsearch/backup-restore-rehearsal.sh` |
 
 ## 当前部署基线
 
 - 编排文件：`infra/docker-compose.yml`，固定 Compose 项目名为 `infra`。
-- Kafka：内部客户端使用 `kafka:9092`，宿主机验证入口使用 `localhost:9092`；`siem-events`、`siem-alert-lifecycle`、`siem-case-lifecycle` 均配置为 3 个分区。
+- Kafka：内部客户端使用 `kafka:9092`，宿主机验证入口使用 `localhost:9092`；`siem-events`、`siem-events-dlq`、`siem-alert-lifecycle`、`siem-case-lifecycle` 均配置为 3 个分区。
+- Elasticsearch keystore 是部署环境的敏感运行态文件：Git 明确忽略，`deploy.sh` 同步配置时也不会覆盖目标环境 keystore。
 - Logstash：容器内监控 API 在 `127.0.0.1:9600`，宿主机扫描显示 `UP / degraded TCP` 时，只代表端口监听，需按[运维手册](operations.md)进入容器确认 pipeline。
 - 数据源配置：`infra/log-sources/` 与 `infra/logstash/pipeline/log-sources/` 是可审计的项目配置；生成或修改配置必须走控制面接口或部署脚本，不能直接改运行容器。
 
@@ -37,6 +38,9 @@ HISIEM 已完成检测链路、控制面、接入向导、告警处置、调查�
 - 前端统一处理 204、非 JSON 错误、初始化失败、轮询超时和破坏性操作确认；按路由加载模块，不在根组件拉取全站数据。
 - 检测规则支持结构化逻辑展示、single_event/window 创建编辑、YAML 原子写入、审计和显式部署；告警与案件使用独立详情路由。
 - Kafka、Flink、Logstash 的健康探针区分“真正健康”和“仅端口可达”，避免把降级结果误报为完整健康。
+- Case 镜像删除把任意 2xx 和 404 视为幂等成功；SOAR 状态提交校验 owner、fencing token 与未过期租约，长节点执行时持续续租。
+- Playbook 路由离开会等待最新草稿保存；保存失败会阻止导航，浏览器刷新/关闭时对未保存内容给出原生确认。
+- Flink 对坏 JSON、缺失或非法 `@timestamp` 使用 side output 写入 `siem-events-dlq`，不再用处理时间掩盖事件时间错误或让作业反复重启。
 
 ## 仍需解决的生产风险
 
@@ -47,7 +51,7 @@ HISIEM 已完成检测链路、控制面、接入向导、告警处置、调查�
 3. 后台任务已有租约和启动恢复，但具体 handler 的自动重放、幂等键和跨实例协调仍需补齐。
 4. SOAR 控制面按 tenant 隔离 Playbook/执行/审批；告警、案件和 ES 数据面仍缺少完整 tenant 字段、索引隔离和文档级权限。
 5. 真实生产负载下的容量、保留策略、升级回滚和灾备 RTO/RPO 还需要环境级压测与演练。
-6. SOAR 控制面发布 lifecycle 消息还不是事务 outbox；生产还需 DLQ、长时间吞吐/重启故障注入和跨地域恢复演练。外部 Connector、复杂图和凭据治理不属于当前实现。
+6. SOAR 控制面发布 lifecycle 消息还不是事务 outbox；事件解析已有 Flink DLQ topic，但 lifecycle 消息仍缺少可运营的 DLQ/重放流程，并需长时间吞吐、重启故障注入和跨地域恢复演练。外部 Connector、复杂图和凭据治理不属于当前实现。
 
 ## 文档使用规则
 

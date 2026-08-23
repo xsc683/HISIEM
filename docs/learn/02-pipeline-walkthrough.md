@@ -4,17 +4,27 @@
 
 ## 1. 完整旅程总览
 
+```mermaid
+flowchart LR
+    LOG["① 日志"] --> LS["② Logstash 采集"]
+    LS --> LP{"③ Grok/date<br/>解析成功?"}
+    LP -->|"否"| RAW[("ES raw 隔离索引")]
+    LP -->|"是"| EVENT["④ ECS 事件"]
+    EVENT --> EVENT_ES[("ES siem-events-*")]
+    EVENT --> KAFKA["Kafka siem-events"]
+    KAFKA --> FP{"⑤ Flink JSON 与<br/>事件时间有效?"}
+    FP -->|"否"| DLQ["Kafka siem-events-dlq"]
+    FP -->|"是"| RULES["⑥ 四类检测规则"]
+    RULES --> ALERT[("⑦ ES siem-alerts")]
+    ALERT --> UI["⑧ Kibana / 控制台处置"]
+    ALERT --> LIFE["alert lifecycle"]
+    UI --> CASE["⑨ CaseService"]
+    CASE --> PG[("PostgreSQL 案件事实 + outbox")]
+    PG --> CASE_ES[("ES 案件兼容镜像")]
+    LIFE --> SOAR["⑩ SOAR execution"]
 ```
-① 发送日志     echo '...' | nc -w1 localhost 5000
-② Logstash 采集 tcp input 接收一行原始文本
-③ Logstash 解析 grok 提取字段 → date 设置事件时间 → mutate 补充 ECS 字段 → 生成「事件」
-④ Logstash 双写 → Elasticsearch siem-events-*(长期存储)+ Kafka siem-events(事件总线)
-⑤ Flink 消费    KafkaSource 读取事件 → EventParser 扁平化为字段 Map
-⑥ Flink 检测    DetectionFunction 逐条规则匹配,命中则生成「告警」JSON
-⑦ Flink 写出    ES sink 写入 siem-alerts
-⑧ Kibana/控制台呈现 分析师查看告警并执行状态处置
-⑨ CaseService    多条相关告警聚合为案件,状态与关联写入 PostgreSQL
-```
+
+图中有两个隔离出口：Logstash 的 Grok/date 失败进入 `siem-events-raw-*`，不会投递 Kafka；已经进入 Kafka、但 Flink 无法解析 JSON 或 `@timestamp` 的消息进入 `siem-events-dlq`，不会进入规则分支。
 
 ## 2. 样本日志与处理过程
 
@@ -70,18 +80,21 @@ tcp { port => 5000 }
 
 ### ⑤ Flink:消费与扁平化
 
-`flink/src/main/java/com/siem/DetectionJob.java`:
+`flink/src/main/java/com/siem/DetectionJob.java`：
 
 ```java
 KafkaSource<String> source = KafkaSource.builder().setTopics("siem-events")...build();
-DataStream<Event> parsed = env.fromSource(source, ...).map(EventParser::parseEvent);
+SingleOutputStreamOperator<Event> parsed = env.fromSource(source, ...)
+    .process(new EventParsingProcessFunction());
+parsed.getSideOutput(EventParsingProcessFunction.DLQ)
+    .sinkTo(dlqSink);
 ```
 
-`EventParser.parseEvent` 将事件 JSON 展开为**扁平字段 Map**(将 `source.ip` 作为单一 key),并提取事件时间戳,生成 Flink 内部流转的 `Event` 对象。
+`EventParsingProcessFunction` 调用 `EventParser.parseEvent`，将合法 JSON 展开为**扁平字段 Map**（将 `source.ip` 作为单一 key），并严格提取事件时间戳，生成 Flink 内部流转的 `Event` 对象。坏 JSON、缺失或非法时间戳会附带错误原因和原始 payload 写入 DLQ，不再回退到处理时间。
 
 ### ⑥ Flink:规则匹配(检测核心)
 
-`DetectionFunction` 对每个事件逐条规则求值:
+`DetectionFunction` 对每个事件逐条规则求值。规则由 `infra/rules/*.yaml` 经 `RuleConfigLoader` 和 `RuleBuilder` 构造，不再硬编码在 `RuleRegistry`：
 
 ```java
 for (Rule rule : registry.getRules()) {
@@ -91,7 +104,7 @@ for (Rule rule : registry.getRules()) {
 }
 ```
 
-本样本事件(`test` 用户)命中 **2 条规则**(见 `RuleRegistry.java`):
+本样本事件（`test` 用户）立即命中 **2 条单事件规则**：
 
 | 规则 ID | 条件 | severity |
 | --- | --- | --- |
@@ -100,7 +113,7 @@ for (Rule rule : registry.getRules()) {
 
 因此 **1 条事件 → 2 条告警**。
 
-### ⑦ 生成的告警 JSON(写入 siem-alerts)
+### ⑦ 生成的告警 JSON（写入 siem-alerts）
 
 ```json
 {
@@ -117,7 +130,7 @@ for (Rule rule : registry.getRules()) {
 }
 ```
 
-告警采用**扁平结构**:关键事件字段提升到顶层(便于筛选/聚合),完整事件存于 `event.raw` 供取证。
+告警采用**扁平结构**：关键事件字段提升到顶层（便于筛选/聚合），完整事件存于 `event.raw` 供取证。Flink 使用确定性 ES `_id` 和 update + upsert：新文档写完整告警，重放或抑制更新只提交检测字段，避免覆盖分析师已写入的状态、verdict 和 case_id。ES 返回 2xx 后，Flink 才发布 `alert.created` 到 `siem-alert-lifecycle`。
 
 ### ⑧ Kibana 与控制台呈现
 
@@ -125,22 +138,29 @@ for (Rule rule : registry.getRules()) {
 
 ### ⑨ 控制面:告警 → 案件
 
-当同一实体在 30 分钟内出现至少两条 open 告警时,`CaseAggregateJob` 可以自动聚合；分析师也可以从控制台手动聚合。`CaseService` 将案件状态、负责人、证据和案件—告警关系写入 PostgreSQL，并把案件兼容镜像保留在 Elasticsearch，案件详情再从 ES 反查时间线与原始事件。
+当同一实体在 30 分钟内出现至少两条 open 告警时，`CaseAggregateJob` 可以自动聚合；分析师也可以从控制台手动聚合。`CaseService` 将案件状态、负责人、证据和案件—告警关系写入 PostgreSQL，并在同一数据库事务中写 `case_mirror_outbox`；`CaseMirrorDispatcher` 将事实重试投递到 Elasticsearch 兼容镜像，案件详情的事件时间线再从 ES 反查原始事件。
 
-```text
-控制台 /api/cases → CaseService → PostgreSQL(事务状态/关联)
-                              └→ Elasticsearch(案件镜像/事件时间线)
+```mermaid
+flowchart LR
+    UI["控制台 /api/cases"] --> SERVICE["CaseService"]
+    SERVICE --> PG[("PostgreSQL<br/>案件、关系、version、outbox")]
+    SERVICE -.->|"同步兼容与乐观锁路径"| CASES[("ES siem-cases")]
+    SERVICE -.->|"alert.case_id"| ALERTS[("ES siem-alerts")]
+    PG --> DISPATCH["CaseMirrorDispatcher"] --> CASES
+    SERVICE --> LIFE["siem-case-lifecycle"] --> SOAR["SOAR Runtime"]
 ```
+
+这里仍不是跨 PostgreSQL、Elasticsearch 和 Kafka 的原子事务。创建、更新、删除使用不同的同步顺序和补偿逻辑，outbox 与定时 reconcile 负责故障后的最终收敛；不能把图理解为一次分布式提交。
 
 ## 3. 时间窗口规则的处理差异(第二条 Flink 分支)
 
-上述走的是**单事件规则**(逐条判断)。本项目还有一条**时间窗口规则**(SSH 暴力破解),走另一条分支:
+上述走的是**单事件规则**（逐条判断）。本项目还有一条**时间窗口规则**（SSH 暴力破解），走另一条分支：
 
 ```java
 parsed
   .assignTimestampsAndWatermarks(...)                    // 指定事件时间并设置乱序容忍
   .keyBy(source.ip)                                      // 按来源 IP 分组
-  .window(TumblingEventTimeWindows.of(5min))             // 5 分钟滚动窗口
+  .window(SlidingEventTimeWindows.of(5min, 1min))         // 5 分钟窗口，每 1 分钟滑动
   .process(new WindowRuleFunction(...));                 // 窗口关闭时统计 ≥5 次 → 告警
 ```
 
@@ -149,7 +169,7 @@ parsed
 | 规则类型 | 判断时机 | 能识别的模式 | 例子 |
 | --- | --- | --- | --- |
 | 单事件规则 | 事件到达即判断 | 单条事件即可判定 | 一条 root 登录失败 |
-| 时间窗口规则 | 窗口关闭时统计判断 | 需聚合多条事件的模式 | 5 分钟内 ≥5 次失败 |
+| 时间窗口规则 | 滑动窗口关闭时统计判断 | 需聚合多条事件的模式 | 5 分钟内 ≥5 次失败 |
 
 **场景举例**:攻击者使用脚本对同一服务器每 30 秒尝试一次密码。单条失败事件无法判定为攻击(可能是正常输错),但窗口规则聚合后识别出"5 分钟内 ≥5 次"的规律,判定为暴力破解。
 
@@ -159,10 +179,11 @@ parsed
 | --- | --- | --- |
 | 采集与解析 | Logstash | `infra/logstash/pipeline/logstash.conf` |
 | 建 topic | Kafka | `infra/kafka/create-topics.sh` |
-| 消费、检测、写出告警 | Flink | `flink/src/main/java/com/siem/DetectionJob.java`、`DetectionFunction.java`、`RuleRegistry.java`、`WindowRuleFunction.java` |
+| 消费、检测、DLQ 与告警写出 | Flink | `flink/src/main/java/com/siem/DetectionJob.java`、`EventParsingProcessFunction.java`、`DetectionFunction.java`、`WindowRuleFunction.java` |
+| 检测规则声明与构建 | Flink + YAML | `infra/rules/*.yaml`、`RuleConfigLoader.java`、`RuleBuilder.java` |
 | 事件/告警存储 | ES | `infra/elasticsearch/*-template.json` |
 | 呈现/处置 | Kibana + Spring Boot | `infra/kibana/create_dashboards.py`、`src/main/java/.../alert`、`.../investigation` |
-| 控制面存储 | PostgreSQL/Flyway | `src/main/resources/db/migration/V1__control_plane.sql` 至 `V3__case_ownership_and_evidence.sql` |
+| 控制面存储 | PostgreSQL/Flyway | `src/main/resources/db/migration/V1__control_plane.sql` 至 `V12__soar_handler_runtime.sql` |
 
 ## 5. 动手验证
 

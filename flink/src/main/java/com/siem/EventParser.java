@@ -34,12 +34,12 @@ public final class EventParser {
 
     private static long timestampMillis(Object ts) {
         if (ts == null) {
-            return System.currentTimeMillis();
+            throw new IllegalArgumentException("事件缺少 @timestamp");
         }
         try {
             return Instant.parse(ts.toString()).toEpochMilli();
         } catch (Exception e) {
-            return System.currentTimeMillis();
+            throw new IllegalArgumentException("事件 @timestamp 不是 ISO-8601 时间: " + ts, e);
         }
     }
 

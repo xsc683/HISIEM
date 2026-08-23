@@ -1,5 +1,7 @@
 package com.xscsiem.hsiem_platform.soar;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -23,6 +25,9 @@ public record SoarExecution(
         String error,
         String actor,
         boolean cancelRequested,
+        @JsonIgnore String leaseOwner,
+        @JsonIgnore Instant leaseExpiresAt,
+        @JsonIgnore long fencingToken,
         Instant createdAt,
         Instant updatedAt,
         Instant startedAt,

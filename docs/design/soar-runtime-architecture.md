@@ -23,6 +23,7 @@ flowchart LR
     subgraph Facts["安全事实生产"]
         EV["siem-events"] --> FLINK["Flink DetectionJob"]
         FLINK --> IDX["AlertElasticsearchIndexer"]
+        FLINK -->|"JSON / 时间戳解析失败"| EVENT_DLQ["siem-events-dlq"]
         ALERT_API["AlertService"]
         CASE_API["CaseService"]
     end
@@ -31,6 +32,8 @@ flowchart LR
         ES_ALERT[("Elasticsearch\nsiem-alerts")]
         ES_CASE[("Elasticsearch\nsiem-cases")]
         PG_CASE[("PostgreSQL\ncases / case_alerts")]
+        CASE_OUTBOX[("PostgreSQL\ncase_mirror_outbox")]
+        CASE_DISPATCHER["CaseMirrorDispatcher"]
     end
 
     subgraph Bus["生命周期总线"]
@@ -54,9 +57,11 @@ flowchart LR
     IDX -->|"ES 2xx 后 alert.created"| AT
     ALERT_API --> ES_ALERT
     ALERT_API -->|"更新成功后 alert.updated"| AT
-    CASE_API --> PG_CASE
-    CASE_API --> ES_CASE
-    CASE_API -->|"保存成功后 case.created/updated"| CT
+    CASE_API -->|"事务事实"| PG_CASE
+    PG_CASE --> CASE_OUTBOX
+    CASE_OUTBOX --> CASE_DISPATCHER --> ES_CASE
+    CASE_API -.->|"同步兼容 / 乐观锁路径"| ES_CASE
+    CASE_API -->|"业务前置步骤成功后 case.created/updated"| CT
 
     AT --> CONSUMER
     CT --> CONSUMER
@@ -115,7 +120,7 @@ sequenceDiagram
 
 `AlertElasticsearchIndexer` 是顺序门：只有 ES 返回 2xx 才向下游 lifecycle Kafka Sink 发消息。新告警的 `alert.id` 使用确定性的 ES 文档 `_id`，Flink 再用 `alert.created + ES _id` 生成确定性 `message_id`。Flink checkpoint 重放时，Kafka 可能再次出现同一消息，但数据库唯一键不会再次创建同一 Playbook 的执行。
 
-控制面更新路径略有不同：`AlertService.update/batch` 在 ES 乐观锁更新成功后发布 `alert.updated`；`CaseService` 在 PostgreSQL、ES 镜像和告警关联完成后发布 `case.created/updated`。`LifecycleEventPublisher` 使用 `acks=all + enable.idempotence=true`，异步回调记录发布成功或失败指标。
+控制面更新路径略有不同：`AlertService.update/batch` 在 ES 乐观锁更新成功后发布 `alert.updated`；`CaseService` 的 PostgreSQL 事务会同时写 `case_mirror_outbox`，但当前仍保留同步 ES 兼容路径和 `alert.case_id` 维护，业务前置步骤成功后才发布 `case.created/updated`。outbox 负责镜像失败后的重试收敛，不把 PG、ES 与 Kafka 变成一个事务。`LifecycleEventPublisher` 使用 `acks=all + enable.idempotence=true`，异步回调记录发布成功或失败指标。
 
 ### 3.2 消费提交策略
 
@@ -147,32 +152,39 @@ Consumer 不把不可序列化的 `ConsumerRecord` 直接交给 Handler，而是
 
 ## 5. Worker 的单节点推进模型
 
-`SoarWorker` 默认每 500 ms 轮询一次，每批最多领取 10 个执行，租约默认 30 秒。它不是把整张图放进一个长事务，而是一次只推进一个持久化节点。
+`SoarWorker` 默认每 500 ms 轮询一次，单轮最多处理 10 个执行，租约默认 30 秒。它每次只领取一条并立即推进一个持久化节点，不会先占住整批租约，也不会把整张图放进一个长事务。
 
 ```mermaid
 flowchart TD
     POLL["SoarWorker.poll"] --> CLAIM["SoarStore.claimDue\n筛选 pending/running/waiting 且已到期"]
-    CLAIM --> CAS{"条件 UPDATE 是否取得租约?"}
+    CLAIM --> CAS{"条件 UPDATE 是否取得租约?\nowner + expiry + version++"}
     CAS -->|否| POLL
-    CAS -->|是| LOAD["读取 execution 与 graph_snapshot"]
+    CAS -->|是| HEARTBEAT["启动 lease/3 心跳续租"]
+    HEARTBEAT --> LOAD["读取 execution 与 graph_snapshot"]
     LOAD --> CANCEL{"已 cancel_requested / cancelled?"}
     CANCEL -->|是| STOP["停止处理"]
     CANCEL -->|否| NODE["按 current_node_id 取得节点"]
     NODE --> HANDLER["Registry 按 type 查找 NodeHandler"]
     HANDLER --> POLICY["解析节点 retry policy"]
     POLICY --> RESUME{"是否存在 waiting attempt?"}
-    RESUME --> CONTEXT["构造 SoarExecutionContext"]
+    RESUME -->|否| CONTEXT["从数据库重建 SoarExecutionContext"]
+    RESUME -->|是| WAKE["完成原 Wait attempt\n推进 next"]
     CONTEXT --> TEMPLATE["递归解析节点 config"]
-    TEMPLATE --> ATTEMPT["新建/恢复 durable node attempt"]
+    TEMPLATE --> ATTEMPT["新建 durable node attempt\n重试保留旧 attempt"]
     ATTEMPT --> EXECUTE["handler.execute(context, config)"]
-    EXECUTE --> RESULT["返回统一 SoarNodeResult"]
-    RESULT --> COMMIT{"Engine 提交 outcome"}
+    EXECUTE -->|"正常返回"| OUTCOME["统一 SoarNodeResult"]
+    EXECUTE -->|"抛出异常"| CLASSIFY["判断可重试 / 终止"]
+    CLASSIFY --> OUTCOME
+    OUTCOME --> FENCE{"提交时 owner / token / expiry\n仍全部匹配?"}
+    FENCE -->|否| STALE["拒绝旧 Worker 结果\n事务回滚"]
+    FENCE -->|是| COMMIT{"Engine 提交 outcome"}
     COMMIT -->|ADVANCE| NEXT["完成 attempt，路由 branch"]
     COMMIT -->|COMPLETE| SUCCESS["execution success"]
     COMMIT -->|WAIT| WAIT["waiting + resumeAt"]
     COMMIT -->|WAIT_HUMAN| HUMAN["approval task"]
-    EXECUTE -->|可重试异常| RETRY["保留失败 attempt\n指数退避后新 attempt"]
-    EXECUTE -->|不可重试/耗尽| ERROR["attempt/execution failed"]
+    COMMIT -->|RETRY| RETRY["保留失败 attempt\n指数退避后新 attempt"]
+    COMMIT -->|FAIL| ERROR["attempt / execution failed"]
+    WAKE --> FENCE
 ```
 
 领取分为“查候选”和“条件更新”两步。多个应用实例可能同时看见同一候选，但只有满足“状态仍可运行且租约为空或已过期”的 UPDATE 能取得它。租约成功后 execution 进入 `running`，写入 `lease_owner/lease_expires_at`。节点结束、挂起或失败时释放租约。
@@ -190,6 +202,8 @@ flowchart TD
 
 服务在第 6 步完成后退出，下次启动会从新的 `current_node_id` 继续。它不会依赖 JVM 中保存一条“正在走到哪里”的链表。
 
+claim 不只是写 `lease_owner/lease_expires_at`，还原子递增 `soar_execution.version`，返回值就是本次租约的 fencing token。Worker 在 Handler 运行期间用独立 daemon scheduler 续租；状态提交 SQL 必须同时满足 `lease_owner = ? AND version = ? AND lease_expires_at >= CURRENT_TIMESTAMP`。因此“旧 Worker 超时—新 Worker 接管—旧 Worker 晚到”时，最后一步会因 token 不匹配回滚 node run 与 execution 的整个事务。Worker 每次只 claim 一条并立即执行，`batch-size` 表示单轮最多处理多少条，不再提前占有一批尚未执行的租约。
+
 `NodeHandler` 不持有 `SoarStore`，也不能自己选择任意后继节点。它只声明节点类型、合法出边、默认执行次数，校验配置并返回 `ADVANCE/COMPLETE/WAIT/WAIT_HUMAN`。分支合法性、图路由、状态转换和租约释放集中在 Engine，避免新增节点时复制恢复逻辑。
 
 ## 6. 执行状态机
@@ -198,6 +212,8 @@ flowchart TD
 stateDiagram-v2
     [*] --> pending: lifecycle 创建
     pending --> running: Worker 取得租约
+    running --> running: 租约续期
+    running --> running: 租约过期后重新领取，fencing token 递增
     running --> pending: 当前节点成功，设置下一节点
     running --> pending: 可重试失败，写退避后的 next_run_at
     running --> waiting: Wait 写入到期时间
@@ -243,7 +259,7 @@ flowchart LR
     RESOLVER["SoarTemplateResolver"]
     INPUT[("当前 node attempt\ninput_json")]
     HANDLER["Condition / Business / Human / Wait"]
-    OUTPUT[("当前 node attempt\noutput_json")]
+    OUTPUT[("当前 node attempt\noutput_json 持久化")]
 
     PAYLOAD --> CTX
     TRIGGER --> CTX
@@ -254,7 +270,7 @@ flowchart LR
     RESOLVER --> INPUT
     INPUT --> HANDLER
     HANDLER --> OUTPUT
-    OUTPUT -.->|"供后续节点引用"| CTX
+    OUTPUT -.->|"后续领取前成为历史输出"| OUTPUTS
 ```
 
 模板支持 `${alert.id}`、`${case.id}`、`${nodes.<nodeId>.output.<field>}`，也支持 `${execution.id}`、`${execution.playbookRevision}`、`${trigger.messageId}`、`${trigger.kafka.topic}` 和 `${variables.<name>}`。解析是递归且严格的：
@@ -282,9 +298,9 @@ sequenceDiagram
 
     W->>R: process Human node
     R->>P: startNodeAttempt(input_json)
-    R->>P: 事务：execution -> waiting_human
-    R->>P: INSERT soar_approval_task(pending, node_run_id)
-    R->>P: node attempt -> waiting_human，释放租约
+    R->>P: createApproval(execution, node, nodeRun)
+    Note over R,P: 同一事务先校验 owner/token/expiry<br/>再更新 execution、插入 approval、更新 node attempt
+    P-->>R: execution=waiting_human，租约已释放
     Note over W,P: Worker 不再领取 waiting_human
     A->>P: approve 或 reject
     P->>P: 条件更新 pending approval
@@ -345,6 +361,7 @@ erDiagram
     }
     SOAR_EXECUTION {
         varchar id PK
+        varchar tenant_id
         varchar playbook_id FK
         bigint playbook_revision
         text graph_snapshot
@@ -358,6 +375,7 @@ erDiagram
         timestamp next_run_at
         varchar lease_owner
         timestamp lease_expires_at
+        bigint version "fencing token"
         boolean cancel_requested
     }
     SOAR_NODE_EXECUTION {
@@ -409,7 +427,9 @@ erDiagram
 | 风险点 | 当前保护 |
 | --- | --- |
 | Kafka 至少一次投递 | execution 唯一键去重 |
-| 多 Worker 同时看见候选 | 条件 UPDATE 竞争租约 |
+| 多 Worker 同时看见候选 | 条件 UPDATE 竞争租约；每次 claim 递增 version 作为 fencing token |
+| Handler 执行超过初始租约 | 独立心跳约每个 lease/3 续租；所有提交校验 owner/token/expiry |
+| 旧 Worker 在新 Worker 接管后晚到 | fencing 条件更新返回 0，node run 与 execution 状态事务回滚 |
 | 进程在节点之间退出 | current node、逐 attempt I/O、next_run_at 均持久化 |
 | 租约内进程退出 | 原 running attempt 标记 retrying，新 attempt 保留完整历史 |
 | 暂态 Handler 异常 | 每节点执行策略控制最大次数、指数退避和上限；不可重试异常直接终止 |
@@ -453,7 +473,7 @@ erDiagram
 | Flink 告警落库后发布 | `flink/AlertElasticsearchIndexer`、`AlertLifecycleEventMapper` |
 | Consumer 和 offset 策略 | `SoarKafkaConsumer` |
 | Playbook 匹配与执行创建 | `SoarLifecycleRuntime`、`SoarTriggerEnvelope` |
-| 到期扫描和租约领取 | `SoarWorker`、`SoarStore.claimDue` |
+| 到期扫描、续租与 fencing | `SoarWorker`、`SoarStore.claimDue/renewLease/requireLease`、`SoarLeaseLostException` |
 | 执行内核和统一状态提交 | `SoarExecutionEngine`、`SoarNodeResult`、`SoarGraphRouter` |
 | 显式上下文 | `SoarExecutionContext` |
 | 节点 SPI 与注册 | `SoarNodeHandler`、`SoarNodeHandlerRegistry`、六类 `*NodeHandler` |

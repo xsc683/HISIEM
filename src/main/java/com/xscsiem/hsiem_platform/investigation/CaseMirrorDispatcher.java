@@ -18,7 +18,7 @@ import java.util.UUID;
 
 /**
  * 将 PostgreSQL 案件事实源可靠投递到 ES 镜像。数据库 outbox 保证进程重启后仍可重试，
- * lease + SKIP LOCKED 保证多实例不会同时处理同一条消息。
+ * lease + 事务行锁保证多实例不会同时处理同一条消息；当前领取 SQL 不使用 SKIP LOCKED。
  */
 @Component
 public class CaseMirrorDispatcher {
@@ -53,7 +53,7 @@ public class CaseMirrorDispatcher {
                 ElasticsearchGateway.Response response;
                 if ("delete".equals(operation)) {
                     response = elasticsearch.request("DELETE", "/siem-cases/_doc/" + caseId, null);
-                    if (response.code() != 2 && response.code() != 404) {
+                    if ((response.code() < 200 || response.code() >= 300) && response.code() != 404) {
                         throw new IllegalStateException("ES 删除案件失败 HTTP " + response.code());
                     }
                 } else {

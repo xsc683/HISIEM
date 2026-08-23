@@ -17,6 +17,7 @@
 | 4.6 | SOAR 生命周期 MVP 重做 | 已完成 | V11 独立表、alert/case lifecycle Kafka、六类 DAG 节点、字段/动作字典、持久审批/等待、节点 I/O 和 Vue Flow |
 | 4.7 | SOAR Handler 执行内核 | 已完成 | V12 显式 ExecutionContext、Handler Registry、统一 NodeResult、Kafka trigger envelope、逐 attempt 历史、指数退避和业务动作幂等回执 |
 | 4.7 | Vue 3 控制台与规则编写 | 已完成 | vue-router 深链、模块化列表/表单/详情、规则 DSL CRUD、结构化告警/案件和 Vue Flow Handle 连线 |
+| 4.8 | 可靠性回归门禁 | 已完成 | Case 删除镜像状态、keystore 隔离、SOAR fencing/续租、编辑器离开保存、Flink 解析 DLQ、GitHub Actions 与 Playwright E2E |
 
 ## 当前验收基线
 
@@ -25,10 +26,12 @@
 ```bash
 ./mvnw.cmd test
 ./mvnw.cmd -f flink/pom.xml test
+npm.cmd --prefix web test
 npm.cmd --prefix web run build
+npm.cmd --prefix web run test:e2e
 ```
 
-当前基线为根项目 96 个测试、Flink 35 个测试和前端生产构建全部通过；测试数量随新增回归用例变化，最终以 Maven 输出为准。涉及基础设施时还要执行 Docker Compose、健康扫描、Kafka/Flink/lifecycle 链路和 ES 备份恢复验证。结果与环境说明集中记录在[当前状态](current-status.md)和[运维手册](operations.md)。
+当前基线为根项目 99 个测试、Flink 38 个测试、前端 3 个单元测试、生产构建和 1 条 Playwright 浏览器 E2E 全部通过；测试数量随新增回归用例变化，最终以 Maven/Node/Playwright 输出为准。涉及基础设施时还要执行 Docker Compose、健康扫描、Kafka/Flink/lifecycle 链路和 ES 备份恢复验证。结果与环境说明集中记录在[当前状态](current-status.md)和[运维手册](operations.md)。
 
 ## 下一阶段优先级
 

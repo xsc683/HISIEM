@@ -10,6 +10,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -132,6 +133,32 @@ class SoarRuntimeIntegrationTest {
                 .filter(run -> "flaky".equals(run.nodeId())).toList();
         assertEquals(List.of(1, 2), attempts.stream().map(SoarExecution.NodeRun::attempt).toList());
         assertEquals(1, attempts.stream().map(SoarExecution.NodeRun::idempotencyKey).distinct().count());
+    }
+
+    @Test
+    void expiredWorkerIsFencedAfterAnotherWorkerReclaimsExecution() {
+        SoarPlaybook created = service.createPlaybook("租约隔离", "fencing test",
+                "alert", List.of("alert.created"), "admin");
+        SoarPlaybook published = service.publishPlaybook(created.id(), created.revision(), "admin");
+        runtime.accept(new LifecycleEvent("fencing-message", "alert.created", Instant.now(), "test", "default",
+                Map.of("id", "alert-fencing"), null));
+
+        SoarExecution stale = store.claimDue("worker-old", Duration.ofSeconds(30), 1).getFirst();
+        jdbc.update("UPDATE soar_execution SET lease_expires_at = ? WHERE id = ?",
+                Timestamp.from(Instant.now().minusSeconds(1)), stale.id());
+        SoarExecution current = store.claimDue("worker-new", Duration.ofSeconds(30), 1).getFirst();
+
+        assertTrue(current.fencingToken() > stale.fencingToken());
+        assertFalse(store.renewLease(stale, Duration.ofSeconds(30)));
+        engine.process(stale);
+        assertTrue(store.getExecution(TenantContext.id(), stale.id()).nodeRuns().isEmpty());
+
+        engine.process(current);
+        SoarExecution advanced = store.getExecution(TenantContext.id(), current.id());
+        assertEquals("pending", advanced.status());
+        assertEquals(1, advanced.nodeRuns().size());
+        assertEquals("success", advanced.nodeRuns().getFirst().status());
+        assertTrue(published.enabled());
     }
 
     private void processNext() {

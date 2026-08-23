@@ -44,6 +44,7 @@ MSYS_NO_PATHCONV=1 wsl bash /mnt/d/Project/SIEM/infra/deploy.sh --start-job
 
 Compose 项目名固定为 `infra`，这样 `container_name`、卷和手动启动保持一致；
 Elasticsearch 备份卷会在启动前由一次性初始化服务修正为 ES 用户可写。
+`infra/elasticsearch/config/elasticsearch.keystore` 是每个部署环境自己的敏感运行态文件，仓库不会提交它；`deploy.sh` 的 rsync 也显式排除该文件，升级代码不会清空目标环境已写入的 secure settings。凭据只能通过部署环境的 `elasticsearch-keystore` 命令或密钥注入流程维护。
 
 Kafka 的默认开发配置使用双监听：容器内的 Logstash/Flink 连接 `kafka:9092`，宿主机上的 API 和运维脚本连接 `localhost:9092`（宿主机端口映射到容器的 EXTERNAL 监听）。不要把 `KAFKA_ADVERTISED_LISTENERS` 改成只有 `kafka:9092`，否则宿主机 Kafka AdminClient 首次连接后会被元数据重定向到 Docker 内部主机名，运行态扫描会报 `Timed out waiting for a node assignment`。
 
@@ -78,7 +79,7 @@ docker compose ps
 bash /mnt/d/Project/SIEM/infra/kafka/create-topics.sh
 ```
 
-> 必需：脚本会创建 `siem-events`、`siem-alert-lifecycle`、`siem-case-lifecycle`。apache/kafka:3.8 默认关闭 `auto.create.topics.enable`，而 Flink 订阅 topic
+> 必需：脚本会创建 `siem-events`、Flink 解析隔离用的 `siem-events-dlq`、`siem-alert-lifecycle`、`siem-case-lifecycle`。apache/kafka:3.8 默认关闭 `auto.create.topics.enable`，而 Flink 订阅 topic
 > 的元数据查询不会触发自动建主题。不建的话 Flink job 会因 `UnknownTopicOrPartitionException`
 > 反复 RESTARTING。
 

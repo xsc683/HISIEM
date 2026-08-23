@@ -102,11 +102,13 @@ topic: siem-events
 
 **与 Flink 的对应**:Flink 中 `KafkaSource` 的并行度(并行任务数)等价于 Spring 的 concurrency;两者都受"分区数为单组内并行度上限"这一约束。
 
+当前还存在 `siem-events-dlq`：它由 Flink 解析算子的 side output 生产，保存坏 JSON、缺失或非法 `@timestamp` 的隔离记录。它不是 SOAR topic，也不会自动灌回检测流；运维确认原因并修复生产端后，才从受控入口重放原事件。
+
 ## 4. 本项目中的 Kafka 配置位置
 
 | 用途 | 文件 | 说明 |
 | --- | --- | --- |
-| 创建主题 | `infra/kafka/create-topics.sh` | 创建 `siem-events`,1 分区 1 副本 |
+| 创建主题 | `infra/kafka/create-topics.sh` | 幂等创建 `siem-events`、解析 DLQ 和两个 lifecycle topic；开发环境 3 分区、RF=1 |
 | 生产端配置 | `infra/logstash/pipeline/logstash.conf` | kafka output 插件,JSON codec |
 | 消费端配置 | `flink/src/main/java/com/siem/DetectionJob.java` | `KafkaSource` 订阅 `siem-events` |
 

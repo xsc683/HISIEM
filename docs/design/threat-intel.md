@@ -91,16 +91,19 @@ map[source],map[target]
 
 TI 富化结果直接给检测规则和告警用:
 
-- **规则条件**:检测规则用 `FieldEqualsCondition` 判断,例如 `threat.is_malicious="true"` 时单独告警/升风险(新增规则示例,注册到 RuleRegistry;**translate 输出为字符串,故用字符串比较 `"true"`,不用布尔 `true`**,与 §2 fallback 类型一致):
-  ```java
-  new Rule(
-      "rule-threat-intel-001",
-      "命中威胁情报 IP",
-      "threat_intel_match",
-      "high",
-      "source.ip 命中威胁情报,is_malicious=true",
-      new FieldEqualsCondition("threat.is_malicious", "true")
-  )
+- **规则条件**：检测规则用 YAML 声明 `field_equals`，由 `RuleConfigLoader`/`RuleBuilder` 构造类型化条件。例如 `threat.is_malicious="true"` 时单独告警或升风险（**translate 输出为字符串，因此用字符串 `"true"`，不用布尔 `true`**，与 §2 fallback 类型一致）：
+  ```yaml
+  id: rule-threat-intel-001
+  name: 命中威胁情报 IP
+  category: single_event
+  type: threat_intel_match
+  enabled: true
+  severity: high
+  description: source.ip 命中威胁情报
+  condition:
+    type: field_equals
+    field: threat.is_malicious
+    value: "true"
   ```
 - **threat.\* 进告警的取舍**:
   - 进:告警带 `threat.is_malicious` / `threat.confidence`,分析师不用回事件库即可判断;也便于按 TI 命中率统计。

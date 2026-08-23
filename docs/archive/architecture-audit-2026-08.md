@@ -2,6 +2,9 @@
 
 > 当前实现亮点已整理至 [`../architecture-deep-dive.md`](../architecture-deep-dive.md)。本文只保留历史审计证据，不再追加当前设计说明；其中的旧风险和旧接口必须以当前代码、[`../current-status.md`](../current-status.md) 和 [`../product-contract.md`](../product-contract.md) 复核。
 
+> [!WARNING]
+> 本文所有 Mermaid/ASCII 图均为 2026-08-21 审计快照，不是当前架构图；其中包含旧前端、旧迁移版本、旧 SOAR 和旧一致性路径，禁止直接复制到当前设计或用作代码生成上下文。
+
 > 分析日期：2026-08-21（Asia/Shanghai）  
 > 项目根目录：`.`（本文全部代码证据均相对项目根目录）  
 > 分析方式：静态源码/配置/迁移/测试审查 + 本地构建测试 + 当前 Docker 运行态只读核验  

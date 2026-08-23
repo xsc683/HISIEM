@@ -6,24 +6,23 @@
 
 ## 数据链路
 
-```
-Linux 日志 ──> Logstash (Grok 解析 + ECS 标准化)
-                  │
-                  ├──> Elasticsearch  siem-events-*  (原始事件,按天索引)
-                  │
-                  └──> Kafka  siem-events  (事件总线)
-                                │
-                                └──> Flink  DetectionJob  (规则引擎)
-                                          │
-                                          ├── 单事件规则 → 告警
-                                          └── 时间窗口规则(暴力破解)→ 告警
-                                          │
-                                          └──> Elasticsearch  siem-alerts
-                                                          │
-                                                          └──> Kibana (SIEM 总览 dashboard)
+```mermaid
+flowchart LR
+    LOG["安全日志"] --> LS["Logstash<br/>Grok / ECS / date"]
+    LS -->|"解析失败"| RAW[("ES siem-events-raw-*")]
+    LS -->|"解析成功"| EVENTS[("ES siem-events-*")]
+    LS -->|"解析成功"| KAFKA["Kafka siem-events"]
+    KAFKA --> FP{"Flink JSON 与<br/>事件时间有效?"}
+    FP -->|"否"| DLQ["Kafka siem-events-dlq"]
+    FP -->|"是"| RULES["单事件 / 滑动窗口<br/>CEP / 基线"]
+    RULES --> ALERTS[("ES siem-alerts")]
+    ALERTS --> KIBANA["Kibana / Vue 控制台"]
+    ALERTS -->|"ES 2xx 后 alert.created"| LIFE["Kafka lifecycle topics"]
+    LIFE --> SOAR["SOAR Runtime"]
+    SOAR --> PG[("PostgreSQL 执行状态")]
 ```
 
-**组件职责**:Logstash 只做解析/标准化,不做检测;Kafka 是事件总线,解耦生产与消费;Flink 是检测引擎;ES 负责事件/告警存储与检索;Kibana 负责可视化;Spring Boot 控制台负责接入、处置、鉴权和运维 API;PostgreSQL 负责控制面事务数据。
+**组件职责**：Logstash 只做接入、解析和标准化；Kafka 承载标准事件、解析 DLQ 与生命周期消息；Flink 是检测引擎；ES 负责事件、告警、风险和兼容镜像的检索；Kibana/Vue 负责展示；Spring Boot 负责接入、处置、鉴权、SOAR 和运维 API；PostgreSQL 是控制面事务事实与执行状态存储。案件跨 PG/ES 的具体同步、补偿和 outbox 边界见[系统架构](docs/architecture.md)。
 
 ## 仓库结构
 
@@ -90,15 +89,15 @@ npm --prefix web run dev
 ## 已实现能力
 
 - ✅ Logstash Grok 解析 + ECS 字段标准化(`@timestamp` 为真实日志时间)
-- ✅ Kafka 事件总线(`siem-events`)
+- ✅ Kafka 事件与生命周期总线（`siem-events`、解析 DLQ、两个 lifecycle topic）
 - ✅ Flink 规则引擎:
   - 单事件规则 3 条(SSH 认证失败 / root 认证失败 / 常见账号爆破)
-  - 时间窗口规则 1 条(同源 IP 5 分钟 ≥5 次失败 → 暴力破解 critical 告警)
-  - CEP 攻击链、认证失败基线异常和实体风险能力已接入统一规则声明
+  - 滑动时间窗口规则 1 条（同源 IP 5 分钟 ≥5 次失败 → 暴力破解 critical 告警）
+  - CEP 攻击链和认证失败基线异常接入统一规则声明；实体风险由独立后台重算任务聚合
 - ✅ 告警扁平 Schema(`siem-alerts`,含 `event.raw`、`event_count`、`related_events`)
-- ✅ ES 索引模板(`siem-events-*`、`siem-alerts`)
+- ✅ ES 索引模板（事件、raw、告警、案件镜像和实体风险）
 - ✅ Kibana "SIEM 总览" dashboard
-- ✅ Flink checkpointing(重启不重放历史)
+- ✅ Flink checkpointing + committed offsets；至少一次重放由确定性告警 ID 收敛
 - ✅ Spring Boot 控制面:PostgreSQL/Flyway、登录会话、RBAC、审计、案件、通知、后台任务
 - ✅ 运维能力:六组件健康扫描、Actuator/Micrometer、数据源停用/删除回滚、ES 备份恢复演练
 - ✅ 前端：Vue 3 模块化路由、规则可视化 CRUD、结构化告警/案件详情和 Vue Flow SOAR 设计器

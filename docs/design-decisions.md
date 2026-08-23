@@ -41,9 +41,9 @@
 
 ### 决策 F:时间窗口关联用事件时间
 
-**决策**:窗口规则用 `TumblingEventTimeWindows` + 有界乱序 watermark(10s)。
+**决策**:窗口规则使用事件时间 + 有界乱序 watermark（10s）。规则配置 `slidingMinutes > 0` 时构造 `SlidingEventTimeWindows`；未配置时才回退 `TumblingEventTimeWindows`。当前 SSH 暴力破解规则是 5 分钟窗口、1 分钟滑动，用重叠窗口减少固定边界漏检，再由告警抑制避免相邻窗口重复刷屏。
 
-**注意**:事件时间窗口在 **watermark 越过窗口边界时才关闭**。测试/模拟时,除了窗口内的事件,还要发一条时间戳在窗口之后的事件推进 watermark(见 `infra/simulator/brute-force-test.sh`)。
+**注意**:事件时间窗口在 **watermark 越过窗口边界时才关闭**。检测流配置 60 秒 source idleness，避免空闲分区长期拖住活跃分区；测试/模拟时仍应发送窗口之后的事件推进活跃流 watermark（见 `infra/simulator/brute-force-test.sh`）。
 
 ### 决策 G:checkpointing + committedOffsets
 

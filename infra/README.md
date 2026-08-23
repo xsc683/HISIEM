@@ -6,8 +6,8 @@
 | --- | --- | --- |
 | `docker-compose.yml` | 组件编排(PostgreSQL/ES/Kibana/Logstash/Kafka/Flink) | ✅ |
 | `logstash/` | logstash pipeline(Grok + ECS 标准化 + date filter) | ✅ |
-| `elasticsearch/` | `siem-events-*` / `siem-alerts` 索引模板 + 应用脚本 | ✅ |
-| `kafka/` | `siem-events` 检测总线 + alert/case lifecycle SOAR 总线 | ✅ |
+| `elasticsearch/` | events/raw/alerts/cases/entity-risk 索引模板 + 应用与迁移脚本 | ✅ |
+| `kafka/` | `siem-events` 检测总线 + `siem-events-dlq` 解析隔离 + alert/case lifecycle SOAR 总线 | ✅ |
 | `kibana/` | dashboard 创建脚本 + NDJSON 导出 | ✅ |
 | `simulator/` | 日志模拟器(单条 + 暴力破解测试) | ✅ |
 | `validate-deployment.sh` | Docker Desktop + WSL2 部署只读自验证 | ✅ |

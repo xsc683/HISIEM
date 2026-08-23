@@ -28,7 +28,7 @@ curl -H "Authorization: Bearer $TOKEN" \
 | 检查 | 命令/入口 | 通过标准 |
 | --- | --- | --- |
 | 容器 | `docker compose -f infra/docker-compose.yml ps kafka` | 容器运行且日志无持续重启 |
-| 宿主机客户端 | `localhost:9092` | 能获取 `siem-events` 和两个 lifecycle topic 元数据 |
+| 宿主机客户端 | `localhost:9092` | 能获取 `siem-events`、`siem-events-dlq` 和两个 lifecycle topic 元数据 |
 | 容器内客户端 | `kafka:9092` | 能列出 topic、读取 offset |
 | 检测作业 | Flink 作业页面或 API | 作业 `RUNNING`，消费组 lag 可解释 |
 
@@ -38,6 +38,8 @@ curl -H "Authorization: Bearer $TOKEN" \
 docker logs --tail 100 siem-kafka
 docker exec siem-kafka /opt/kafka/bin/kafka-topics.sh \
   --bootstrap-server kafka:9092 --describe --topic siem-events
+docker exec siem-kafka /opt/kafka/bin/kafka-topics.sh \
+  --bootstrap-server kafka:9092 --describe --topic siem-events-dlq
 ```
 
 SOAR 还需确认两个 topic 与消费组：
@@ -62,6 +64,15 @@ docker logs --tail 100 siem-logstash
 ### Flink
 
 确认 JobManager/TaskManager 正常后，查看检测作业状态；作业必须是 `RUNNING`。作业丢失或反复重启时，先检查 Kafka topic 分区数、checkpoint 和 ES sink 错误，再按[部署指南](deployment.md)重新提交，不要直接删除历史索引。
+
+坏 JSON、缺失或非法 `@timestamp` 不会进入规则分支，而是以包含 `dlq.id/dlq.stage/dlq.error_*` 和截断保护后的 `event.original` 的 JSON 写入 `siem-events-dlq`。排查解析质量可只读消费：
+
+```bash
+docker exec siem-kafka /opt/kafka/bin/kafka-console-consumer.sh \
+  --bootstrap-server kafka:9092 --topic siem-events-dlq --from-beginning --max-messages 20
+```
+
+DLQ 当前是隔离与观测边界，不提供自动重放；修复上游/模板后，应通过受控生产入口重新发送原事件，不能直接把未校验的 DLQ 记录灌回 `siem-events`。
 
 ### Elasticsearch
 
@@ -95,6 +106,7 @@ curl -fsS http://localhost:9200/_cat/indices/siem-alerts?v
 | 健康扫描 Kafka DOWN | listener、broker 选主、topic 分区 | 先修连接和元数据，再重试扫描 |
 | Logstash 仅显示 degraded | 容器内 9600 API、pipeline 日志 | 宿主机不可达时按降级语义处理 |
 | 有事件无告警 | Kafka offset、Flink `RUNNING`、规则 `enabled` | 区分事件已入 ES 与检测链路已消费 |
+| Flink 正常但某条事件未检测 | `siem-events-dlq` 的 error type/message、原始事件时间 | 先修坏 JSON 或 `@timestamp`，再从受控入口重放 |
 | 规则发布后作业下线 | Flink savepoint/cancel/submit 日志 | 保留旧配置，按部署脚本恢复；不要手工改运行容器 |
 | 数据源停用后仍轮询 | 控制面状态、后台任务、端口和 pipeline | 等待任务收敛；重复操作前检查任务 ID 和审计记录 |
 | SOAR 无执行 | Playbook 是否 published+enabled、两个 lifecycle topic、`siem-soar-runtime` lag | 不检查 `siem-events`，先确认 lifecycle 消息和字典/发布门禁 |
@@ -104,6 +116,7 @@ curl -fsS http://localhost:9200/_cat/indices/siem-alerts?v
 ## 变更、备份与回滚
 
 - 代码、Compose、Logstash、ES 模板和规则以 Git 工作区为准；运行容器不是配置源。
+- Elasticsearch keystore 既不是 Git 配置也不会被 `deploy.sh` 覆盖；轮换后验证 secure settings 生效，并备份密钥来源而不是提交 keystore 二进制。
 - 修改数据源、规则或模板前记录任务 ID、旧版本和健康扫描结果。
 - 任何涉及 ES mapping、Kafka 分区、Flink 作业的变更，都要补自动测试和运行态验证，并在失败时保留旧配置。
 - 生产环境启用认证/TLS、多个 broker、RF≥2、快照存储和明确的 RTO/RPO 后，才可把“开发/演示可用”升级为“生产可用”。

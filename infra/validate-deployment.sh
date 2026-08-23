@@ -135,7 +135,7 @@ else
 fi
 
 echo "==> 5) Kafka topic"
-for topic in siem-events siem-alert-lifecycle siem-case-lifecycle; do
+for topic in siem-events siem-events-dlq siem-alert-lifecycle siem-case-lifecycle; do
     if docker exec siem-kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list 2>/dev/null | grep -qx "$topic"; then
         echo "  [ok] Kafka topic $topic"
     else

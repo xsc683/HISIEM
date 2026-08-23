@@ -10,16 +10,24 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 数据链路
 
-```
-日志 → Logstash(Grok+ECS) → Kafka(siem-events) → Flink(规则引擎) → ES(siem-alerts) + Kibana
-                          ↘ ES(siem-events-*, 事件按天索引)
+```mermaid
+flowchart LR
+    LOG["日志"] --> LS["Logstash Grok / ECS / date"]
+    LS -->|"解析失败"| RAW[("ES siem-events-raw-*")]
+    LS -->|"解析成功"| EVENT_ES[("ES siem-events-*")]
+    LS -->|"解析成功"| K["Kafka siem-events"]
+    K --> FP{"Flink JSON / 时间戳有效?"}
+    FP -->|"否"| DLQ["Kafka siem-events-dlq"]
+    FP -->|"是"| DETECT["单事件 / 滑动窗口 / CEP / 基线"]
+    DETECT --> ALERT[("ES siem-alerts")]
+    ALERT -->|"ES 2xx 后"| LIFE["lifecycle topics"] --> SOAR["SOAR Runtime"]
 ```
 
 ## 仓库布局
 
-- `flink/` — **Flink 检测 job**(独立 Maven 工程,主类 `com.siem.DetectionJob`)。规则引擎:单事件(`RuleRegistry`/`DetectionFunction`)+ 窗口(`WindowRule`/`WindowRuleFunction`)
+- `flink/` — **Flink 检测 job**（独立 Maven 工程，主类 `com.siem.DetectionJob`）。规则 YAML 经 `RuleConfigLoader`/`RuleBuilder` 生成单事件、窗口、CEP 和基线四类分支
 - `infra/` — 基础设施配置唯一来源:docker-compose、logstash、ES 模板、Kibana 脚本、simulator、deploy.sh
-- `src/` `pom.xml` — Spring Boot 控制面 API(认证、接入、告警、案件、通知、运维)
+- `src/` `pom.xml` — Spring Boot 控制面 API（认证、接入、告警、案件、SOAR、通知、运维）
 - `web/` — Vue 3/Vite 控制台；真实路由见 `web/src/router/index.js`，统一请求见 `web/src/api/index.js`，页面按 `views/<module>/` 拆分
 - `docs/` — 架构/部署/决策/规则引擎文档
 
@@ -58,8 +66,8 @@ bash /mnt/d/Project/SIEM/infra/simulator/brute-force-test.sh
 
 ## 关键知识点(易踩坑)
 
-1. **Flink offset**:`DetectionJob` 用 `committedOffsets(EARLIEST)`(不是 `earliest()`),否则重启重放历史 → 重复告警。已开 checkpointing(60s)。
-2. **事件时间窗口**:窗口在 watermark 越过边界才关闭;模拟测试要发一条时间戳在窗口之后的事件推进 watermark。
+1. **Flink offset**：`DetectionJob` 用 `committedOffsets(EARLIEST)`（不是固定 `earliest()`），首次运行才回退最早位置。checkpoint 和 Kafka 都是至少一次语义，故障仍可能重放少量在途记录，告警依靠确定性 ES ID 收敛。
+2. **事件时间窗口**：当前 SSH 规则是 5 分钟窗口、1 分钟滑动，watermark 有 10 秒乱序容忍和 60 秒分区 idleness；窗口仍要在 watermark 越过边界后才关闭。
 3. **Logstash**:点分字段(`source.ip`)在 ES 里是扁平 key 但按嵌套 mapping 索引,查询用点分路径即可;`naming_strategy` 选项在 8.14 不存在。
 4. **deploy.sh 不能 rm -rf bind mount 目录**(logstash),会破坏 Docker Desktop 挂载导致 exit 127,用 rsync 原地同步。
 5. **Docker Desktop 的"文件级 bind mount"会被 rsync 替换破坏**:compose 若单文件挂载(`./a.yml:/path/a.yml`),rsync 原地替换该文件(Docker Desktop 快照旧 inode)后,容器 restart/up 报 `mount ... no such file or directory`(exit 127)。**解法:改成目录级挂载**(`./logstash/config:/usr/share/logstash/config`,已在 docker-compose.yml;config 目录需内含 jvm.options/log4j2 等镜像默认文件,已从镜像拷入)。目录内文件替换不受影响。
@@ -67,7 +75,7 @@ bash /mnt/d/Project/SIEM/infra/simulator/brute-force-test.sh
 7. **Logstash 数组不接受尾逗号**:grok/date 的 match 数组末尾留 `,` 会让 `--config.test_and_exit` 报 `Expected one of ...` FATAL。生成器已避免(LogstashConfigGenerator)。
 8. **Flink checkpoint 默认在 cancel 时删除**(cleanup-mode=DELETE_ON_CANCELLATION),cancel 后无法从 checkpoint 恢复。**cancel→restore 演练用 savepoint**:`flink cancel -s file:///opt/flink/savepoints <jobid>`(Flink 2.x 推荐 `flink stop -p <dir> <jobid>`);savepoint 目录需 `chown flink:flink`(docker exec 以 root 创建会使 Flink 进程写失败,报 `Failed to create savepoint directory`)。已演练通过(2026-08-16)。
 9. **Kibana dashboard** 对象必须带 `kibanaSavedObjectMeta.searchSourceJSON`。
-10. **Kafka topic 必须手动建**:`apache/kafka:3.8` 默认 `auto.create.topics.enable=false`,Flink KafkaSource 的元数据订阅不会触发建主题(只有生产者写入才建)。提交 Flink job 前先跑 `infra/kafka/create-topics.sh`(deploy.sh 只同步脚本,不执行)。
+10. **Kafka topic 必须显式创建**：`apache/kafka:3.8` 配置 `auto.create.topics.enable=false`，消费者和生产者都不能依赖自动建 topic。提交 Flink job 前先跑 `infra/kafka/create-topics.sh`（deploy.sh 只同步脚本，不执行）。
 11. **Flink checkpoint 曾出现卡滞(2026-08-16)**:现象 = Kafka consumer group `siem-detection` LAG 持续不降,告警在恢复后批量新增;日志报 `Checkpoint expired before completing`。本轮已统一 `RuntimeTuning` 参数并完成 2000 条事件负载验证，作业保持 `RUNNING` 且连续完成 checkpoint。后续仍需在生产容量和升级场景下持续压测，见 [当前状态](docs/current-status.md) 的生产风险。
 
 ## 告警/事件快速查询
@@ -81,7 +89,7 @@ curl -s "http://localhost:9200/siem-alerts/_count"
 
 ```bash
 ./mvnw test                                                # 根项目测试（最新数量见 docs/current-status.md）
-./mvnw -f flink/pom.xml test                              # Flink 模块全部 33 个测试
+./mvnw -f flink/pom.xml test                              # Flink 模块全部 38 个测试
 ./mvnw -f flink/pom.xml test -Dtest=RuleEngineTest        # 单个测试类
 ./mvnw -f flink/pom.xml test "-Dtest=WindowRuleTest#bruteForceAlertHasCountAndRelatedEvents"  # 单个方法
 ```

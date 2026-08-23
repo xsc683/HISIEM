@@ -39,3 +39,9 @@ __pycache__/
 # web 前端
 web/node_modules/
 web/dist/
+web/test-results/
+web/playwright-report/
+
+# Elasticsearch keystore 是由运行环境生成的二进制安全状态，可能包含敏感配置。
+# 仓库只保存可审计的文本配置；keystore 必须在目标环境单独创建或挂载。
+infra/elasticsearch/config/elasticsearch.keystore

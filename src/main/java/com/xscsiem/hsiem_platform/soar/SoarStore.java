@@ -32,6 +32,7 @@ public class SoarStore {
     private static final String EXECUTION_COLUMNS = "id, tenant_id, playbook_id, playbook_name, "
             + "playbook_revision, graph_snapshot, object_type, object_id, event_type, trigger_message_id, "
             + "trigger_envelope, payload_snapshot, status, current_node_id, next_run_at, error, actor, cancel_requested, "
+            + "lease_owner, lease_expires_at, version, "
             + "created_at, updated_at, started_at, finished_at";
 
     private final JdbcTemplate jdbc;
@@ -193,7 +194,7 @@ public class SoarStore {
         for (String id : candidates) {
             int won = jdbc.update("UPDATE soar_execution SET lease_owner = ?, lease_expires_at = ?, "
                             + "status = 'running', started_at = COALESCE(started_at, CURRENT_TIMESTAMP), "
-                            + "updated_at = CURRENT_TIMESTAMP WHERE id = ? "
+                            + "updated_at = CURRENT_TIMESTAMP, version = version + 1 WHERE id = ? "
                             + "AND status IN ('pending','running','waiting') "
                             + "AND (lease_expires_at IS NULL OR lease_expires_at < CURRENT_TIMESTAMP)",
                     owner, leaseUntil, id);
@@ -201,6 +202,22 @@ public class SoarStore {
             if (claimed.size() >= limit) break;
         }
         return claimed;
+    }
+
+    /** Extends only the exact lease generation returned by claimDue. */
+    public boolean renewLease(SoarExecution execution, Duration lease) {
+        if (execution.leaseOwner() == null || execution.leaseOwner().isBlank()) return false;
+        int renewed = jdbc.update("UPDATE soar_execution SET lease_expires_at = ?, updated_at = CURRENT_TIMESTAMP "
+                        + "WHERE id = ? AND status = 'running' AND cancel_requested = FALSE "
+                        + "AND lease_owner = ? AND version = ? AND lease_expires_at >= CURRENT_TIMESTAMP",
+                Timestamp.from(Instant.now().plus(lease)), execution.id(),
+                execution.leaseOwner(), execution.fencingToken());
+        return renewed == 1;
+    }
+
+    /** Rejects work that no longer owns the current, unexpired lease generation. */
+    public void requireLease(SoarExecution execution) {
+        if (!hasLease(execution, false)) throw new SoarLeaseLostException(execution.id());
     }
 
     public Map<String, Map<String, Object>> nodeOutputs(String executionId) {
@@ -221,8 +238,10 @@ public class SoarStore {
     }
 
     @Transactional
-    public StartAttempt startNode(String executionId, PlaybookGraph.Node node,
+    public StartAttempt startNode(SoarExecution execution, PlaybookGraph.Node node,
                                   Map<String, Object> input, int maxAttempts) {
+        requireLeaseForUpdate(execution);
+        String executionId = execution.id();
         List<SoarExecution.NodeRun> rows = jdbc.query("SELECT * FROM soar_node_execution "
                         + "WHERE execution_id = ? AND node_id = ? ORDER BY sequence_no DESC "
                         + "FETCH FIRST 1 ROWS ONLY", this::mapNodeRun, executionId, node.id());
@@ -254,55 +273,73 @@ public class SoarStore {
                 this::mapNodeRun, runId), false);
     }
 
-    public void updateNodeInput(String nodeRunId, Map<String, Object> input) {
-        jdbc.update("UPDATE soar_node_execution SET input_json = ? WHERE id = ? AND status = 'running'",
-                json(input), nodeRunId);
+    @Transactional
+    public void updateNodeInput(SoarExecution execution, String nodeRunId, Map<String, Object> input) {
+        requireLeaseForUpdate(execution);
+        int updated = jdbc.update("UPDATE soar_node_execution SET input_json = ? "
+                        + "WHERE id = ? AND execution_id = ? AND status = 'running'",
+                json(input), nodeRunId, execution.id());
+        if (updated != 1) throw new IllegalStateException("SOAR 节点执行状态已经变化: " + nodeRunId);
     }
 
     @Transactional
-    public void advance(String executionId, String nodeRunId, Map<String, Object> output, String nextNodeId) {
-        finishNode(nodeRunId, "success", output, null);
-        jdbc.update("UPDATE soar_execution SET status = 'pending', current_node_id = ?, next_run_at = CURRENT_TIMESTAMP, "
+    public void advance(SoarExecution execution, String nodeRunId, Map<String, Object> output, String nextNodeId) {
+        int moved = jdbc.update("UPDATE soar_execution SET status = 'pending', current_node_id = ?, next_run_at = CURRENT_TIMESTAMP, "
                         + "lease_owner = NULL, lease_expires_at = NULL, updated_at = CURRENT_TIMESTAMP, version = version + 1 "
-                        + "WHERE id = ? AND status = 'running' AND cancel_requested = FALSE",
-                nextNodeId, executionId);
-    }
-
-    @Transactional
-    public void succeed(String executionId, String nodeRunId, Map<String, Object> output) {
+                        + "WHERE id = ? AND status = 'running' AND cancel_requested = FALSE "
+                        + "AND lease_owner = ? AND version = ? AND lease_expires_at >= CURRENT_TIMESTAMP",
+                nextNodeId, execution.id(), execution.leaseOwner(), execution.fencingToken());
+        requireTransition(moved, execution);
         finishNode(nodeRunId, "success", output, null);
-        jdbc.update("UPDATE soar_execution SET status = 'success', lease_owner = NULL, lease_expires_at = NULL, "
-                        + "updated_at = CURRENT_TIMESTAMP, finished_at = CURRENT_TIMESTAMP, version = version + 1 "
-                        + "WHERE id = ? AND status = 'running' AND cancel_requested = FALSE", executionId);
     }
 
     @Transactional
-    public void fail(String executionId, String nodeRunId, String error) {
-        if (nodeRunId != null) finishNode(nodeRunId, "failed", Map.of(), error);
-        jdbc.update("UPDATE soar_execution SET status = 'failed', error = ?, lease_owner = NULL, "
+    public void succeed(SoarExecution execution, String nodeRunId, Map<String, Object> output) {
+        int moved = jdbc.update("UPDATE soar_execution SET status = 'success', lease_owner = NULL, lease_expires_at = NULL, "
+                        + "updated_at = CURRENT_TIMESTAMP, finished_at = CURRENT_TIMESTAMP, version = version + 1 "
+                        + "WHERE id = ? AND status = 'running' AND cancel_requested = FALSE "
+                        + "AND lease_owner = ? AND version = ? AND lease_expires_at >= CURRENT_TIMESTAMP",
+                execution.id(), execution.leaseOwner(), execution.fencingToken());
+        requireTransition(moved, execution);
+        finishNode(nodeRunId, "success", output, null);
+    }
+
+    @Transactional
+    public void fail(SoarExecution execution, String nodeRunId, String error) {
+        int moved = jdbc.update("UPDATE soar_execution SET status = 'failed', error = ?, lease_owner = NULL, "
                         + "lease_expires_at = NULL, updated_at = CURRENT_TIMESTAMP, finished_at = CURRENT_TIMESTAMP, "
                         + "version = version + 1 WHERE id = ? AND status = 'running' "
-                        + "AND cancel_requested = FALSE", error, executionId);
+                        + "AND cancel_requested = FALSE AND lease_owner = ? AND version = ? "
+                        + "AND lease_expires_at >= CURRENT_TIMESTAMP",
+                error, execution.id(), execution.leaseOwner(), execution.fencingToken());
+        requireTransition(moved, execution);
+        if (nodeRunId != null) finishNode(nodeRunId, "failed", Map.of(), error);
     }
 
     @Transactional
-    public void scheduleRetry(String executionId, String nodeRunId, String error, Instant nextAttemptAt) {
-        finishNode(nodeRunId, "retrying", Map.of(), error);
-        jdbc.update("UPDATE soar_execution SET status = 'pending', error = ?, next_run_at = ?, "
+    public void scheduleRetry(SoarExecution execution, String nodeRunId, String error, Instant nextAttemptAt) {
+        int moved = jdbc.update("UPDATE soar_execution SET status = 'pending', error = ?, next_run_at = ?, "
                         + "lease_owner = NULL, lease_expires_at = NULL, updated_at = CURRENT_TIMESTAMP, "
                         + "version = version + 1 WHERE id = ? AND status = 'running' "
-                        + "AND cancel_requested = FALSE",
-                error, Timestamp.from(nextAttemptAt), executionId);
+                        + "AND cancel_requested = FALSE AND lease_owner = ? AND version = ? "
+                        + "AND lease_expires_at >= CURRENT_TIMESTAMP",
+                error, Timestamp.from(nextAttemptAt), execution.id(), execution.leaseOwner(), execution.fencingToken());
+        requireTransition(moved, execution);
+        finishNode(nodeRunId, "retrying", Map.of(), error);
     }
 
     @Transactional
-    public void waitUntil(String executionId, String nodeRunId, Instant until) {
-        jdbc.update("UPDATE soar_node_execution SET status = 'waiting' WHERE id = ? AND status = 'running'",
-                nodeRunId);
-        jdbc.update("UPDATE soar_execution SET status = 'waiting', next_run_at = ?, lease_owner = NULL, "
+    public void waitUntil(SoarExecution execution, String nodeRunId, Instant until) {
+        int moved = jdbc.update("UPDATE soar_execution SET status = 'waiting', next_run_at = ?, lease_owner = NULL, "
                         + "lease_expires_at = NULL, updated_at = CURRENT_TIMESTAMP, version = version + 1 "
-                        + "WHERE id = ? AND status = 'running' AND cancel_requested = FALSE",
-                Timestamp.from(until), executionId);
+                        + "WHERE id = ? AND status = 'running' AND cancel_requested = FALSE "
+                        + "AND lease_owner = ? AND version = ? AND lease_expires_at >= CURRENT_TIMESTAMP",
+                Timestamp.from(until), execution.id(), execution.leaseOwner(), execution.fencingToken());
+        requireTransition(moved, execution);
+        int updated = jdbc.update("UPDATE soar_node_execution SET status = 'waiting' "
+                        + "WHERE id = ? AND execution_id = ? AND status = 'running'",
+                nodeRunId, execution.id());
+        if (updated != 1) throw new IllegalStateException("SOAR 节点执行状态已经变化: " + nodeRunId);
     }
 
     @Transactional
@@ -311,17 +348,19 @@ public class SoarStore {
         String id = "approval-" + UUID.randomUUID();
         int moved = jdbc.update("UPDATE soar_execution SET status = 'waiting_human', lease_owner = NULL, "
                         + "lease_expires_at = NULL, updated_at = CURRENT_TIMESTAMP, version = version + 1 WHERE id = ? "
-                        + "AND status = 'running' AND cancel_requested = FALSE", execution.id());
-        if (moved == 0) {
-            throw new ConflictException("执行已取消或状态已经变化，不能创建人工审批");
-        }
+                        + "AND status = 'running' AND cancel_requested = FALSE AND lease_owner = ? AND version = ? "
+                        + "AND lease_expires_at >= CURRENT_TIMESTAMP",
+                execution.id(), execution.leaseOwner(), execution.fencingToken());
+        requireTransition(moved, execution);
         jdbc.update("INSERT INTO soar_approval_task (id, tenant_id, execution_id, node_run_id, node_id, "
                         + "playbook_id, playbook_name, object_type, object_id, prompt) "
                         + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 id, execution.tenantId(), execution.id(), nodeRun.id(), node.id(), execution.playbookId(),
                 execution.playbookName(), execution.objectType(), execution.objectId(), prompt);
-        jdbc.update("UPDATE soar_node_execution SET status = 'waiting_human' WHERE id = ?",
-                nodeRun.id());
+        int updated = jdbc.update("UPDATE soar_node_execution SET status = 'waiting_human' "
+                        + "WHERE id = ? AND execution_id = ? AND status = 'running'",
+                nodeRun.id(), execution.id());
+        if (updated != 1) throw new IllegalStateException("SOAR 节点执行状态已经变化: " + nodeRun.id());
         return getApproval(execution.tenantId(), id);
     }
 
@@ -386,10 +425,29 @@ public class SoarStore {
 
     private void finishNode(String nodeRunId, String status,
                             Map<String, Object> output, String error) {
-        jdbc.update("UPDATE soar_node_execution SET status = ?, output_json = ?, error = ?, "
+        int updated = jdbc.update("UPDATE soar_node_execution SET status = ?, output_json = ?, error = ?, "
                         + "finished_at = CURRENT_TIMESTAMP WHERE id = ? "
                         + "AND status IN ('running','waiting','waiting_human','retrying')",
                 status, json(output), error, nodeRunId);
+        if (updated != 1) throw new IllegalStateException("SOAR 节点执行状态已经变化: " + nodeRunId);
+    }
+
+    private void requireLeaseForUpdate(SoarExecution execution) {
+        if (!hasLease(execution, true)) throw new SoarLeaseLostException(execution.id());
+    }
+
+    private boolean hasLease(SoarExecution execution, boolean lock) {
+        if (execution.leaseOwner() == null || execution.leaseOwner().isBlank()) return false;
+        String suffix = lock ? " FOR UPDATE" : "";
+        List<String> rows = jdbc.queryForList("SELECT id FROM soar_execution WHERE id = ? "
+                        + "AND status = 'running' AND cancel_requested = FALSE AND lease_owner = ? "
+                        + "AND version = ? AND lease_expires_at >= CURRENT_TIMESTAMP" + suffix,
+                String.class, execution.id(), execution.leaseOwner(), execution.fencingToken());
+        return rows.size() == 1;
+    }
+
+    private void requireTransition(int moved, SoarExecution execution) {
+        if (moved != 1) throw new SoarLeaseLostException(execution.id());
     }
 
     private List<SoarExecution.NodeRun> listNodeRuns(String executionId) {
@@ -402,6 +460,7 @@ public class SoarStore {
                 value.playbookRevision(), value.graphSnapshot(), value.objectType(), value.objectId(), value.eventType(),
                 value.triggerMessageId(), value.triggerEnvelope(), value.payloadSnapshot(), value.status(),
                 value.currentNodeId(), value.nextRunAt(), value.error(), value.actor(), value.cancelRequested(),
+                value.leaseOwner(), value.leaseExpiresAt(), value.fencingToken(),
                 value.createdAt(), value.updatedAt(), value.startedAt(), value.finishedAt(), runs);
     }
 
@@ -423,7 +482,8 @@ public class SoarStore {
                 rs.getString("object_id"), rs.getString("event_type"), rs.getString("trigger_message_id"),
                 trigger, payload, rs.getString("status"), rs.getString("current_node_id"), instant(rs, "next_run_at"),
                 rs.getString("error"), rs.getString("actor"),
-                rs.getBoolean("cancel_requested"), instant(rs, "created_at"), instant(rs, "updated_at"),
+                rs.getBoolean("cancel_requested"), rs.getString("lease_owner"), instant(rs, "lease_expires_at"),
+                rs.getLong("version"), instant(rs, "created_at"), instant(rs, "updated_at"),
                 instant(rs, "started_at"), instant(rs, "finished_at"), List.of());
     }
 

@@ -26,7 +26,9 @@ LogstashConfigGenerator.generatePipeline(LogSource, ParserTemplate)
 ~~~text
 source .conf
   ├─ 解析成功 → siem-events-* + Kafka siem-events
-  │                       └─ Flink DetectionJob → siem-alerts
+  │                       └─ Flink 严格解析
+  │                            ├─ 合法事件 → DetectionJob → siem-alerts
+  │                            └─ 坏 JSON/时间戳 → Kafka siem-events-dlq
   └─ Grok/date 失败 → siem-events-raw-*（不写 Kafka）
 ~~~
 
@@ -513,7 +515,7 @@ source.ip 是 ip 类型，event.original/message 保留文本能力，related_ev
 
 ### 4.3 Flink 先扁平化 JSON，再按事件时间计算
 
-实现位置：`flink/src/main/java/com/siem/EventParser.java`、`Event.java`、`DetectionJob.java`。
+实现位置：`flink/src/main/java/com/siem/EventParser.java`、`EventParsingProcessFunction.java`、`Event.java`、`DetectionJob.java`。
 
 Logstash JSON 可能产生嵌套对象，但规则 YAML 使用 source.ip、event.action 这样的点分字段。EventParser 递归展开 Map，List 保持原样：
 
@@ -534,7 +536,15 @@ public static Event parseEvent(String json) throws Exception {
 }
 ~~~
 
-缺失或非法 @timestamp 会回退到处理时间，这是故障可运行性选择，但会牺牲事件排序准确性；正常路径仍以 Logstash date filter 生成的 ISO-8601 @timestamp 为准。
+解析不再用 processing time 掩盖缺失或非法 `@timestamp`。`EventParsingProcessFunction` 捕获坏 JSON/事件时间异常，正常 Event 输出到主流，失败记录输出到 Flink side output，再以 `AT_LEAST_ONCE` 写入 `siem-events-dlq`：
+
+~~~java
+ParseOutcome outcome = parse(value);
+if (outcome.event() != null) output.collect(outcome.event());
+else context.output(DLQ, outcome.dlqRecord());
+~~~
+
+DLQ 记录包含确定性 SHA-256 `dlq.id`、stage、异常类型/消息、失败时间、原始消息与 64 KiB 截断标记。这种分流同时保护两件事：毒消息不会触发 Flink restart loop，也不会以伪造的“当前时间”进入窗口、CEP 和事件排序。DLQ 当前只负责隔离/观测，修复后必须从受控入口重新产生标准事件。
 
 ## 5. Flink 规则如何从 YAML 变成不同算子
 
@@ -739,7 +749,32 @@ for (String id : ids) {
 
 因此“只提交 verdict”的批量请求不会因为缺少版本号全部失败，单条并发冲突也会被明确返回，而不是静默覆盖。
 
-## 7. 案件不是一次 ES 双写：PostgreSQL 事实 + outbox 镜像
+## 7. 案件一致性：PostgreSQL 事实、同步保护与 outbox 收敛
+
+当前实现不是“只写 PostgreSQL、完全异步镜像”的纯 outbox，也不是把 PostgreSQL 和 Elasticsearch 假装成一个事务。`CaseService` 仍保留同步 ES 路径，用于创建时立即建立可见镜像、更新时利用 `_seq_no/_primary_term` 拒绝并发覆盖，以及维护告警的 `alert.case_id`；同一笔 PostgreSQL 事务还写入 outbox，进程或网络故障后由 dispatcher 重试。准确的数据流如下：
+
+```mermaid
+flowchart TD
+    CREATE["创建案件"] --> CPG["PG 事务<br/>cases + case_alerts + upsert outbox"]
+    CPG --> CES["同步创建 ES 案件镜像"]
+    CES --> CMARK["逐条写 alert.case_id"]
+    CMARK --> CLIFE["发布 case.created"]
+
+    UPDATE["更新案件"] --> UES["ES 乐观锁更新<br/>seq_no + primary_term"]
+    UES --> UPG["PG version 更新<br/>+ upsert outbox"]
+    UPG --> ULIFE["发布 case.updated"]
+
+    DELETE["删除空案件"] --> DPG["PG 删除<br/>+ delete outbox"]
+    DPG --> DES["同步 ES 删除<br/>2xx / 404 均为成功"]
+
+    CPG -.-> OUTBOX["CaseMirrorDispatcher<br/>失败退避重试"]
+    UPG -.-> OUTBOX
+    DPG -.-> OUTBOX
+    OUTBOX --> MIRROR[("Elasticsearch siem-cases")]
+    RECON["定时全量 reconcile"] --> MIRROR
+```
+
+这张图中的三条主路径顺序不同：创建以 PostgreSQL 为先，更新以 ES 乐观锁为先，删除以 PostgreSQL 为先。任何一条都不提供跨 PG/ES/Kafka 的原子提交；补偿、outbox 与定时 reconcile 只负责暴露失败并让状态收敛。
 
 ### 7.1 案件主表、关系表和 outbox 在同一数据库事务中落地
 
@@ -809,7 +844,17 @@ control.completeCaseMirror(id, owner, true, null, Instant.now());
 
 ES 失败时按 min(300s, 2^attempts) 计算下一次时间并保留清洗后的错误；进程重启后 pending/failed 记录仍在数据库，不需要依赖原 JVM 内存。
 
-### 7.3 告警 case_id 是快速索引，业务层仍有补偿
+DELETE 镜像把任意 HTTP 2xx 和 404 都视为幂等成功：2xx 覆盖 Elasticsearch 可能返回的多种成功状态，404 表示目标已经不存在；其他状态才进入退避重试。对应回归测试直接模拟 200，防止再次把成功删除错误判断为失败。
+
+需要注意，当前 claim SQL 使用 `FOR UPDATE`，并没有使用 `SKIP LOCKED`；多个 dispatcher 实例不会同时成功处理同一行，但可能在领取阶段等待数据库行锁。这对当前规模可用，不应在架构文档中写成无阻塞的横向领取。
+
+### 7.3 同步 ES 路径承担即时校验，outbox 承担故障后收敛
+
+创建时 `control.createCase` 会在 PostgreSQL 中写事实和 outbox，随后 `CaseService` 同步创建 ES 案件文档；如果同步 ES 写失败，会删除刚创建的 PostgreSQL 案件，并由 delete outbox 继续清理可能存在的镜像。更新的顺序相反：先对 ES 文档做 `_seq_no/_primary_term` 乐观锁更新，再以 PostgreSQL `version` 更新关系事实并排入最新镜像。删除则先删除 PostgreSQL 事实并排入 delete outbox，之后同步 ES 删除失败只记录警告，交给 dispatcher 重试。
+
+因此 outbox 是恢复机制，不是当前用户请求的唯一写路径。控制面读取优先使用 PostgreSQL；ES 中的 `siem-cases` 是兼容检索镜像，而事件时间线仍直接查询 `siem-events-*`。
+
+### 7.4 告警 case_id 是快速索引，业务层仍有补偿
 
 实现位置：`src/main/java/com/xscsiem/hsiem_platform/investigation/CaseService.java`。
 
@@ -1040,8 +1085,10 @@ return r.status === 204 || !raw.trim() ? null : body
 | generateInput/generateFilter/generatePipeline 语法与 raw 分支 | LogstashConfigGeneratorTest |
 | 激活备份、配置校验、失败回滚、端口冲突 | ActivationCoordinatorTest、LogSourceServiceTest |
 | 条件树、窗口边界、CEP、基线、抑制状态 | RuleEngineTest、WindowRuleTest、BaselineAnomalyTest、SuppressionTest |
+| Flink poison event、事件时间门禁和 DLQ 契约 | EventParsingProcessFunctionTest |
 | 确定性告警 ID、partial update、处置状态机 | DetectionJobSinkTest、AlertServiceTest |
-| 案件关系、版本冲突、控制面迁移 | CaseServiceTest、ControlPlaneStoreTest、PostgresMigrationContainerTest |
+| 案件关系、版本冲突、镜像删除 2xx 和控制面迁移 | CaseServiceTest、CaseMirrorDispatcherTest、ControlPlaneStoreTest、PostgresMigrationContainerTest |
+| SOAR fencing、续租、重试历史和生命周期恢复 | SoarRuntimeIntegrationTest、SoarWorkerTest |
 | 用户视图、首次改密、Bearer 权限 | AuthUserViewTest、AuthServiceTest、SecurityApiTest |
 | 健康指标、通知频控、关键度原子批量 | DataHealthServiceTest、NotificationServiceTest、CriticalityServiceTest |
 

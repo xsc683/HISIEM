@@ -195,7 +195,7 @@ Playbook 和执行均以 V11/V12 PostgreSQL 表为准，不再从 `infra/soar/*.
 
 1. 管理员在 `/soar/playbooks/new` 选择告警或案件入口以及 created/updated 生命周期事件；创建后后端自动生成唯一 Start/End。
 2. 在 `/soar/playbooks/:id/edit` 添加 Condition、Business、Human、Wait，从输出 Handle 连接下游；条件字段和业务动作只从字典下拉框选择。
-3. 草稿自动保存；发布时确认所有路径可达且收敛到 End，Condition 有 true/false，Human 有 approve/reject。发布成功即启用。
+3. 草稿自动保存；从编辑路由离开时会等待最新 revision 保存成功，失败则留在当前页，刷新/关闭浏览器时对未保存内容给出确认。发布时确认所有路径可达且收敛到 End，Condition 有 true/false，Human 有 approve/reject。发布成功即启用。
 4. 触发一次真实告警或案件变更；Flink/控制面在事实存储成功后将生命周期消息写入 Kafka，消费者自动创建执行，不从页面手工启动。
 5. 在 `/soar/executions` 找到对应 event type 和对象 ID，进入详情核对 payload 快照、图快照以及每个节点解析后的输入/输出。
 6. Human 节点进入 `waiting_human` 后到 `/soar/approvals` 批准或拒绝，确认原执行沿对应分支恢复；Wait 节点到期前不应忙轮询执行动作。
@@ -214,10 +214,12 @@ Playbook 和执行均以 V11/V12 PostgreSQL 表为准，不再从 `infra/soar/*.
 - 写操作带真实操作者和审计记录；无权限请求返回 401/403，不伪装成空列表。
 - SOAR 未知节点/action、不可达节点、坏边、循环和错误动作参数在发布阶段被拒绝；审批并发返回 409；历史执行继续使用启动时图快照。
 - Worker 用租约领取到期节点；Human/Wait 释放租约，取消与 Playbook 停用使用不同状态。
+- Worker 执行长节点时续租；状态提交必须匹配 owner、fencing token 和未过期租约，过期 Worker 不能回写新 owner 已接管的执行。
+- Playbook 编辑页离开前保存最新图；保存失败阻止路由跳转，未保存状态触发浏览器关闭确认。
 - `X-Tenant-ID` 必须通过成员关系校验；Playbook、执行、审批和 message 去重不能跨租户读取。
 - SOAR 不订阅 `siem-events`；Flink 只有在告警 ES 更新成功后才发布 `alert.created`。
 - 页面和 API 不出现 Connector、外部设备、子 Playbook、loop/map、并行网关、灰度或四眼发布等未实现语义。
-- 变更后执行根项目测试、Flink 测试、前端构建；涉及 `infra/` 时再执行健康扫描和端到端冒烟。
+- 变更后执行根项目测试、Flink 测试、前端单元测试、生产构建和 Playwright E2E；涉及 `infra/` 时再执行健康扫描和端到端冒烟。GitHub Actions 对这三类工程门禁并行执行。
 
 ## 5. 不在当前契约中的内容
 

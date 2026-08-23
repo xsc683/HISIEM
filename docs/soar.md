@@ -12,27 +12,25 @@
 
 ## 2. 运行链路
 
-```text
-Flink 检测结果
-  │ AlertElasticsearchIndexer：partial update 成功后才向下游 emit
-  ▼
-siem-alerts ───────────────> siem-alert-lifecycle (alert.created)
+```mermaid
+flowchart TD
+    FLINK["Flink 检测结果"] --> INDEXER["AlertElasticsearchIndexer<br/>安全 partial update / 完整 upsert"]
+    INDEXER --> ALERTS[("Elasticsearch siem-alerts")]
+    ALERTS -->|"ES 2xx 后 alert.created"| ALERT_LIFE["siem-alert-lifecycle"]
 
-AlertService / CaseService
-  │ ES/控制面更新成功返回后发布
-  ├────────────────────────> siem-alert-lifecycle (alert.updated)
-  └────────────────────────> siem-case-lifecycle  (case.created/updated)
-                                      │
-                                      ▼ consumer group: siem-soar-runtime
-                           SoarKafkaConsumer → contract validate
-                                      │ published + enabled + event type
-                                      ▼
-                              soar_execution (pending)
-                                      │ lease claim
-                                      ▼
-                              SoarWorker → one durable node
-                         ┌────────────┼──────────────┐
-                      waiting    waiting_human    next node/end
+    CONTROL["AlertService / CaseService"] -->|"告警处置与案件同步兼容路径"| ES[("Elasticsearch")]
+    CONTROL -->|"案件事实 + mirror outbox"| PG_CASE[("PostgreSQL")]
+    PG_CASE --> DISPATCH["CaseMirrorDispatcher"] --> ES
+    CONTROL -->|"alert.updated"| ALERT_LIFE
+    CONTROL -->|"case.created / case.updated"| CASE_LIFE["siem-case-lifecycle"]
+
+    ALERT_LIFE --> CONSUMER["SoarKafkaConsumer<br/>group: siem-soar-runtime"]
+    CASE_LIFE --> CONSUMER
+    CONSUMER -->|"契约校验 + published/enabled 匹配"| EXEC[("soar_execution pending")]
+    EXEC -->|"单条租约 + fencing token"| WORKER["SoarWorker<br/>一次推进一个 durable node"]
+    WORKER --> WAIT["waiting"]
+    WORKER --> HUMAN["waiting_human"]
+    WORKER --> NEXT["next node / success / failed"]
 ```
 
 SOAR 从不订阅 `siem-events`。Flink 的 `AlertElasticsearchIndexer` 用异步 HTTP Update API 写告警：文档不存在时使用完整 `upsert`，已存在时只提交移除 `alert.status/verdict/operator/status_updated_at/case_id` 后的 partial `doc`，且不能设置 `doc_as_upsert=true`，否则首次创建也会错误地使用裁剪文档。只有 ES 返回 2xx 才把原告警交给 `AlertLifecycleEventMapper` 和 Kafka Sink，因此新告警不会在 ES 尚不可查询时触发业务动作。Kafka Sink 使用 checkpoint 支持的 `AT_LEAST_ONCE`；重复消息由数据库唯一键去重。
@@ -136,14 +134,14 @@ V11/V12 当前表：
 
 消费者组 `siem-soar-runtime` 读取两个 lifecycle topic。唯一约束 `(tenant_id, playbook_id, trigger_message_id)` 保证同一消息对同一 Playbook 只建一个实例，不影响同一消息匹配多个 Playbook。
 
-Worker 每次只执行一个持久节点。领取使用带过期时间的条件更新；多实例竞争同一候选时只有一个能取得租约。Engine 从 Registry 选择 Handler，Handler 只返回统一结果，不能直接操作流程状态。每次失败重试都生成新的 attempt 并保留历史，同一逻辑 visit 共享幂等键。内部控制面动作与 `soar_action_receipt` 处于同一 PostgreSQL 事务；未来外部 Connector 仍需接收该键或提供补偿协议。
+Worker 每次只领取并立即执行一个持久节点，避免批量领取后排队导致后续租约尚未开始执行就过期。每次 claim 都递增 `soar_execution.version` 作为 fencing token；Engine 的推进、成功、失败、等待、重试和审批提交都必须同时匹配 lease owner、token、未取消状态和未过期时间。长节点执行期间独立心跳按租约约三分之一周期续租；续租失败后，旧 Worker 即使稍后返回结果也会被状态 SQL 拒绝，不能覆盖新 owner。Engine 从 Registry 选择 Handler，Handler 只返回统一结果，不能直接操作流程状态。每次失败重试都生成新的 attempt 并保留历史，同一逻辑 visit 共享幂等键。内部控制面动作与 `soar_action_receipt` 处于同一 PostgreSQL 事务；未来外部 Connector 仍需接收该键或提供补偿协议。
 
 ## 8. API 和页面
 
 页面：
 
 - `/soar/playbooks`：状态、启停、入口事件、节点数和 revision；
-- `/soar/playbooks/new`、`/soar/playbooks/:id/edit`：Vue Flow 画布、类型化检查器、自动保存和发布错误；
+- `/soar/playbooks/new`、`/soar/playbooks/:id/edit`：Vue Flow 画布、类型化检查器、自动保存、离开前保存/关闭确认和发布错误；
 - `/soar/executions`、`/soar/executions/:id`：目标对象、当前节点、payload/图快照和每个节点完整 I/O；
 - `/soar/approvals`：待审批列表、提示、批准/拒绝和备注。
 

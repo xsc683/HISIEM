@@ -93,9 +93,9 @@ SSH 认证日志已带出部分字段,下列技术"数据上可见"但暂无检�
 
 ## 4. 覆盖维护流程(checklist)
 
-检测即代码:规则的 MITRE tags 单一来源为 RuleRegistry / 规则 YAML。新增或修改覆盖标注时按此流程,保证矩阵 / Navigator / 代码三者自洽:
+检测即代码：规则的 MITRE tags 单一来源为 `infra/rules/*.yaml`；`RuleRegistry` 只保存加载后构造的单事件规则，不再维护第二份元数据。新增或修改覆盖标注时按此流程，保证矩阵、Navigator 与运行配置自洽：
 
-1. **改 tags**:在 RuleRegistry(或规则 YAML)中新增/修改规则的 MITRE tags(如 `attack.t1110.001`)。
+1. **改 tags**：在对应规则 YAML 中新增或修改 MITRE tags（如 `attack.t1110.001`）。
 2. **更新 §1 矩阵行**:同步覆盖矩阵对应技术行的状态与检测规则列。
 3. **更新 §2 Navigator JSON**:同步对应 techniqueID 的 score / color / comment。
 4. **提交**:连同规则变更一起 commit + PR,附覆盖变化说明。

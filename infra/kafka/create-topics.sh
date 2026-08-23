@@ -21,7 +21,7 @@ set -euo pipefail
 
 KAFKA_CMD="docker exec siem-kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092"
 CONFIG_CMD="docker exec siem-kafka /opt/kafka/bin/kafka-configs.sh --bootstrap-server localhost:9092"
-TOPICS=("siem-events" "siem-alert-lifecycle" "siem-case-lifecycle")
+TOPICS=("siem-events" "siem-events-dlq" "siem-alert-lifecycle" "siem-case-lifecycle")
 PARTITIONS=3
 RETENTION_MS=259200000   # 3 天
 

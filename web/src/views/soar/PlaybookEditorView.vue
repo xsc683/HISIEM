@@ -25,8 +25,8 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { message } from 'ant-design-vue'
-import { useRoute, useRouter } from 'vue-router'
-import { createSoarPlaybook, getSoarActionDictionary, getSoarFieldDictionary, getSoarPlaybook, publishSoarPlaybook, updateSoarPlaybook } from '../../api/index.js'
+import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
+import { createSoarPlaybook, getSoarActionDictionary, getSoarFieldDictionary, getSoarPlaybook, hasSession, publishSoarPlaybook, updateSoarPlaybook } from '../../api/index.js'
 import PageHeader from '../../components/common/PageHeader.vue'
 import SoarMvpCanvas from '../../components/soar/SoarMvpCanvas.vue'
 import { cloneGraph } from '../../components/soar/soarGraph.js'
@@ -49,7 +49,12 @@ async function load() { try { const value = await getSoarPlaybook(route.params.i
 async function create() {
   if (!form.name.trim() || !form.eventTypes.length) return message.error('请填写名称并选择生命周期事件')
   saving.value = true
-  try { const value = await createSoarPlaybook({ name: form.name, description: form.description, entryType: form.entryType, eventTypes: form.eventTypes }); message.success('草稿已创建'); await router.replace(`/soar/playbooks/${encodeURIComponent(value.id)}/edit`) } catch (cause) { message.error(cause.message) } finally { saving.value = false }
+  try {
+    const value = await createSoarPlaybook({ name: form.name, description: form.description, entryType: form.entryType, eventTypes: form.eventTypes })
+    assign(value); dirty.value = false; loaded.value = true; saveState.value = `revision ${value.revision}`
+    message.success('草稿已创建')
+    await router.replace(`/soar/playbooks/${encodeURIComponent(value.id)}/edit`)
+  } catch (cause) { message.error(cause.message) } finally { saving.value = false }
 }
 function saveNow() {
   window.clearTimeout(saveTimer)
@@ -81,7 +86,27 @@ async function publish() {
   try { const saved = await saveNow(); if (!saved || dirty.value) return; const value = await publishSoarPlaybook(form.id, form.revision); assign(value); dirty.value = false; saveState.value = `已发布 · revision ${value.revision}`; message.success('Playbook 已发布并启用') } catch (cause) { message.error(`发布失败：${cause.message}`) } finally { publishing.value = false }
 }
 async function changeEntryType(value) { form.eventTypes = [`${value}.created`]; await dictionaries() }
+async function saveBeforeRouteLeave() {
+  window.clearTimeout(saveTimer)
+  if ((dirty.value || activeSave) && !hasSession()) {
+    message.warning('会话已结束，未保存草稿无法提交')
+    return true
+  }
+  const saved = await saveNow()
+  if (!saved || dirty.value) {
+    message.error('草稿尚未保存，已留在当前页面')
+    return false
+  }
+  return true
+}
+function warnBeforeBrowserLeave(event) {
+  if (!dirty.value && !activeSave) return
+  event.preventDefault()
+  event.returnValue = ''
+}
+onBeforeRouteLeave(saveBeforeRouteLeave)
 onMounted(() => { if (isNew.value) { loaded.value = true; dictionaries() } else load() })
-onBeforeUnmount(() => window.clearTimeout(saveTimer))
+onMounted(() => window.addEventListener('beforeunload', warnBeforeBrowserLeave))
+onBeforeUnmount(() => { window.clearTimeout(saveTimer); window.removeEventListener('beforeunload', warnBeforeBrowserLeave) })
 </script>
 <style scoped>.meta-grid { display:grid; grid-template-columns:1.2fr .6fr 1fr 1.4fr; gap:14px; }.save-state { color:#6c7f8e; font-size:12px; }</style>

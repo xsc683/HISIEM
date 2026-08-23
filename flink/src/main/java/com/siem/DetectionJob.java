@@ -108,8 +108,9 @@ public class DetectionJob {
                 + ": 共 " + decls.size() + " 条,enabled " + enabled.size() + " 条");
 
 
+        String kafkaBootstrap = System.getenv().getOrDefault("SIEM_KAFKA_BOOTSTRAP", "kafka:9092");
         KafkaSourceBuilder<String> sourceBuilder = KafkaSource.<String>builder()
-                .setBootstrapServers(System.getenv().getOrDefault("SIEM_KAFKA_BOOTSTRAP", "kafka:9092"))
+                .setBootstrapServers(kafkaBootstrap)
                 .setTopics("siem-events")
                 .setGroupId("siem-detection")
                 .setStartingOffsets(
@@ -130,9 +131,20 @@ public class DetectionJob {
                         .uid("kafka-source");
 
         // 解析事件:扁平字段 + 事件时间戳(供事件时间窗口使用)
-        DataStream<Event> parsed = events
-                .map(EventParser::parseEvent)
+        SingleOutputStreamOperator<Event> parsed = events
+                .process(new EventParsingProcessFunction())
                 .uid("event-parser");
+        KafkaSinkBuilder<String> dlqSink = KafkaSink.<String>builder()
+                .setBootstrapServers(kafkaBootstrap)
+                .setRecordSerializer(KafkaRecordSerializationSchema.builder()
+                        .setTopic(System.getenv().getOrDefault("SIEM_EVENTS_DLQ_TOPIC", "siem-events-dlq"))
+                        .setValueSerializationSchema(new SimpleStringSchema())
+                        .build())
+                .setDeliveryGuarantee(DeliveryGuarantee.AT_LEAST_ONCE);
+        applyKafkaSecurity(dlqSink);
+        parsed.getSideOutput(EventParsingProcessFunction.DLQ)
+                .sinkTo(dlqSink.build())
+                .uid("event-parser-dlq-kafka");
 
         // 共享事件时间流:窗口/CEP/基线三个分支共用同一 watermark(有界乱序 10s + idle 60s)
         DataStream<Event> parsedTimed = parsed
@@ -259,7 +271,7 @@ public class DetectionJob {
                 .uid("es-index-and-forward");
 
         KafkaSinkBuilder<String> lifecycleSink = KafkaSink.<String>builder()
-                .setBootstrapServers(System.getenv().getOrDefault("SIEM_KAFKA_BOOTSTRAP", "kafka:9092"))
+                .setBootstrapServers(kafkaBootstrap)
                 .setRecordSerializer(KafkaRecordSerializationSchema.builder()
                         .setTopic(System.getenv().getOrDefault(
                                 "SIEM_ALERT_LIFECYCLE_TOPIC", "siem-alert-lifecycle"))

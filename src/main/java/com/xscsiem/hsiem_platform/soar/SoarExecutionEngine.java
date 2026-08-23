@@ -40,7 +40,18 @@ public class SoarExecutionEngine {
 
     /** Executes one durable node attempt. A later worker claim advances the next node. */
     public void process(SoarExecution claimed) {
+        try {
+            processOwned(claimed);
+        } catch (SoarLeaseLostException lost) {
+            LOG.warn("SOAR stale worker result fenced execution={} owner={} token={}",
+                    claimed.id(), claimed.leaseOwner(), claimed.fencingToken());
+        }
+    }
+
+    private void processOwned(SoarExecution claimed) {
+        store.requireLease(claimed);
         SoarExecution execution = store.getExecution(claimed.id());
+        store.requireLease(execution);
         if (execution.cancelRequested() || "cancelled".equals(execution.status())) return;
         PlaybookGraph.Node node = execution.graphSnapshot().nodes().stream()
                 .filter(candidate -> candidate.id().equals(execution.currentNodeId())).findFirst()
@@ -56,7 +67,7 @@ public class SoarExecutionEngine {
         try {
             Map<String, Object> resolvedConfig = templates.resolveMap(node.config(), context.templateVariables());
             if (nodeRun == null) {
-                SoarStore.StartAttempt started = store.startNode(execution.id(), node,
+                SoarStore.StartAttempt started = store.startNode(execution, node,
                         context.persistedInput(resolvedConfig), retryPolicy.maxAttempts());
                 nodeRun = started.run();
                 if (started.exhausted()) {
@@ -66,15 +77,17 @@ public class SoarExecutionEngine {
                 }
                 context = context(execution, node, nodeRun, outputs, variables);
                 resolvedConfig = templates.resolveMap(node.config(), context.templateVariables());
-                store.updateNodeInput(nodeRun.id(), context.persistedInput(resolvedConfig));
+                store.updateNodeInput(execution, nodeRun.id(), context.persistedInput(resolvedConfig));
             }
             SoarNodeResult result = handler.execute(context, resolvedConfig);
             commit(execution, node, nodeRun, handler, result);
+        } catch (SoarLeaseLostException lost) {
+            throw lost;
         } catch (RuntimeException e) {
             String message = message(e);
             if (nodeRun != null && retryable(e) && nodeRun.attempt() < retryPolicy.maxAttempts()) {
                 Instant nextAttempt = Instant.now().plus(retryPolicy.delayAfter(nodeRun.attempt()));
-                store.scheduleRetry(execution.id(), nodeRun.id(), message, nextAttempt);
+                store.scheduleRetry(execution, nodeRun.id(), message, nextAttempt);
                 retried.increment();
                 LOG.warn("SOAR node retry scheduled execution={} node={} attempt={} next={}: {}",
                         execution.id(), node.id(), nodeRun.attempt(), nextAttempt, message);
@@ -95,21 +108,21 @@ public class SoarExecutionEngine {
                 if (!handler.outgoingBranches().contains(result.branch())) {
                     throw new IllegalStateException("节点 " + node.id() + " 返回了非法分支: " + result.branch());
                 }
-                store.advance(execution.id(), nodeRun.id(), result.output(),
+                store.advance(execution, nodeRun.id(), result.output(),
                         router.next(execution.graphSnapshot(), node.id(), result.branch()));
             }
             case COMPLETE -> {
                 if (!handler.outgoingBranches().isEmpty()) {
                     throw new IllegalStateException("只有终止节点可以结束执行: " + node.id());
                 }
-                store.succeed(execution.id(), nodeRun.id(), result.output());
+                store.succeed(execution, nodeRun.id(), result.output());
                 succeeded.increment();
             }
             case WAIT -> {
                 if (result.resumeAt() == null || !result.resumeAt().isAfter(Instant.now())) {
                     throw new IllegalStateException("等待节点必须返回未来的恢复时间");
                 }
-                store.waitUntil(execution.id(), nodeRun.id(), result.resumeAt());
+                store.waitUntil(execution, nodeRun.id(), result.resumeAt());
             }
             case WAIT_HUMAN -> {
                 if (result.approvalPrompt() == null || result.approvalPrompt().isBlank()) {
@@ -147,7 +160,7 @@ public class SoarExecutionEngine {
 
     private void terminalFailure(SoarExecution execution, PlaybookGraph.Node node,
                                  SoarExecution.NodeRun run, String message, RuntimeException cause) {
-        store.fail(execution.id(), run == null ? null : run.id(), message);
+        store.fail(execution, run == null ? null : run.id(), message);
         failed.increment();
         if (cause == null) {
             LOG.error("SOAR node failed execution={} node={} type={}: {}",

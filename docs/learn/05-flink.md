@@ -31,9 +31,9 @@
 `DetectionJob.java` 的对应:
 
 ```
-DataStream<Event> parsed = env
+SingleOutputStreamOperator<Event> parsed = env
     .fromSource(KafkaSource, ...)      // Source:从 Kafka siem-events 读取事件
-    .map(EventParser::parseEvent)      // Operator:解析事件(扁平化 + 提取时间戳)
+    .process(EventParsingProcessFunction) // Operator:解析事件；毒消息送 side output DLQ
     .flatMap(new DetectionFunction(...)) // Operator:逐条规则匹配(1 事件 → 0/多 告警)
     .sinkTo(ES)                        // Sink:告警写入 ES siem-alerts
 ```
@@ -65,11 +65,11 @@ DataStream<Event> parsed = env
 
 | 窗口类型 | 定义 | 适用场景 | 本项目 |
 | --- | --- | --- | --- |
-| **tumbling(滚动)** | 固定对齐、不重叠的等宽窗口 | 定长周期计数 | 暴力破解规则(5 分钟) |
-| **sliding(滑动)** | 固定长度、固定步进的窗口(有重叠) | 跨边界连续监控 | 设计稿 P2(修边界盲区) |
+| **tumbling(滚动)** | 固定对齐、不重叠的等宽窗口 | 定长周期计数 | 未配置 `slidingMinutes` 的窗口规则 |
+| **sliding(滑动)** | 固定长度、固定步进的窗口(有重叠) | 跨边界连续监控 | 当前暴力破解规则：5 分钟窗口、1 分钟步长 |
 | **session(会话)** | 按活动间隙聚类 | 用户会话/扫描突发 | 未使用 |
 
-**场景举例(滚动窗口的边界盲区)**:滚动窗口固定对齐,攻击者在 4:59 失败 4 次、5:01 失败 1 次——两次分别落在两个对齐窗口中,各自未达阈值 5,但合计已达 5 次,因此滚动窗口**不触发告警**。滑动窗口因窗口连续滑动,可识别该跨边界模式,代价是约 2-3 倍的状态占用。
+**场景举例(滚动窗口的边界盲区)**:滚动窗口固定对齐,攻击者在 4:59 失败 4 次、5:01 失败 1 次——两次分别落在两个对齐窗口中,各自未达阈值 5,但合计已达 5 次,因此滚动窗口**不触发告警**。当前规则使用滑动窗口覆盖该跨边界模式，再用告警抑制减少相邻窗口重复；代价是维护重叠窗口状态。
 
 ### 3.5 容错:checkpoint 与 savepoint
 
@@ -81,7 +81,7 @@ DataStream<Event> parsed = env
 - **exactly-once**:每条数据精确处理一次(不重不漏)。
 - **at-least-once**:每条数据至少处理一次(可能重复)。
 
-**场景举例(本项目的一致性边界)**:Flink 的 ES sink 基于异步 sink API,只提供 **at-least-once** 保证——作业重启重放部分历史时,同一告警可能被写入两次。设计稿 P0 的解决方案是为告警设置**确定性 `_id`**(如 `rule_id + 实体 + 时间桶` 的哈希),使重放写入变成幂等覆盖,而非新增重复文档。这是本项目防重复告警的核心机制。
+**场景举例(本项目的一致性边界)**:Flink 的 ES 写入和 lifecycle Kafka Sink 采用 **at-least-once** 语义——作业恢复可能重放少量在途记录。当前实现以 `rule_id + 实体 + 事件时间` 生成确定性 `_id`，使 ES 重放收敛到同一文档；已有告警只更新检测字段，保护分析师状态。lifecycle 重复消息再由 execution 唯一键去重。
 
 ### 3.6 背压(backpressure)
 
@@ -93,27 +93,30 @@ DataStream<Event> parsed = env
 
 `flink/src/main/java/com/siem/DetectionJob.java` 完整数据流:
 
-```
-env.enableCheckpointing(60_000)                // 每 60s 保存状态快照(容错)
-KafkaSource("siem-events")                     // Source:订阅事件
-  └─ setStartingOffsets(committedOffsets)      // 从已提交偏移量继续(不重放历史)
-  └─ .map(EventParser::parseEvent)             // 解析:扁平化 + 提取时间戳
-       ├─ 分支 A:单事件规则
-       │   .flatMap(DetectionFunction)         // 逐条规则匹配 → 告警
-       └─ 分支 B:时间窗口规则(暴力破解)
-           .assignTimestampsAndWatermarks(10s) // 事件时间 + 乱序容忍
-           .keyBy(source.ip)                   // 按源 IP 分组
-           .window(5min tumbling)              // 5 分钟滚动窗口
-           .process(WindowRuleFunction)        // 窗口关闭时统计 ≥5 次 → 告警
-       └─ .union(合并两分支告警) → ES sink(siem-alerts)
+```mermaid
+flowchart LR
+    K["KafkaSource siem-events<br/>committed offset / 首次 earliest"] --> PARSER{"EventParsingProcessFunction<br/>JSON + 严格事件时间"}
+    PARSER -->|"失败 side output"| DLQ["Kafka siem-events-dlq"]
+    PARSER -->|"合法事件"| SINGLE["DetectionFunction<br/>单事件规则"]
+    PARSER -->|"合法事件"| WM["watermark<br/>乱序 10s + idle 60s"]
+    WM --> WINDOW["Sliding Window<br/>5min / 1min"]
+    WM --> CEP["CEP 攻击序列"]
+    WM --> BASELINE["基线异常"]
+    SINGLE --> UNION["union 四类告警"]
+    WINDOW --> UNION
+    CEP --> UNION
+    BASELINE --> UNION
+    UNION --> INDEXER["AlertElasticsearchIndexer<br/>确定性 ID + 安全部分更新"]
+    INDEXER --> ALERT[("Elasticsearch siem-alerts")]
+    ALERT -->|"ES 2xx 后"| LIFE["Kafka siem-alert-lifecycle"]
 ```
 
 ## 5. 常见问题与设计关注点
 
 1. **`earliest()` 重放历史**:必须使用 `committedOffsets(EARLIEST)`,否则作业重启从头读取,重放全部历史事件,产生重复告警。
-2. **checkpoint 未持久化**:单机容器内 checkpoint 落在本地盘,容器重建即丢失,需挂载持久卷。
-3. **ES sink 无确定性 `_id`**:重放写入重复文档,需确定性 `_id` 实现幂等。
-4. **watermark 无 idle 处理**:日志暂停时窗口不关闭,需 `withIdleness`。
+2. **checkpoint 生命周期**:当前 Compose 已挂载 `flink-checkpoints` named volume；`docker compose down -v` 仍会删除它，普通 cancel 也按当前 cleanup mode 删除 checkpoint，升级恢复应使用 savepoint。
+3. **ES 至少一次重放**:当前使用确定性 `_id`，且已有告警只 partial update 检测字段；不能删掉该保护或覆盖分析师状态。
+4. **idle 分区拖住 watermark**:当前使用 `withIdleness(60s)`；新增事件时间分支必须复用同一 watermark 流，不能各自定义冲突语义。
 5. **算子无 `.uid()`**:缺少 `.uid()` 时,作业升级后无法从 savepoint 恢复状态,需为所有有状态算子设置。
 
 ## 6. 动手验证
@@ -125,14 +128,14 @@ docker exec siem-flink-jobmanager flink list
 # 访问 Web UI 查看算子、checkpoint、背压情况
 # 浏览器打开 http://localhost:8081
 
-# 取消后重新提交(验证 checkpoint 恢复)
-docker exec siem-flink-jobmanager flink cancel <JobID>
-docker exec siem-flink-jobmanager flink run -d /opt/flink/detection-job-1.0.jar
+# 用 savepoint 停止并恢复（普通 cancel 默认会删除 checkpoint）
+docker exec siem-flink-jobmanager flink stop -p file:///opt/flink/savepoints <JobID>
+docker exec siem-flink-jobmanager flink run -d -s file:///opt/flink/savepoints/<savepoint> /opt/flink/detection-job-1.0.jar
 ```
 
 ## 7. 自测
 
-1. 单事件规则与窗口规则在 Flink 中如何汇合?(两个分支通过 `union` 合并为同一告警流)
+1. 四类规则在 Flink 中如何汇合?（单事件、窗口、CEP、基线流通过 `union` 合并为同一告警流）
 2. watermark 的作用是什么?(标记"该时间之前的事件应已到达",决定窗口何时关闭)
 3. 单机小状态下为何不必使用 RocksDB 状态后端?(状态量 <1GB,默认 HashMap 状态后端足够)
 4. at-least-once 语义下如何防止重复告警?(确定性 `_id`,使重放写入变为幂等覆盖)

@@ -97,7 +97,10 @@ cp "$REPO/infra/kafka/create-topics.sh" "$DEPLOY/kafka/create-topics.sh"
 
 echo "==> 同步 elasticsearch 配置(供 compose bind mount,目录级 rsync 原地同步)"
 mkdir -p "$DEPLOY/elasticsearch"
-rsync -a --delete "$REPO/infra/elasticsearch/config/" "$DEPLOY/elasticsearch/config/"
+# elasticsearch.keystore 属于目标环境安全状态，禁止从开发机工作区复制；排除项受
+# rsync 保护，不会被 --delete 删除，已有目标 keystore 可继续由部署平台管理。
+rsync -a --delete --exclude 'elasticsearch.keystore' \
+    "$REPO/infra/elasticsearch/config/" "$DEPLOY/elasticsearch/config/"
 
 echo "==> 构建 Flink job jar (mvn clean package)"
 (cd "$DEPLOY/flink" && mvn -q clean package -DskipTests)
