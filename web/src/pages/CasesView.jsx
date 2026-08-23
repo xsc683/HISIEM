@@ -7,7 +7,7 @@ export default function CasesView({ cases, setCases, alerts, caseAlertDetails, c
   detailCase, setDetailCase, caseTimeline_, openCaseDetail, handleCreateCase, handleAggregate,
   handleInvestigateCase, handleResolveCase, handleAddToCase, handleRemoveFromCase, handleDeleteCase,
   caseOwner, setCaseOwner, evidenceTitle, setEvidenceTitle, evidenceUri, setEvidenceUri,
-  handleUpdateCaseMetadata, caseCollaborators, setCaseCollaborators, handleUpdateCollaborators }) {
+  handleUpdateCaseMetadata, caseCollaborators, setCaseCollaborators, handleUpdateCollaborators, onRunSoar }) {
   return (
     <div>
       <Card style={{ marginBottom: 16 }}>
@@ -73,6 +73,7 @@ export default function CasesView({ cases, setCases, alerts, caseAlertDetails, c
               {detailCase['case.status'] === 'open' && <Button type="primary" onClick={() => handleInvestigateCase(detailCase['case.id'])}>接手调查</Button>}
               {detailCase['case.status'] === 'investigating' && <Select placeholder="结案选 verdict…" style={{ width: 200 }} onChange={(v) => handleResolveCase(detailCase['case.id'], v)} options={['true_positive', 'false_positive', 'duplicate'].map((v) => ({ value: v, label: v }))} />}
               <Button onClick={() => handleAddToCase(detailCase['case.id'])}>追加勾选告警</Button>
+              <Button type="primary" onClick={() => onRunSoar('case', detailCase['case.id'])}>运行 SOAR</Button>
             </Space>
             <Divider style={{ margin: '12px 0' }}>处置负责人和证据</Divider>
             <Space wrap>

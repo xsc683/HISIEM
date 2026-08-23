@@ -2,7 +2,7 @@ import { Button, Card, Select, Space, Table, Tag, Typography } from 'antd'
 import { LOCAL_TIME_LABEL, RISK_COLOR, STATUS_TAG, TimeText, VERDICT_TAG, alertSource } from '../components/common.jsx'
 
 export default function AlertsView({ alerts, alertFilter, setAlertFilter, selAlerts, setSelAlerts, fpRates,
-  handleCreateCase, handleBatchStatus, handleBatchVerdict, handleAlertStatus, handleAlertVerdict, reloadAlerts }) {
+  handleCreateCase, handleBatchStatus, handleBatchVerdict, handleAlertStatus, handleAlertVerdict, reloadAlerts, onRunSoar }) {
   return (
     <Card>
       <Space direction="vertical" size="middle" style={{ width: '100%' }}>
@@ -23,6 +23,7 @@ export default function AlertsView({ alerts, alertFilter, setAlertFilter, selAle
                 <Button size="small" onClick={() => handleAlertStatus(r._id, 'acknowledged')}>ack</Button>
                 <Button size="small" onClick={() => handleAlertStatus(r._id, 'investigating')}>investigating</Button>
                 <Button size="small" danger onClick={() => handleAlertStatus(r._id, 'closed')}>close</Button>
+                <Button size="small" type="primary" onClick={() => onRunSoar('alert', r._id)}>运行 SOAR</Button>
                 <Select size="small" placeholder="verdict…" style={{ width: 160 }} onChange={(v) => handleAlertVerdict(r._id, v)} options={['true_positive', 'false_positive', 'duplicate'].map((v) => ({ value: v, label: v }))} />
               </Space>
               <pre style={{ background: '#0f1d33', color: '#a8d4ff', padding: 10, borderRadius: 6, fontSize: 12, maxHeight: 420, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{JSON.stringify(r, null, 2)}</pre>

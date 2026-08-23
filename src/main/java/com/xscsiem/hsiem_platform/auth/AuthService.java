@@ -37,9 +37,9 @@ public class AuthService {
 
     public static final Map<String, Set<String>> ROLE_PERMS = Map.of(
             "admin", Set.of("all"),
-            "analyst", Set.of("alerts:read", "alerts:write"),
+            "analyst", Set.of("alerts:read", "alerts:write", "soar:read", "soar:execute", "soar:approve"),
             "ops", Set.of("sources:write", "health:read"),
-            "audit", Set.of("read"));
+            "audit", Set.of("read", "soar:read"));
 
     private final BCryptPasswordEncoder encoder = new BCryptPasswordEncoder();
     private final UserStore store;

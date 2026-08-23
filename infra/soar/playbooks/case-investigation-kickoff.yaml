@@ -1,0 +1,33 @@
+id: case-investigation-kickoff
+name: 案件调查启动
+description: 为案件补充 SOAR 证据记录，经分析师审批后接手调查并通知协作人员。
+version: "1.0"
+enabled: true
+resourceTypes:
+  - case
+steps:
+  - id: record-playbook-evidence
+    name: 记录自动化启动证据
+    action: case.add_evidence
+    with:
+      type: automation
+      title: "SOAR 调查流程已启动"
+      note: "执行 ${executionId} 使用 Playbook ${playbookId}"
+  - id: approve-investigation
+    name: 分析师审批接手案件
+    action: approval
+    with:
+      requiredRole: analyst
+      message: "确认接手案件 ${caseId} 并进入 investigating 状态"
+  - id: set-investigating
+    name: 案件进入调查状态
+    action: case.set_status
+    with:
+      status: investigating
+  - id: notify-case-started
+    name: 通知调查已启动
+    action: notification.create
+    with:
+      type: soar-case-investigation
+      target: "case:${caseId}"
+      message: "案件 ${caseId} 已通过 SOAR 进入调查状态。"

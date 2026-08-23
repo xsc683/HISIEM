@@ -102,20 +102,20 @@ else
 fi
 if [ "$REQUIRE_CONTROL_PLANE_SCHEMA" = "1" ]; then
     control_tables="$(docker exec siem-postgres psql -U siem -d siem -tAc \
-        "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('roles','users','audit_logs','cases','case_alerts','notifications','background_tasks','case_mirror_outbox')" \
+        "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('roles','users','audit_logs','cases','case_alerts','notifications','background_tasks','case_mirror_outbox','soar_executions','soar_step_executions')" \
         2>/dev/null | tr -d '[:space:]' || true)"
-    if [ "$control_tables" = "8" ]; then
-        echo "  [ok] PostgreSQL 控制面 8 张表已由 Flyway 创建"
+    if [ "$control_tables" = "10" ]; then
+        echo "  [ok] PostgreSQL 控制面 10 张表已由 Flyway 创建"
     else
-        fail "PostgreSQL 控制面表不完整(检测到 $control_tables/8),请先启动 Spring Boot 应用执行 Flyway"
+        fail "PostgreSQL 控制面表不完整(检测到 $control_tables/10),请先启动 Spring Boot 应用执行 Flyway"
     fi
     flyway_version="$(docker exec siem-postgres psql -U siem -d siem -tAc \
         "SELECT version FROM flyway_schema_history WHERE success = TRUE ORDER BY installed_rank DESC LIMIT 1" \
         2>/dev/null | tr -d '[:space:]' || true)"
-    if [ -n "$flyway_version" ] && [ "$flyway_version" -ge 7 ] 2>/dev/null; then
+    if [ -n "$flyway_version" ] && [ "$flyway_version" -ge 8 ] 2>/dev/null; then
         echo "  [ok] Flyway V${flyway_version} 控制面迁移已完成"
     else
-        fail "Flyway 当前版本为 ${flyway_version:-unknown},预期至少 V7(密码轮换、outbox、任务租约)"
+        fail "Flyway 当前版本为 ${flyway_version:-unknown},预期至少 V8(密码轮换、outbox、任务租约、SOAR 执行记录)"
     fi
 fi
 if curl -fsS "$ES/_cluster/health?filter_path=status" | grep -qE 'green|yellow'; then

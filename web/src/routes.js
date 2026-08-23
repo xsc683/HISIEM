@@ -4,6 +4,7 @@ export const ROUTES = {
   rules: '/rules',
   alerts: '/alerts',
   cases: '/cases',
+  soar: '/soar',
   health: '/health',
   'ops-health': '/ops/health',
   criticality: '/criticality',

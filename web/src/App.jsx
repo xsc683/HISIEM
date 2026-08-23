@@ -3,7 +3,7 @@ import { ConfigProvider, Layout, Menu, Button, Input, Card, Space, Badge, Alert,
 import {
   LoginOutlined, LogoutOutlined, BellOutlined, SafetyCertificateOutlined,
   AlertOutlined, DeploymentUnitOutlined, BarChartOutlined, TagOutlined, TeamOutlined,
-  MenuFoldOutlined, MenuUnfoldOutlined, ThunderboltOutlined, ApiOutlined,
+  MenuFoldOutlined, MenuUnfoldOutlined, ThunderboltOutlined, ApiOutlined, RobotOutlined,
 } from '@ant-design/icons'
 import {
   listTemplates, testParse, previewLogSource,
@@ -29,6 +29,7 @@ const WizardView = lazy(() => import('./pages/WizardView.jsx'))
 const RulesView = lazy(() => import('./pages/RulesView.jsx'))
 const AlertsView = lazy(() => import('./pages/AlertsView.jsx'))
 const CasesView = lazy(() => import('./pages/CasesView.jsx'))
+const SoarView = lazy(() => import('./pages/SoarView.jsx'))
 const HealthView = lazy(() => import('./pages/HealthView.jsx'))
 const OpsHealthView = lazy(() => import('./pages/OpsHealthView.jsx'))
 const CriticalityView = lazy(() => import('./pages/CriticalityView.jsx'))
@@ -40,6 +41,7 @@ const MENU_ITEMS = [
   { key: 'rules', icon: <DeploymentUnitOutlined />, label: '检测规则' },
   { key: 'alerts', icon: <AlertOutlined />, label: '告警台' },
   { key: 'cases', icon: <SafetyCertificateOutlined />, label: '调查台' },
+  { key: 'soar', icon: <RobotOutlined />, label: 'SOAR 自动化' },
   { key: 'health', icon: <BarChartOutlined />, label: '数据健康' },
   { key: 'ops-health', icon: <ThunderboltOutlined />, label: '运行态扫描' },
   { key: 'criticality', icon: <TagOutlined />, label: '资产关键度' },
@@ -136,6 +138,12 @@ export default function App() {
     setActiveKey(key)
     const path = pathFromRouteKey(key)
     if (window.location.pathname !== path) window.history.pushState({}, '', path)
+  }
+
+  function openSoar(resourceType, resourceId) {
+    const query = new URLSearchParams({ resourceType, resourceId })
+    window.history.pushState({}, '', `${pathFromRouteKey('soar')}?${query}`)
+    setActiveKey('soar')
   }
 
   useEffect(() => {
@@ -755,7 +763,7 @@ export default function App() {
                 />
               )}
               {activeKey === 'rules' && <RulesView detRules={detRules} ruleHits={ruleHits} deploying={deploying} deployMsg={deployMsg} mitre={mitre} handleDeployRules={handleDeployRules} handleToggleRule={handleToggleRule} />}
-              {activeKey === 'alerts' && <AlertsView alerts={alerts} alertFilter={alertFilter} setAlertFilter={setAlertFilter} selAlerts={selAlerts} setSelAlerts={setSelAlerts} fpRates={fpRates} handleCreateCase={handleCreateCase} handleBatchStatus={handleBatchStatus} handleBatchVerdict={handleBatchVerdict} handleAlertStatus={handleAlertStatus} handleAlertVerdict={handleAlertVerdict} reloadAlerts={reloadAlerts} />}
+              {activeKey === 'alerts' && <AlertsView alerts={alerts} alertFilter={alertFilter} setAlertFilter={setAlertFilter} selAlerts={selAlerts} setSelAlerts={setSelAlerts} fpRates={fpRates} handleCreateCase={handleCreateCase} handleBatchStatus={handleBatchStatus} handleBatchVerdict={handleBatchVerdict} handleAlertStatus={handleAlertStatus} handleAlertVerdict={handleAlertVerdict} reloadAlerts={reloadAlerts} onRunSoar={openSoar} />}
               {activeKey === 'cases' && (
                 <CasesView
                   cases={cases} setCases={setCases} alerts={alerts} caseAlertDetails={caseAlertDetails} caseFilter={caseFilter} setCaseFilter={setCaseFilter}
@@ -771,8 +779,10 @@ export default function App() {
                   evidenceUri={evidenceUri} setEvidenceUri={setEvidenceUri}
                   handleUpdateCaseMetadata={handleUpdateCaseMetadata} caseCollaborators={caseCollaborators}
                   setCaseCollaborators={setCaseCollaborators} handleUpdateCollaborators={handleUpdateCollaborators}
+                  onRunSoar={openSoar}
                 />
               )}
+              {activeKey === 'soar' && <SoarView user={user} />}
               {activeKey === 'health' && <HealthView health={health} sources={sources} healthDetail={healthDetail} healthLoading={healthLoading} handleHealthDetail={handleHealthDetail} />}
               {activeKey === 'ops-health' && <OpsHealthView opsHealth={opsHealth} tasks={tasks} healthScan={healthScan} listTasks={listTasks} setOpsHealth={setOpsHealth} setTasks={setTasks} />}
               {activeKey === 'criticality' && <CriticalityView crit={crit} critType={critType} setCritType={setCritType} critKey={critKey} setCritKey={setCritKey} critLevel={critLevel} setCritLevel={setCritLevel} recalcMsg={recalcMsg} handleCritAdd={handleCritAdd} handleRecalc={handleRecalc} handleCritSet={handleCritSet} handleCritDelete={handleCritDelete} />}

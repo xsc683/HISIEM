@@ -1,0 +1,35 @@
+id: alert-high-risk-triage
+name: 高危告警标准处置
+description: 确认告警、通知分析师，并在管理员批准后进入调查状态。
+version: "1.0"
+enabled: true
+resourceTypes:
+  - alert
+when:
+  field: resource.alert.risk_score
+  operator: gte
+  value: 60
+steps:
+  - id: acknowledge-alert
+    name: 确认高危告警
+    action: alert.set_status
+    with:
+      status: acknowledged
+  - id: notify-analyst
+    name: 发送处置通知
+    action: notification.create
+    with:
+      type: soar-alert-triage
+      target: "alert:${alertId}"
+      message: "SOAR 已接管告警 ${resource.alert.rule_name}（${alertId}），等待处置审批。"
+  - id: approve-investigation
+    name: 审批进入调查阶段
+    action: approval
+    with:
+      requiredRole: admin
+      message: "确认将告警 ${alertId} 转入 investigating 状态"
+  - id: start-investigation
+    name: 转入调查状态
+    action: alert.set_status
+    with:
+      status: investigating

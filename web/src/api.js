@@ -394,3 +394,40 @@ export function listTasks(size) {
 export function getTask(id) {
   return request(`/tasks/${pathSegment(id)}`)
 }
+
+// ---- SOAR Playbook 与执行 ----
+
+export function listSoarPlaybooks(resourceType) {
+  const query = resourceType ? `?${new URLSearchParams({ resourceType }).toString()}` : ''
+  return request(`/soar/playbooks${query}`)
+}
+
+export function reloadSoarPlaybooks() {
+  return request('/soar/playbooks/reload', { method: 'POST' })
+}
+
+export function listSoarExecutions(size = 50) {
+  return request(`/soar/executions?${new URLSearchParams({ size }).toString()}`)
+}
+
+export function getSoarExecution(id) {
+  return request(`/soar/executions/${pathSegment(id)}`)
+}
+
+export function startSoarExecution(playbookId, resourceType, resourceId) {
+  return request('/soar/executions', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ playbookId, resourceType, resourceId }),
+  })
+}
+
+export function decideSoarApproval(id, approved) {
+  return request(`/soar/executions/${pathSegment(id)}/approval`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ approved }),
+  })
+}
+
+export function retrySoarExecution(id) {
+  return request(`/soar/executions/${pathSegment(id)}/retry`, { method: 'POST' })
+}

@@ -14,6 +14,7 @@
 | 检测规则 | `/rules` | 查看规则、命中、MITRE 覆盖和启停/部署 | `/api/detection-rules/*` |
 | 告警台 | `/alerts` | 风险排序、筛选、状态、verdict、批量处置 | `/api/alerts/*` |
 | 调查台 | `/cases` | 自动/手动聚合案件、时间线、证据、协作者和结案 | `/api/cases/*` |
+| SOAR 自动化 | `/soar` | 选择 Playbook、启动告警/案件处置、审批、重试和查看步骤记录 | `/api/soar/*` |
 | 数据健康 | `/health` | 数据源事件量、失败率、趋势和失败下钻 | `/api/data-health/*` |
 | 运行态扫描 | `/ops/health` | PostgreSQL/ES/Kafka/Logstash/Flink/Kibana 探针和任务 | `/api/ops/health-scan`、`/api/tasks/*` |
 | 资产关键度 | `/criticality` | IP/用户/主机风险权重维护和重算 | `/api/settings/criticality/*` |
@@ -29,6 +30,7 @@
 | 规则 | `rule.id` | 告警的 `alert.rule_id` |
 | 告警 | `alert.id` | 案件的 `alert_ids`、告警的 `alert.case_id` |
 | 案件 | `case.id` | 关联告警、实体、时间线和证据 |
+| SOAR 执行 | `soar-{uuid}` | Playbook 快照、目标告警/案件、步骤和审批记录 |
 | 实体 | `source.ip` 优先，其次 `user.name`/`host.name` | 规则、告警、案件、实体风险 |
 
 ## 2. API 契约索引
@@ -132,6 +134,21 @@ POST   /api/notifications/read-all
 DELETE /api/notifications/{id}
 ```
 
+### SOAR 自动化
+
+```text
+GET    /api/soar/playbooks
+GET    /api/soar/playbooks/{id}
+POST   /api/soar/playbooks/reload
+GET    /api/soar/executions
+GET    /api/soar/executions/{id}
+POST   /api/soar/executions
+POST   /api/soar/executions/{id}/approval
+POST   /api/soar/executions/{id}/retry
+```
+
+Playbook 只来自 `infra/soar/playbooks/*.yaml`，动作必须属于后端白名单。执行会保存 Playbook 快照和每步输入输出；要求审批时状态为 `waiting_approval`，拒绝后进入 `rejected`，失败后才允许重试。当前只支持人工触发，不提供任意 Shell 或外部 URL。
+
 ## 3. 端到端主旅程
 
 ### 接入一类新日志
@@ -158,6 +175,14 @@ DELETE /api/notifications/{id}
 3. 在 `/criticality` 修改资产权重并触发风险重算，观察实体风险结果。
 4. 在 `/notifications` 处理接入失败、健康异常和 FP 率通知；外部邮件/Webhook 当前不属于已实现能力。
 
+### SOAR 辅助处置
+
+1. 在告警展开区或案件详情点击“运行 SOAR”，页面携带稳定资源 ID 进入 `/soar`。
+2. 选择与 `alert` 或 `case` 兼容的 Playbook；后端先校验 Playbook 级 `when` 条件再创建执行。
+3. 查看步骤状态和输入输出；`waiting_approval` 必须由满足 `requiredRole` 的用户批准或拒绝。
+4. 失败执行可以重试；已成功/跳过步骤不得重复执行。
+5. 回到告警、案件、通知和审计页面，确认动作使用相同资源 ID 形成可追踪闭环。
+
 ## 4. 当前验收清单
 
 - 页面路由与 `web/src/routes.js` 一致，不引用旧的 `/onboarding`、`/settings/*` 路径。
@@ -166,8 +191,9 @@ DELETE /api/notifications/{id}
 - 所有时间字段说明事件时间、告警生成时间和页面本地时区，避免把三者混为“平台时间”。
 - 展开告警时能查看完整原始 JSON，长数组和嵌套对象不被截断；详情页可从告警跳到案件/实体/事件上下文。
 - 写操作带真实操作者和审计记录；无权限请求返回 401/403，不伪装成空列表。
+- SOAR 未知 action 在加载阶段被拒绝；审批并发返回 409；历史执行继续使用启动时的 Playbook 快照。
 - 变更后执行根项目测试、Flink 测试、前端构建；涉及 `infra/` 时再执行健康扫描和端到端冒烟。
 
 ## 5. 不在当前契约中的内容
 
-多租户、ES/Kafka 生产 TLS/高可用、外部通知投递、完整 OCSF 合规和自动化 SOAR 仍是路线图事项。它们可以在专项设计中讨论，但不能在页面、API 或 Story 中写成已实现能力。
+多租户、ES/Kafka 生产 TLS/高可用、外部通知投递、完整 OCSF 合规，以及 SOAR 自动触发/任意外部连接器仍是路线图事项。它们可以在专项设计中讨论，但不能在页面、API 或 Story 中写成已实现能力。

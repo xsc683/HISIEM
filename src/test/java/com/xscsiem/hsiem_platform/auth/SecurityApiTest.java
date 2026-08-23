@@ -11,6 +11,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 
 /** 阶段 4.2:Spring Security 认证、持久会话入口和统一错误结构。 */
 @SpringBootTest
@@ -47,5 +48,18 @@ class SecurityApiTest {
     void actuatorHealthIsPublicButMetricsAreAdminOnly() throws Exception {
         mvc.perform(get("/actuator/health")).andExpect(status().isOk());
         mvc.perform(get("/actuator/metrics")).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void soarPlaybooksAreReadableButMutationIsForbiddenForAudit() throws Exception {
+        mvc.perform(get("/api/soar/playbooks").with(user("auditor").roles("AUDIT")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].id").isString());
+        mvc.perform(post("/api/soar/playbooks/reload").with(user("auditor").roles("AUDIT")))
+                .andExpect(status().isForbidden());
+        mvc.perform(post("/api/soar/executions").with(user("auditor").roles("AUDIT"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"playbookId\":\"x\",\"resourceType\":\"alert\",\"resourceId\":\"a\"}"))
+                .andExpect(status().isForbidden());
     }
 }
