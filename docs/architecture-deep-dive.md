@@ -1,29 +1,53 @@
-# 架构与实现亮点：HISIEM 的代码、配置与运行态细节
+# 架构实现细节剖面：从代码到运行配置
 
-> 本文聚焦当前实现中值得保留和复用的设计细节。每个结论都对应源码、`infra/` 配置或测试；系统总览见 [`architecture.md`](architecture.md)，当前接口与对象关系见 [`product-contract.md`](product-contract.md)。
+> 本文展示当前 HISIEM 中“声明 → 编译 → 发布 → 流处理 → 处置”的实际实现。代码片段均来自当前仓库；个别片段省略 import、JDBC 参数或与主逻辑无关的分支。每节同时给出实现类、配置文件和生成物，便于从文档回到代码核对。系统总体边界见 [`architecture.md`](architecture.md)，接口和对象关系见 [`product-contract.md`](product-contract.md)。
 
-## 1. 实现亮点总览
+## 1. 先看清楚一次配置变更会产生什么
 
-| 亮点 | 主要证据 | 解决的问题 |
+同一个数据源在仓库里不是一份文件，而是一组有不同职责的产物：
+
+~~~text
+infra/parser-templates/ssh-auth.yaml
+        │ Jackson YAML
+        ▼
+ParserTemplate（Java 类型化 DSL）
+        │ GrokTestService + ParserTemplateService.validateGate
+        ▼
+LogstashConfigGenerator.generatePipeline(LogSource, ParserTemplate)
+        │
+        ├── infra/logstash/pipeline/log-sources/ls-54fc7d96.conf
+        ├── infra/logstash/config/pipelines.yml
+        ├── infra/docker-compose.yml（TCP/Syslog 端口映射）
+        └── PostgreSQL audit_logs（配置 revision + actor）
+~~~
+
+运行时则是另一条链：
+
+~~~text
+source .conf
+  ├─ 解析成功 → siem-events-* + Kafka siem-events
+  │                       └─ Flink DetectionJob → siem-alerts
+  └─ Grok/date 失败 → siem-events-raw-*（不写 Kafka）
+~~~
+
+这个拆分的核心不是“文件很多”，而是把四类变化隔离：
+
+| 变化 | 声明位置 | 执行位置 |
 | --- | --- | --- |
-| 声明式配置编译 | `infra/parser-templates/*.yaml`、`ParserTemplate`、`LogstashConfigGenerator` | 用户描述解析意图，Java 统一校验并生成可运行的 Logstash 配置 |
-| 正常/隔离双通道 | `LogstashConfigGenerator.generatePipeline`、`siem-events-raw-*` | 坏数据可追溯但不污染 Kafka/Flink 检测输入 |
-| 轻量级补偿发布 | `ActivationCoordinator`、`ProcessLogstashDeployer` | 文件、WSL、Docker 多步变更失败时恢复旧配置 |
-| 检测即代码 + 类型化执行 | `infra/rules/*.yaml`、`RuleConfigLoader`、`RuleBuilder`、`DetectionJob` | 规则元数据可审查，运行时仍保留 Java/Flink 类型安全 |
-| 确定性告警与字段保护 | `DetectionJob.alertOperation`、`AlertService` | Kafka 重放、窗口抑制和分析师处置不会制造重复或覆盖处置结果 |
-| 事实源与镜像解耦 | PostgreSQL `cases` + `case_mirror_outbox`、`CaseMirrorDispatcher` | 案件关系先可靠落在控制面，ES 镜像失败可重试 |
-| 可恢复后台任务 | `background_tasks`、租约/心跳、`BackgroundTaskRecovery` | 进程重启后不会留下永久“进行中”状态 |
-| 安全边界前置 | `AuthUserView`、哈希 token、首次改密、`ProductionSafetyValidator` | 认证材料不外泄，生产模式不允许明文 ES/Kafka |
-| 运行态而非端口探活 | `OperationalHealthService`、`DataHealthService` | 健康结果能说明 topic、consumer lag、Flink Job、解析失败等业务状态 |
-| 前端单一请求边界 | `web/src/api.js`、`App.jsx` | 超时、204、401、错误提示、时间和对象关联由统一层处理 |
+| 日志长什么样 | parser template YAML | Logstash grok/date/mutate |
+| 哪个端口/文件接入 | log source YAML | Logstash input + Compose |
+| 什么事件算命中 | rule YAML | Flink typed operator |
+| 分析师如何处置 | PostgreSQL/ES API | Alert/Case service 状态机 |
 
-## 2. 声明式配置如何成为可执行配置
+## 2. 解析模板不是注释：它会被反序列化、校验并编译
 
-### 2.1 解析模板是小型 DSL，不是 Logstash 字符串转发
+### 2.1 YAML 字段与 Java 对象一一对应
 
-`infra/parser-templates/ssh-auth.yaml` 将解析意图拆成可校验的结构：
+实现位置：`infra/parser-templates/ssh-auth.yaml`、`src/main/java/com/xscsiem/hsiem_platform/onboarding/ParserTemplate.java`。
 
-```yaml
+当前 infra/parser-templates/ssh-auth.yaml 的实际结构（截取关键字段）是：
+
+~~~yaml
 id: ssh-auth
 name: SSH 认证日志
 protocol: tcp
@@ -31,6 +55,7 @@ ecs:
   event.category: authentication
 patterns:
   - "%{SYSLOGTIMESTAMP:timestamp} %{HOSTNAME:host.name} sshd.*Failed password for %{USERNAME:user.name} from %{IP:source.ip}"
+  - "%{SYSLOGTIMESTAMP:timestamp} %{HOSTNAME:host.name} sshd.*Failed password for invalid user %{USERNAME:user.name} from %{IP:source.ip}"
   - "%{SYSLOGTIMESTAMP:timestamp} %{HOSTNAME:host.name} sshd.*Accepted password for %{USERNAME:user.name} from %{IP:source.ip}"
 timestamp:
   source: timestamp
@@ -41,229 +66,1007 @@ actions:
     fields:
       event.action: authentication_failure
       event.outcome: failure
+      event.type: denied
 tests:
-  - sample: "Aug 1 10:20:00 server03 sshd[9999]: Failed password for alice from 198.51.100.1"
+  - sample: "Aug 1 10:20:00 server03 sshd[9999]: Failed password for test from 172.16.1.20"
     expect:
+      user.name: test
+      source.ip: 172.16.1.20
       event.action: authentication_failure
 negative:
   - "not an ssh authentication line"
-```
+~~~
 
-`ParserTemplate.java` 是 YAML 的类型化中间表示：ECS 字段、Grok pattern、日期格式、正负样例和 action 都有明确字段。页面不需要直接拼 Logstash 语法，后续增加协议或字段时也只需扩展这层语义。
+对应的 src/main/java/com/xscsiem/hsiem_platform/onboarding/ParserTemplate.java 不是一个无类型 Map，而是显式的中间表示：
 
-`GrokTestService` 使用 Java Grok 编译器注册 Logstash 默认 pattern，按 YAML 顺序尝试 pattern，第一次捕获成功即停止；随后补 ECS 字段，并对 action 的正则条件执行字段写入。这样解析预览与正式生成共享同一套匹配语义，pattern 的顺序也明确成为可测试契约。
+~~~java
+@JsonAutoDetect(fieldVisibility = JsonAutoDetect.Visibility.ANY)
+public class ParserTemplate {
+    public String id;
+    public String name;
+    public String description;
+    public String protocol;
+    public String status;
+    public Map<String, String> ecs;
+    public List<String> patterns;
+    public Timestamp timestamp;
+    public List<Action> actions;
+    public List<Test> tests;
+    public List<String> negative;
 
-`ParserTemplateService.validateGate` 在保存前执行三道门禁：所有正样例必须命中且满足 `expect`，所有负样例必须不命中，模板至少有 pattern 和正样例。门禁失败时不写文件；通过后才调用 `ConfigRevisionJournal.atomicWrite` 并记录 SHA-256 revision。样例因此同时承担文档、回归测试和发布前质量门的作用。
+    public static class Timestamp {
+        public String source;
+        public List<String> formats;
+        public String timezone;
+    }
 
-接口层另外使用 `SampleSizeValidator` 限制样例正文：API 最大 1 MiB，前端输入最大 8 KiB，避免把超大日志直接送入 Grok 编译和解析路径。
-
-### 2.2 生成器把变化集中在一个编译点
-
-`LogstashConfigGenerator` 将类型化模板编译为三部分：
-
-| 生成方法 | 关键细节 | 价值 |
-| --- | --- | --- |
-| `generateInput` | `tcp`、`syslog`、`file` 使用策略分支；统一注入 `log.source_id` 和 `log.source_name` | 协议差异局部化，后续检测可以按稳定来源标识关联 |
-| `generateFilter` | Grok、date、ECS mutate、action 按模板生成；数组不写尾逗号 | 预览、激活和生成文件使用相同语义，并通过 Logstash 8.14 配置校验 |
-| `generatePipeline` | input/filter/output 完整闭环；补 `pipeline`、schema version、`related.ip`、GeoIP | 每个数据源生成物可独立发布、排障和回滚 |
-
-生成器中的细节不是样式问题，而是运行可靠性约束：
-
-- `indent` 统一把 filter 片段嵌入 pipeline，避免手工缩进导致结构错误；
-- `escape` 对反斜杠、引号和换行做转义，防止名称/path 破坏 Logstash 配置；
-- file input 使用 `/usr/share/logstash/data/sincedb-<source-id>`，重启后保留读取位置；
-- date 同时生成单数字和双数字日期格式，兼容 syslog 的 `Aug  1` 与 `Aug 01`；
-- 解析失败和时间失败都打上 Logstash failure tag，后续统一进入隔离分支。
-
-### 2.3 每个数据源独立 pipeline，主配置保持稳定
-
-`infra/logstash/config/pipelines.yml` 将静态 `main` pipeline 与 `log-sources/<id>.conf` 分开注册。生成的 source pipeline 自带来源字段，Compose 端口也由同一发布流程幂等添加。
-
-这种拆分把故障半径限制在单一数据源：一个模板错误不会让全部输入一起失效，停用只需要移除对应 `.conf`、pipeline 条目和端口映射。代价是 Logstash pipeline 数量和发布协调复杂度增加，因此这是在小规模环境中用资源换隔离性的明确取舍。
-
-## 3. 数据质量边界：坏数据被隔离而不是被吞掉
-
-`generatePipeline` 的 output 分支是当前数据面的关键边界：
-
-```conf
-if "_parsefailure" in [tags] or "_dateparsefailure" in [tags] {
-  elasticsearch { index => "siem-events-raw-%{+YYYY.MM.dd}" }
-} else {
-  elasticsearch { index => "siem-events-%{+YYYY.MM.dd}" }
-  kafka { topic_id => "siem-events" acks => "all" retries => 5 }
+    public static class Action {
+        public String match;
+        public Map<String, String> fields;
+    }
 }
-```
+~~~
 
-隔离分支保留原文和失败标签，但不写 Kafka，因此未经标准化的事件不会进入 Flink 检测。正常事件才同时写 ES 和 Kafka，并在 filter 阶段补充 ECS、schema version、`related.ip`、GeoIP 和威胁情报字段。
+这样设计有两个直接收益：YAML 的字段结构能在 Java 层被验证，生成器也不需要猜测字符串含义；同时 tests、negative 和运行字段属于同一个对象，预览、保存和正式生成不会各自解析一遍不同格式。
 
-`DataHealthService` 不把 raw 当作正常事件的子集：它分别统计正常索引、raw 索引和配置中的数据源，并计算失败率、上一周期对比和异常突增。`NotificationScanner` 进一步将接入失败和健康异常转成带频控的通知。数据质量问题因此从“无告警”变成可追踪运维信号。
+### 2.2 预览解析与保存门禁实际共用一条代码路径
 
-同一个通知扫描器还聚合 `AlertService.fpRate`：只有规则样本数至少 20 且 FP 比例超过 50% 才生成高 FP 通知；`NotificationService` 以 `type + target` 做 1 小时频控，并清理已读的 30 天历史，避免运维信号本身变成告警轰炸。
+实现位置：`src/main/java/com/xscsiem/hsiem_platform/onboarding/GrokTestService.java`、`ParserTemplateService.java`、`OnboardingController.java`。
 
-事件时间也被分成两个语义：Logstash date filter 解析出的 `@timestamp` 用于检测窗口，`alert.created_at` 表示检测结果写入时间。前端 `TimeText` 按浏览器时区显示，同时在 title 中保留原始 UTC，避免把事件发生时间和平台处理时间混为一谈。
+GrokTestService.test 的关键逻辑是“按顺序尝试 pattern，首个捕获成功后补固定字段和 action”：
 
-### 3.1 Mapping、ILM 与历史索引兼容
+~~~java
+public ParseResult test(ParserTemplate template, String sample) {
+    Map<String, Object> fields = new LinkedHashMap<>();
+    fields.put("message", sample);
+    boolean matched = false;
 
-`infra/elasticsearch/siem-events-template.json` 用 dynamic template 将 `_id`、`log.*`、IP 字段和普通字符串分别映射为 keyword、ip 或 keyword，并显式声明 ECS、GeoIP 和事件时间字段。raw 模板使用更高 priority，确保隔离索引不会被正常事件模板的通配符误当成正常事件统计；事件、告警、案件和实体风险分别绑定 ILM 留存策略。
+    for (String pattern : template.patterns) {
+        Grok grok = compiler.compile(pattern);
+        Match match = grok.match(sample);
+        Map<String, Object> captures = match.capture();
+        if (captures != null && !captures.isEmpty()) {
+            captures.forEach((key, value) -> fields.put(key, first(value)));
+            matched = true;
+            break;
+        }
+    }
+    if (!matched) return new ParseResult(false, fields);
 
-模板只影响之后创建的索引，这是 ES mapping 的不可变约束。`apply-templates.sh` 因此同时修正已有索引的 replica/translog/ILM 设置；需要改变字段类型时，`reindex-mappings.sh` 使用新索引、reindex 和 alias 原子切换，而不是在线修改已存在的 mapping。
+    if (template.ecs != null) fields.putAll(template.ecs);
+    if (template.actions != null) {
+        for (ParserTemplate.Action action : template.actions) {
+            if (action.match != null && matches(action.match, sample)) {
+                fields.putAll(action.fields);
+                break;
+            }
+        }
+    }
+    return new ParseResult(true, fields);
+}
+~~~
 
-## 4. 数据源激活是一个有补偿动作的发布事务
+ParserTemplateService.validateGate 在任何文件写入之前调用同一个 grok.test：
 
-`OnboardingController` 只负责接收请求；实际生效由 `LogSourceService` 和 `ActivationCoordinator` 完成：
+~~~java
+public void validateGate(ParserTemplate t) {
+    if (t.id == null || t.id.isBlank())
+        throw new IllegalArgumentException("模板 id 不能为空");
+    if (t.patterns == null || t.patterns.isEmpty())
+        throw new IllegalArgumentException("模板至少需要一个 grok 模式");
+    if (t.tests == null || t.tests.isEmpty())
+        throw new IllegalArgumentException("模板至少需要一个正样本");
 
-```text
-创建 creating
-  → 生成 source .conf
-  → 原子更新 pipelines.yml / compose 端口
-  → 同步 WSL 工作目录
-  → 容器内 --config.test_and_exit
-  → TCP/Syslog 重启或 File HUP
-  → active
-```
+    for (ParserTemplate.Test test : t.tests) {
+        ParseResult result = grok.test(t, test.sample);
+        if (!result.ok()) throw new IllegalArgumentException("正样本未命中");
+        if (test.expect != null) {
+            for (var expected : test.expect.entrySet()) {
+                Object actual = result.fields().get(expected.getKey());
+                if (!Objects.equals(String.valueOf(actual),
+                        String.valueOf(expected.getValue()))) {
+                    throw new IllegalArgumentException("正样本字段不符: " + expected.getKey());
+                }
+            }
+        }
+    }
+    if (t.negative != null) {
+        for (String negative : t.negative) {
+            if (grok.test(t, negative).ok()) {
+                throw new IllegalArgumentException("负样本不应命中: " + negative);
+            }
+        }
+    }
+}
+~~~
 
-`ActivationCoordinator.activate` 在变更前保存旧的 pipeline、Compose 和配置内容。任意写入、同步、配置校验或重启失败时，按逆序恢复文件并再次同步 WSL，数据源进入 `failed`，错误写入 `lastError`，同时由 `IngestFailedListener` 触发通知。这是跨文件/进程/容器的 Saga 补偿，而不是虚构一个跨系统 ACID 事务。
+通过后才执行：
 
-几个实现细节决定了这条链路可重复执行：
+~~~java
+ConfigRevisionJournal.atomicWrite(file.toPath(),
+        yamlMapper.writeValueAsString(t));
+ConfigRevisionJournal.record(control, "parser-template",
+        file.toPath(), actor());
+~~~
 
-- `.conf`、`pipelines.yml`、数据源 YAML 和关键度文件统一使用临时文件 + `ATOMIC_MOVE`；不支持原子 move 的文件系统才降级为 replace；
-- Compose 端口插入和 pipeline 条目移除是幂等的，重复激活不会重复追加端口；
-- 同一 JVM 内 `ActivationCoordinator` 使用 `synchronized`，`LogSourceService` 以 `lifecycleInFlight` 拒绝同一数据源并发激活/停用，并用 `portLock` 保护端口检查；
-- `ProcessLogstashDeployer` 是适配器，封装 WSL/Docker 路径、120 秒超时和 reload/restart 差异；
-- 外部进程 stdout/stderr 在等待进程的同时被消费，避免输出管道写满造成假死；Logstash 配置校验使用独立 `--path.data`，避免与运行实例争用队列锁。
+这个顺序很关键：先验证，再原子写文件，再把内容 hash 和真实操作者写入审计；不会出现“页面预览成功、保存时换了一套解析器”或“半写 YAML 被 Logstash 读取”的情况。样例正文还由 SampleSizeValidator 限制为 API 最大 1 MiB、UI 最大 8 KiB。
 
-## 5. 检测即代码，但执行仍是类型化的 Flink 作业
+### 2.3 Java 生成器如何逐字段编译成 .conf
 
-### 5.1 规则声明映射到四类算子
+实现位置：`src/main/java/com/xscsiem/hsiem_platform/onboarding/LogstashConfigGenerator.java`。
 
-`infra/rules/*.yaml` 是规则唯一来源，当前声明覆盖四种类别：
+LogstashConfigGenerator.generateFilter 中的实际映射是：
 
-| category | Flink 执行器 | 关键实现 |
-| --- | --- | --- |
-| `single_event` | `DetectionFunction` | 单事件条件树匹配 |
-| `window` | `WindowRuleFunction` | 按 `keyField` 的事件时间计数窗口 |
-| `cep` | `BruteforceSuccessFunction` | `begin/next/followedBy` 序列和 `within` |
-| `baseline` | `BaselineAnomalyFunction` | 滚动均值/标准差基线异常 |
+~~~java
+// patterns → grok.match
+for (int i = 0; i < t.patterns.size(); i++) {
+    sb.append("    \"").append(t.patterns.get(i)).append("\"")
+      .append(i < t.patterns.size() - 1 ? "," : "").append("\n");
+}
+sb.append("  ] }\n  tag_on_failure => [\"_parsefailure\"]\n}\n");
 
-`RuleConfigLoader` 只加载目录中的 YAML，`DetectionJob` 过滤 `enabled`，`RuleBuilder` 再把声明转换成 `Rule`、`WindowRule` 或 `RuleMeta`。条件通过 `field_equals`、`field_in`、`all`、`any`、`not` 递归构造，新增组合不需要为每条规则写一套 if/else。
+// timestamp → date.match + timezone + @timestamp
+sb.append("date {\n  match => [ \"").append(t.timestamp.source).append("\"");
+for (String format : t.timestamp.formats) {
+    sb.append(", \"").append(format).append("\"");
+}
+sb.append(" ]\n  timezone => \"").append(t.timestamp.timezone)
+  .append("\"\n  target => \"@timestamp\"\n");
 
-规则启停由 `RuleService.writeEnabledOnly` 只替换原 YAML 的 `enabled` 行，不重新序列化整个 Map，因此注释、字段顺序和手工格式仍然保留；随后 `ProcessRulesDeployer` 才把这份 revision 同步给 Flink 并重启检测作业。
+// actions → Logstash if + mutate
+sb.append("if [message] =~ ").append(action.match)
+  .append(" {\n  mutate { add_field => {");
+~~~
 
-### 5.2 事件时间和窗口边界被显式处理
+这里的 i < size - 1 是有业务后果的：Logstash 8.14 的数组尾逗号会使 --config.test_and_exit 直接 FATAL。indent 把同一 filter 片段嵌入完整 pipeline，escape 处理名称、路径中的引号/换行，避免用户输入破坏配置语法。
 
-Kafka 事件先由 `EventParser` 递归展开嵌套 JSON 为扁平点分字段，例如 `source.ip`，再提取 `@timestamp`。窗口、CEP、基线三条分支共享同一 watermark：允许 10 秒乱序，60 秒无数据后标记 idle，避免静默主机阻塞全局窗口推进。
+同一个生成器还负责协议策略：
 
-窗口规则默认支持 tumbling；`slidingMinutes` 大于 0 时使用滑动窗口，修复“窗口边界前后各一条事件无法合并”的盲区。滑动窗口可能产生重复命中，因此后面接 `WindowAlertSuppressor`，将检测覆盖能力和告警降噪分开处理。
+~~~java
+String input = switch (protocol) {
+    case "syslog" -> "syslog {\n    port => " + s.port + "\n";
+    case "file" -> "file {\n    path => [\"" + escape(s.path) + "\"]\n"
+            + "    start_position => \"beginning\"\n"
+            + "    sincedb_path => \"/usr/share/logstash/data/sincedb-"
+            + escape(s.id) + "\"\n";
+    default -> "tcp {\n    port => " + s.port + "\n";
+};
+return input + "    add_field => { \"log.source_id\" => \""
+        + escape(s.sourceId) + "\" \"log.source_name\" => \""
+        + escape(s.name) + "\" }\n  }\n";
+~~~
 
-### 5.3 Flink 状态和部署状态都可恢复
+因此 file input 不再使用 /dev/null sincedb；每个来源拥有持久读取游标，重启不会从头重复读文件。
 
-`DetectionJob` 使用持久卷上的 checkpoint/savepoint，`EXACTLY_ONCE` checkpoint，单并发 checkpoint、最小间隔、超时和可容忍失败次数均显式配置；重启策略采用指数退避而不是立即连续重启。
+### 2.4 生成结果与源码逐段对应
 
-`ProcessRulesDeployer` 发布规则时先生成带时间戳和随机后缀的 `/opt/flink/rules-revisions/<revision>`，再 cancel 旧 Job 并带 savepoint 提交新 Job。新 revision 启动后确认进入 `RUNNING` 才更新成功指针；提交失败时用刚才的 savepoint 和上一版规则恢复旧 Job。规则发布因此具备 revision、状态确认和补偿路径，而不是直接覆盖正在运行的目录。
+对照文件：`infra/log-sources/ls-54fc7d96.yaml`、`infra/logstash/pipeline/log-sources/ls-54fc7d96.conf`；生成入口仍是 `LogstashConfigGenerator.generatePipeline`。
 
-## 6. 告警写入的幂等性、字段保护与处置并发
+以 ls-54fc7d96 为例，infra/log-sources/ls-54fc7d96.yaml 声明：
 
-### 6.1 确定性 ID 把重放转成幂等更新
+~~~yaml
+id: "ls-54fc7d96"
+name: "demo-ssh-source"
+protocol: "tcp"
+templateId: "ssh-auth"
+port: 5007
+sourceId: "ls-54fc7d96"
+status: "active"
+~~~
 
-`DetectionJob.alertId` 用 `rule_id | entity | @timestamp` 计算 SHA-1，实体优先取规则声明的 `alert.entity`，否则回退到 `source.ip`、`user.name`。同一事件重放时得到相同 ES `_id`，不会因为 Kafka 重放产生第二条告警。
+生成的 infra/logstash/pipeline/log-sources/ls-54fc7d96.conf 对应为：
 
-ES sink 使用 update + upsert：首次命中用完整文档 upsert，后续命中只写检测侧字段。`alert.status`、`alert.analyst_verdict`、`alert.operator`、`alert.status_updated_at` 和 `alert.case_id` 被显式从 Flink patch 中移除，防止窗口期末更新或作业重放覆盖分析师处置结果。
+~~~conf
+input {
+    tcp {
+        port => 5007
+        add_field => { "log.source_id" => "ls-54fc7d96" "log.source_name" => "demo-ssh-source" }
+      }
+}
 
-### 6.2 抑制器只抑制通知，不抹掉检测信息
+filter {
+    # grok 解析(模板 ssh-auth)
+    grok {
+      match => { "message" => [
+        "%{SYSLOGTIMESTAMP:timestamp} %{HOSTNAME:host.name} sshd.*Failed password for %{USERNAME:user.name} from %{IP:source.ip}",
+        "%{SYSLOGTIMESTAMP:timestamp} %{HOSTNAME:host.name} sshd.*Failed password for invalid user %{USERNAME:user.name} from %{IP:source.ip}",
+        "%{SYSLOGTIMESTAMP:timestamp} %{HOSTNAME:host.name} sshd.*Accepted password for %{USERNAME:user.name} from %{IP:source.ip}"
+      ] }
+      tag_on_failure => ["_parsefailure"]
+    }
+    # @timestamp = 日志时间
+    date {
+      match => [ "timestamp", "MMM dd HH:mm:ss", "MMM  d HH:mm:ss" ]
+      timezone => "Asia/Shanghai"
+      target => "@timestamp"
+      tag_on_failure => ["_dateparsefailure"]
+    }
+    mutate {
+      add_field => { "event.category" => "authentication" }
+    }
+    if [message] =~ /Failed password/ {
+      mutate { add_field => { "event.action" => "authentication_failure" "event.outcome" => "failure" "event.type" => "denied" } }
+    }
+    if [message] =~ /Accepted password/ {
+      mutate { add_field => { "event.action" => "authentication_success" "event.outcome" => "success" "event.type" => "allowed" } }
+    }
 
-`AlertSuppressor` 和 `WindowAlertSuppressor` 在 keyed state 中保存首条/最新告警、抑制截止时间和累计数。首个命中立即写入，抑制期内后续命中只更新状态，期末用同一稳定 `_id` 写回 `event_count` 和 `alert.deduplicated_count`。状态由 Flink checkpoint 管理，作业重启不会因为 JVM 内存丢失而重新建档。
+  # 字段规范化(ECS 对齐,决策 D:扁平存储)
+  mutate {
+    remove_field => [ "timestamp" ]
+    add_field => {
+      "pipeline" => "mini-siem"
+      "event.schema_version" => "1.0"
+    }
+    add_field => { "related.ip" => "%{source.ip}" }
+  }
+  if [source.ip] {
+    geoip {
+      source => "source.ip"
+      target => "source"
+    }
+  }
+}
 
-### 6.3 分析师处置使用 ES 乐观锁
+output {
+  if "_parsefailure" in [tags] or "_dateparsefailure" in [tags] {
+    elasticsearch {
+      hosts => ["http://elasticsearch:9200"]
+      index => "siem-events-raw-%{+YYYY.MM.dd}"
+    }
+  } else {
+    elasticsearch {
+      hosts => ["http://elasticsearch:9200"]
+      index => "siem-events-%{+YYYY.MM.dd}"
+    }
 
-`AlertService` 更新前先读取 `_seq_no` 和 `_primary_term`，再带 `if_seq_no/if_primary_term` 更新；并发修改返回 409，让分析师刷新后再决策。状态机禁止任意跳转，`resolved/closed` 必须已有或同时提交有效 verdict，重开时会清除旧 verdict。
+    kafka {
+      bootstrap_servers => "kafka:9092"
+      topic_id => "siem-events"
+      codec => json
+      acks => "all"
+      retries => 5
+      retry_backoff_ms => 1000
+      compression_type => "zstd"
+      batch_size => 131072
+      linger_ms => 5
+    }
+  }
+}
+~~~
 
-批量处置先逐条读取当前文档，预检查结案 verdict 和状态转移，再逐条执行乐观锁更新并返回 succeeded/failed。这样仅提交 verdict 的请求也能带上正确版本信息，部分冲突不会被伪装成整体成功。
+这里不是 YAML 复制到 conf：templateId 选择了解析 DSL，protocol/port 选择了 input 策略，sourceId/name 被注入每条事件，timestamp 变成事件时间，actions 变成 Logstash 条件。预览 API 和激活流程都调用 generatePipeline，所以预览内容就是实际部署内容的同源结果。
 
-## 7. 案件采用“关系库事实 + ES 查询镜像”
+## 3. 数据源激活的实现：状态机 + 补偿发布
 
-案件不是简单把一段 JSON 写入 ES。`JdbcControlPlaneStore` 以 PostgreSQL `cases`、`case_alerts` 保存案件事实、告警关系和 `version`，案件创建/更新/删除与 outbox 写入在同一事务中完成。
+### 3.1 创建阶段先写声明，激活阶段才接触外部系统
 
-`case_mirror_outbox` 具备三个重要细节：
+实现位置：`src/main/java/com/xscsiem/hsiem_platform/onboarding/LogSourceService.java`、`src/main/java/com/xscsiem/hsiem_platform/control/BackgroundTaskController.java`。
 
-- 同一案件连续的 `upsert` 会合并为最后一个待处理 payload，避免镜像队列被无意义更新填满；
-- `CaseMirrorDispatcher` 领取任务时写入 owner、lease 和 attempts，只有持有租约的 worker 能完成或失败重试；
-- `delete` 操作不会被后续旧 `upsert` 覆盖，保证删除顺序语义。
+LogSourceService.create 只接受 tcp/syslog/file，file 强制 port=0，TCP/Syslog 检查 1–65535 和 JVM 内端口锁：
 
-`CaseService` 在业务层再做一层约束：只允许 open 且未归属其他案件的告警入案；实体优先从 `source.ip` 提取，缺失时回退 `user.name`；案件状态 `open → investigating → resolved`，结案会逐条关闭案内告警并写 verdict；案件更新使用版本号避免覆盖并发调查。
+~~~java
+final int requestedPort = port;
+synchronized (portLock) {
+    boolean taken = requestedPort > 0 && store.list().stream()
+            .anyMatch(s -> s.port == requestedPort
+                    && !"file".equalsIgnoreCase(s.protocol));
+    if (taken) throw new PortConflictException(requestedPort);
+    LogSource s = LogSource.creating(name, protocol, templateId, port, path);
+    store.save(s);                 // creating
+    return s;
+}
+~~~
 
-告警的 `alert.case_id` 仍是 ES 中的快速关联字段，因此创建/追加/移出案件包含补偿逻辑：部分标记成功后失败，会清除已写入 marker，并在必要时删除空壳案件。历史只存在 ES 的案件则在查询时惰性导入控制面，兼容迁移前数据而不把 ES 继续当作事实源。
+激活不是 HTTP 请求内同步完成，而是先创建 background_tasks 记录，把状态改成 creating，worker 再执行；下面是去掉 null 保护后的核心分支：
 
-## 8. 控制面把异步操作实现为有租约的持久任务
+~~~java
+if (!lifecycleInFlight.add(id)) {
+    throw new ConflictException("数据源正在执行其他生效任务: " + id);
+}
+s.status = "creating";
+s.taskId = control.createTask("log_source_activate",
+        id, "等待数据源配置生效");
+store.save(s);
+ACTIVATOR.execute(() -> {
+    if (taskId != null && !control.claimTask(taskId, TASK_OWNER,
+            Instant.now().plusSeconds(600))) return;
+    if (taskId != null) control.heartbeatTask(taskId, TASK_OWNER,
+            Instant.now().plusSeconds(600), 10, "正在生成 Logstash 配置");
+    if (taskId != null) control.heartbeatTask(taskId, TASK_OWNER,
+            Instant.now().plusSeconds(600), 40, "正在校验并同步 Logstash 配置");
+    LogSource result = activateSync(id);
+    if (taskId != null) control.updateTask(taskId,
+            result.status.equals("active") ? "succeeded" : "failed", 100,
+            result.status.equals("active") ? "数据源已生效" : "数据源生效失败",
+            result.status.equals("active") ? null : result.lastError);
+});
+~~~
 
-数据源激活、规则部署、实体风险重算等长操作不在 HTTP 请求中阻塞。服务先写 `background_tasks`，worker 领取任务时写 owner 和过期时间，执行过程中发送 heartbeat，完成时写 succeeded/failed、进度和错误。
+状态的含义是可观察的：creating 表示任务仍在执行，active 表示 Logstash 已通过校验并完成 reload/restart，failed 携带 lastError，stopped 表示声明保留但 pipeline 已移除。
 
-`BackgroundTaskRecovery` 在应用启动和定时扫描时收敛过期心跳，把进程重启遗留的任务标记为失败并提示重试。`CriticalityRecalcCoordinator` 还会清洗 WSL 转发的 NUL 字符并限制错误长度，防止不可持久化的外部进程错误破坏 PostgreSQL 写入。
+### 3.2 ActivationCoordinator 不是普通文件写入器
 
-资产关键度文件也有自己的完整性边界：`CriticalityService` 只接受 `ip/user/host` 三种类型，校验 key 格式和 IP 合法性，把 low/medium/high/extreme 映射为 0.5/1.0/1.5/2.0 权重；批量接口先验证全部项目（最多 1000 条）再一次性原子替换。`ProcessCriticalityDeployer` 调用 `entity-risk.py --write` 生成实体风险，结果以后台任务、通知和审计闭环。
+实现位置：`src/main/java/com/xscsiem/hsiem_platform/onboarding/ActivationCoordinator.java`、`LogstashDeployer.java`。
 
-配置文件不是无痕副作用：`ConfigRevisionJournal` 对内容计算 SHA-256 前缀，把 `kind:path#revision` 和真实 actor 写入审计表。规则启停只用正则替换原 YAML 的 `enabled` 行，保留注释、顺序和其它字段，因此代码审查能看到最小 diff。
+激活方法的关键顺序如下：
 
-## 9. 认证、授权和审计的实现边界
+~~~java
+public synchronized void activate(LogSource s, ParserTemplate t) {
+    Path confFile = Path.of(pipelineDir, "log-sources", s.id + ".conf");
+    Path pipelines = Path.of(configDir, "pipelines.yml");
+    Path compose = Path.of(composeFile);
+    String containerPath = containerPipelineRoot + "/log-sources/" + s.id + ".conf";
+    String pipelinesBackup = Files.exists(pipelines) ? Files.readString(pipelines) : "";
+    String composeBackup = null;
+    try {
+        String conf = generator.generatePipeline(s, t);
+        atomicWrite(confFile, conf);
+        String entry = "- pipeline.id: " + pipelineId(s) + "\n"
+                + "  path.config: \"" + containerPath + "\"\n"
+                + "  pipeline.ecs_compatibility: v8\n";
+        String base = pipelinesBackup.endsWith("\n")
+                ? pipelinesBackup : pipelinesBackup + "\n";
+        atomicWrite(pipelines, base + entry);
+        composeBackup = addPortToCompose(compose, s.port);
 
-- `AuthUserView` 是管理 API 的输出 DTO，只包含 id、用户名、角色、状态和 `passwordChangeRequired`，不包含 BCrypt `passwordHash`；
-- 登录令牌只以 SHA-256 hash 存入 PostgreSQL `auth_sessions`，Bearer token 在请求过滤器中查会话并转换为 Spring Security authorities；
-- 登录失败按窗口累计并锁定，密码至少 12 位；新用户和默认账号带首次改密标志，过滤器对除登录、改密、me、logout 外的 API 返回 428；
-- `@EnableMethodSecurity` 和角色权限集合共同约束 admin、analyst、ops、audit；规则启停、用户管理等控制操作在 controller/service 层额外限制；
-- 审计 actor 从当前认证主体获取，后台无主体时才使用 `system`，因此配置 revision、规则启停、处置和密码操作可以追溯到真实用户；
-- `ProductionSafetyValidator` 在 `app.production-mode=true` 时 fail-closed：ES 必须 HTTPS 且有凭据，Kafka 必须 `SASL_SSL`。
+        deployer.syncLogstash();
+        if (!deployer.validateConfig(containerPath)) {
+            rollbackAndResync(confFile, pipelines, pipelinesBackup,
+                    compose, composeBackup);
+            throw new ActivationFailedException("Logstash 配置校验失败,已回滚");
+        }
+        if (portProtocol(s)) deployer.restartLogstash();
+        else deployer.reloadLogstash();
 
-## 10. 健康检查关注业务信号而非“端口开着”
+        ConfigRevisionJournal.record(control,
+                "logstash-pipeline", confFile, "system");
+    } catch (IOException | RuntimeException e) {
+        rollbackAndResync(confFile, pipelines, pipelinesBackup,
+                compose, composeBackup);
+        throw new ActivationFailedException("生效失败,已回滚", e);
+    }
+}
+~~~
 
-`OperationalHealthService` 的扫描结果包含组件状态、耗时、错误和扫描时间：
+对应的 pipelines.yml 生成项是：
 
-- PostgreSQL 执行 `SELECT 1`；
-- Elasticsearch 调用 client ping；
-- Kafka 确认 topic 分区、consumer group offset，并计算 lag，超过阈值或完全没有消费 offset 时 DOWN；
-- Flink 要求 overview 中存在 RUNNING Job；
-- Kibana 要求 overall level 为 available；
-- Logstash 优先查询 `/_node/pipelines`，监控 API 失败时才退回 TCP，并明确标记 `degraded` 和“仅确认端口监听”。
+~~~yaml
+- pipeline.id: ls-54fc7d96
+  path.config: "/usr/share/logstash/pipeline/log-sources/ls-54fc7d96.conf"
+  pipeline.ecs_compatibility: v8
+~~~
 
-扫描还通过 Micrometer 记录次数、耗时和最后扫描 epoch，前端可以区分真正 DOWN 与降级探针。Kafka 连接超时之类的错误不会被包装成“服务正常”，而是作为可定位的组件错误返回。
+端口协议必须 restart，因为 Docker Compose 的宿主端口只在容器创建时生效；file pipeline 没有宿主端口，可以直接 HUP reload。同步、配置测试、重启任一步失败都恢复仓库文件并再次同步 WSL，防止“本地已回滚、WSL 仍残留坏配置”。ProcessLogstashDeployer 还并行消费外部进程输出，避免 stdout 管道写满导致 waitFor 假死。
 
-`ElasticsearchGateway` 查询聚合前用 `_field_caps` 判断字段是否存在 `.keyword` 且可聚合，在历史 text mapping 和新 keyword/ip mapping 并存时选择兼容字段；这避免旧索引导致规则命中、FP 率或数据健康接口整体失败。
+### 3.3 规则发布使用另一套带 savepoint 的补偿
 
-## 11. 前端把跨页面关联和协议边界固定下来
+实现位置：`src/main/java/com/xscsiem/hsiem_platform/rules/ProcessRulesDeployer.java`、`RuleService.java`、`RuleController.java`。
 
-### 11.1 `api.js` 是唯一请求边界
+ProcessRulesDeployer.syncRules 不覆盖 /opt/flink/rules，而是建立 revision 目录：
 
-`web/src/api.js` 的 `request` 统一完成：10 秒 AbortController 超时、Bearer 注入、401 清理 token、文本响应解析、非 JSON 错误截断，以及 204/空正文返回 `null`。页面不再分别处理 fetch 的边缘情况，删除、登出等 204 操作也不会被误判为 JSON 错误。
+~~~java
+String revision = "rev-" + Instant.now().toEpochMilli() + "-"
+        + UUID.randomUUID().toString().substring(0, 8);
+String target = "/opt/flink/rules-revisions/" + revision;
+run("docker", "exec", containerName, "mkdir", "-p", target);
+run("wsl", "bash", "-c", "docker cp " + wslRepoPath
+        + "/infra/rules/. " + containerName + ":" + target + "/");
+activeRulesDir = target;
+~~~
 
-后端 `GlobalExceptionHandler` 将 400/404/409/401/403 和 500 统一为 `ApiError(timestamp,status,code,message,path)`；前端只需读取 `message`，而不必为每个 Controller 猜测错误格式。
+重启流程是 cancel -s savepoint → 从 savepoint 用新目录提交 → 轮询 flink list 确认 RUNNING；新目录提交失败则用相同 savepoint 和 lastSuccessfulRulesDir 恢复旧 Job。规则变更因此不会因为一次提交失败而让检测面长期停机。
 
-### 11.2 页面展示的是稳定关联，而不是孤立字段
+## 4. Logstash 到 Flink 的数据质量和 schema 细节
 
-`App.jsx` 以稳定 ID 贯穿页面：数据源 `log.source_id`、规则 `rule.id`、告警 `_id`、案件 `case.id`；告警来源优先读自身 source 字段，缺失时从 `related_events` 回退。案件详情再加载案内告警和 24 小时事件时间线，形成 `event → alert → case` 的可追溯关系。
+### 4.1 正常事件与隔离事件在 output 层分叉
 
-告警展开区直接使用 `JSON.stringify(r, null, 2)` 渲染完整对象，并设置可滚动、换行和长字段断行，`related_events` 不被表格列裁剪。时间列同时展示事件时间和告警生成时间，顶部说明页面时区，避免把窗口触发时间误当成当前机器时间。
+实现位置：`LogstashConfigGenerator.generatePipeline` 以及生成物 `infra/logstash/pipeline/log-sources/*.conf`。
 
-自动聚合条件被显示为可读事实：窗口分钟数、最少告警数、按实体或规则+实体分组，提交后显示创建数量。初始化请求失败会汇总到“部分数据加载失败”提示，不再把后端异常伪装成空列表；运行态页还每 10 秒刷新健康扫描和后台任务。
+生成器实际写出的 output 逻辑是：
 
-## 12. 这些亮点由测试和运行约束共同固定
+~~~conf
+output {
+  if "_parsefailure" in [tags] or "_dateparsefailure" in [tags] {
+    elasticsearch {
+      hosts => ["http://elasticsearch:9200"]
+      index => "siem-events-raw-%{+YYYY.MM.dd}"
+    }
+  } else {
+    elasticsearch { index => "siem-events-%{+YYYY.MM.dd}" }
+    kafka {
+      bootstrap_servers => "kafka:9092"
+      topic_id => "siem-events"
+      codec => json
+      acks => "all"
+      retries => 5
+      compression_type => "zstd"
+      batch_size => 131072
+      linger_ms => 5
+    }
+  }
+}
+~~~
 
-实现细节不是只存在于注释中，测试目录对应了关键风险面：
+失败事件保留在 ES 供 DataHealth 查询，但不进入 Kafka，因此不会因为未知字段触发 Flink 规则。正常事件会同时保留检索副本和检测总线副本。
 
-| 风险面 | 代表测试 |
+### 4.2 ES template 约束字段类型，历史索引用 reindex 切换
+
+实现位置：`infra/elasticsearch/siem-events-template.json`、`infra/elasticsearch/siem-events-raw-template.json`、`infra/elasticsearch/reindex-mappings.sh`。
+
+infra/elasticsearch/siem-events-template.json 的动态映射不是一律 keyword：
+
+~~~json
+"dynamic_templates": [
+  { "suffix_id": { "match": "*_id",
+                   "mapping": { "type": "keyword" } } },
+  { "log_path": { "path_match": "log.*",
+                  "mapping": { "type": "keyword" } } },
+  { "ip_fields": { "match_mapping_type": "string", "match": "*ip*",
+                   "mapping": { "type": "ip" } } },
+  { "default_string": { "match_mapping_type": "string",
+                        "mapping": { "type": "keyword" } } }
+]
+~~~
+
+source.ip 是 ip 类型，event.original/message 保留文本能力，related_events 在告警模板中是 nested。raw 模板 priority 更高，覆盖 siem-events-* 对 raw 名称的通配匹配。模板只影响新索引，因此 reindex-mappings.sh 采取“新索引 → _reindex → alias 原子切换”，而不是尝试修改既有 mapping。
+
+### 4.3 Flink 先扁平化 JSON，再按事件时间计算
+
+实现位置：`flink/src/main/java/com/siem/EventParser.java`、`Event.java`、`DetectionJob.java`。
+
+Logstash JSON 可能产生嵌套对象，但规则 YAML 使用 source.ip、event.action 这样的点分字段。EventParser 递归展开 Map，List 保持原样：
+
+~~~java
+private static void flatten(String prefix, Map<String, Object> map,
+                            Map<String, Object> out) {
+    for (Map.Entry<String, Object> entry : map.entrySet()) {
+        String key = prefix.isEmpty() ? entry.getKey() : prefix + "." + entry.getKey();
+        Object value = entry.getValue();
+        if (value instanceof Map) flatten(key, (Map<String, Object>) value, out);
+        else out.put(key, value);
+    }
+}
+
+public static Event parseEvent(String json) throws Exception {
+    Map<String, Object> fields = parse(json);
+    return new Event(json, fields, timestampMillis(fields.get("@timestamp")));
+}
+~~~
+
+缺失或非法 @timestamp 会回退到处理时间，这是故障可运行性选择，但会牺牲事件排序准确性；正常路径仍以 Logstash date filter 生成的 ISO-8601 @timestamp 为准。
+
+## 5. Flink 规则如何从 YAML 变成不同算子
+
+### 5.1 条件树由递归 builder 生成
+
+实现位置：`flink/src/main/java/com/siem/config/RuleBuilder.java`、`RuleDecl.java`、`Condition` 各实现类。
+
+规则文件中的条件：
+
+对应文件：`infra/rules/rule-common-user-bruteforce-001.yaml`。
+
+~~~yaml
+category: single_event
+condition:
+  type: all
+  conditions:
+    - { type: field_equals, field: event.action, value: authentication_failure }
+    - type: field_in
+      field: user.name
+      values: [admin, test, guest, postgres]
+~~~
+
+RuleBuilder.buildCondition 把它转换成组合对象，而不是在 DetectionJob 里拼字符串：
+
+~~~java
+return switch (spec.type) {
+    case "field_equals" -> new FieldEqualsCondition(spec.field, spec.value);
+    case "field_in" -> new FieldInCondition(spec.field, spec.values.toArray());
+    case "all" -> new AllCondition(subConditions(spec, "all"));
+    case "any" -> new AnyCondition(subConditions(spec, "any"));
+    case "not" -> new NotCondition(buildCondition(spec.conditions.get(0)));
+    default -> throw new IllegalArgumentException("未知条件类型: " + spec.type);
+};
+~~~
+
+这个递归边界还负责拒绝非法声明，例如 not 不是恰好一个子条件、field_in 没有 values、window 规则缺少 keyField/windowMinutes/threshold。
+
+### 5.2 四种 category 在 DetectionJob 中走四条真实执行分支
+
+实现位置：`flink/src/main/java/com/siem/DetectionJob.java`、`WindowRuleFunction.java`、`BruteforceSuccessFunction.java`、`BaselineAnomalyFunction.java`。
+
+~~~java
+List<RuleDecl> enabled = decls.stream().filter(d -> d.enabled).toList();
+
+DataStream<String> singleAlerts = parsed
+        .flatMap(new DetectionFunction(new RuleRegistry(singleRules)))
+        .keyBy(AlertSuppressor::suppressionKey)
+        .process(new AlertSuppressor(Duration.ofMinutes(60)));
+
+for (RuleDecl d : enabled.stream().filter(x -> "window".equals(x.category)).toList()) {
+    WindowRule wr = builder.toWindowRule(d);
+KeyedStream<Event, String> keyed = parsedTimed.keyBy(e -> String.valueOf(
+        e.getFields().getOrDefault(wr.getKeyField(), "unknown")));
+SingleOutputStreamOperator<String> windowed;
+if (wr.getSlidingMinutes() != null && wr.getSlidingMinutes() > 0) {
+    windowed = keyed.window(SlidingEventTimeWindows.of(
+                    Duration.ofMinutes(wr.getWindowMinutes()),
+                    Duration.ofMinutes(wr.getSlidingMinutes())))
+            .process(new WindowRuleFunction(wr));
+} else {
+    windowed = keyed.window(TumblingEventTimeWindows.of(
+                    Duration.ofMinutes(wr.getWindowMinutes())))
+            .process(new WindowRuleFunction(wr));
+}
+}
+
+for (RuleDecl d : enabled.stream().filter(x -> "cep".equals(x.category)).toList()) {
+    RuleMeta meta = builder.toMeta(d);
+    CEP.pattern(parsedTimed.keyBy(e -> String.valueOf(
+            e.getFields().getOrDefault(d.keyField, "unknown"))),
+            buildCepPattern(d.cep))
+            .process(new BruteforceSuccessFunction(
+                    meta.id(), meta.name(), meta.type(), meta.severity(),
+                    meta.description(), meta.riskScore(), meta.tags(),
+                    meta.status(), meta.version()))
+            .uid("cep-" + d.id);
+}
+
+for (RuleDecl d : enabled.stream().filter(x -> "baseline".equals(x.category)).toList()) {
+    RuleDecl.BaselineDecl b = d.baseline;
+    if (b == null || b.baselineHours == null || b.minBaselineHours == null)
+        throw new IllegalArgumentException("baseline 规则缺少 baseline 参数: " + d.id);
+    RuleMeta meta = builder.toMeta(d);
+    long windowHours = b.windowHours == null ? 1L : b.windowHours;
+    parsedTimed.keyBy(e -> String.valueOf(
+            e.getFields().getOrDefault(b.keyField, "unknown")))
+            .window(TumblingEventTimeWindows.of(Duration.ofHours(windowHours)))
+            .process(new BaselineAnomalyFunction(b.baselineHours, b.minBaselineHours, meta));
+}
+~~~
+
+四条分支共享同一事件时间流：
+
+~~~java
+WatermarkStrategy.<Event>forBoundedOutOfOrderness(Duration.ofSeconds(10))
+    .withTimestampAssigner((event, recordTs) -> event.getTimestampMillis())
+    .withIdleness(Duration.ofSeconds(60));
+~~~
+
+10 秒是乱序容忍，不是“平台时间”；60 秒 idle 是为了避免某个暂时无日志的 key 阻塞其它 key 的窗口关闭。滑动窗口覆盖边界后，再由 WindowAlertSuppressor 按规则+实体抑制重复告警。
+
+### 5.3 checkpoint、Kafka offset 和 operator UID 是可恢复性的三层
+
+实现位置：`flink/src/main/java/com/siem/DetectionJob.java` 运行环境初始化和 Kafka source 构建部分。
+
+~~~java
+env.enableCheckpointing(tuning.checkpointIntervalMs(), CheckpointingMode.EXACTLY_ONCE);
+env.getCheckpointConfig().setCheckpointTimeout(tuning.checkpointTimeoutMs());
+env.getCheckpointConfig().setMaxConcurrentCheckpoints(1);
+env.getCheckpointConfig().setTolerableCheckpointFailureNumber(
+        tuning.tolerableCheckpointFailures());
+
+KafkaSource.<String>builder()
+    .setTopics("siem-events")
+    .setGroupId("siem-detection")
+    .setStartingOffsets(OffsetsInitializer.committedOffsets(EARLIEST));
+~~~
+
+checkpoint 持久化到 /opt/flink/checkpoints，Kafka 从已提交 offset 恢复，首次启动才回退 earliest，算子通过 .uid("...") 固定状态身份。三者共同决定重启后是继续消费、恢复窗口状态，还是从头建立检测状态。
+
+## 6. 告警写入为什么不会轻易重复或覆盖处置
+
+### 6.1 确定性 _id 把重放变成更新
+
+实现位置：`flink/src/main/java/com/siem/DetectionJob.java` 的 `alertId`、ES sink 构建部分。
+
+DetectionJob.alertId 实际计算：
+
+~~~java
+String ruleId = String.valueOf(alert.getOrDefault("alert.rule_id", "unknown"));
+Object declaredEntity = alert.get("alert.entity");
+Object ip = alert.get("source.ip");
+Object user = alert.get("user.name");
+String entity = declaredEntity != null ? String.valueOf(declaredEntity)
+        : (ip != null ? String.valueOf(ip)
+        : (user != null ? String.valueOf(user) : "unknown"));
+String ts = String.valueOf(alert.getOrDefault("@timestamp", "unknown"));
+return sha1Hex(ruleId + "|" + entity + "|" + ts);
+~~~
+
+同一个规则、实体、事件时间再次进入 Kafka 时，ES _id 相同，写入不会新增第二条文档。
+
+### 6.2 Flink sink 对分析师字段做 partial update 保护
+
+实现位置：`flink/src/main/java/com/siem/DetectionJob.java` 的 `toBulkOperation`。
+
+~~~java
+Map<String, Object> full = ALERT_MAPPER.readValue(element, Map.class);
+Map<String, Object> patch = new HashMap<>(full);
+Set<String> protectedFields = Set.of(
+        "alert.status", "alert.analyst_verdict", "alert.operator",
+        "alert.status_updated_at", "alert.case_id");
+protectedFields.forEach(patch::remove);
+
+return new UpdateOperation.Builder<JsonData, JsonData>()
+        .index("siem-alerts")
+        .id(alertId(element))
+        .action(new UpdateAction.Builder<JsonData, JsonData>()
+                .doc(JsonData.fromJson(ALERT_MAPPER.writeValueAsString(patch)))
+                .upsert(JsonData.fromJson(element))
+                .docAsUpsert(true)
+                .build())
+        .build();
+~~~
+
+首次命中用完整文档 upsert，后续检测更新只提交检测侧字段。窗口结束、作业重放或 suppression timer 不会把分析师刚写入的 status、verdict、operator、case 关系覆盖掉。
+
+### 6.3 分析师更新使用 ES 乐观锁，并且批量请求先预检查
+
+实现位置：`src/main/java/com/xscsiem/hsiem_platform/alert/AlertService.java`、`AlertController.java`。
+
+AlertService 先 GET 得到 _seq_no/_primary_term，再发送：
+
+~~~java
+int code = esCallCode("POST",
+        "/siem-alerts/_update/" + id
+        + "?if_seq_no=" + seqObj + "&if_primary_term=" + ptObj,
+        "{\"doc\":" + MAPPER.writeValueAsString(doc) + "}");
+if (code == 409) {
+    throw new ConflictException("告警已被其他分析师更新,请刷新后重试");
+}
+~~~
+
+批量处置先逐条读取文档，检查结案是否有 verdict、状态转移是否合法，再执行逐条更新（下面省略校验方法参数）：
+
+~~~java
+for (String id : ids) {
+    Map<String, Object> current = esGet("/siem-alerts/_doc/" + id);
+    currentById.put(id, current); // verdict-only 也必须拿版本
+    validateStatusTransition(...);
+}
+if (!missingVerdict.isEmpty() || !invalidTransitions.isEmpty()) throw ...;
+for (String id : ids) {
+    try {
+        optimisticUpdate(id, buildDoc(status, verdict, operator),
+                currentById.get(id));
+    } catch (Exception e) {
+        failed.add(id);
+    }
+}
+~~~
+
+因此“只提交 verdict”的批量请求不会因为缺少版本号全部失败，单条并发冲突也会被明确返回，而不是静默覆盖。
+
+## 7. 案件不是一次 ES 双写：PostgreSQL 事实 + outbox 镜像
+
+### 7.1 案件主表、关系表和 outbox 在同一数据库事务中落地
+
+实现位置：`src/main/java/com/xscsiem/hsiem_platform/control/JdbcControlPlaneStore.java`、`src/main/resources/db/migration/V*.sql`。
+
+JdbcControlPlaneStore.createCase 的核心 SQL（JDBC 参数映射省略）：
+
+~~~java
+@Transactional
+public void createCase(Map<String, Object> document, List<String> alertIds) {
+    jdbc.update("""
+        INSERT INTO cases(id, title, status, aggregation, operator, owner, verdict,
+            created_at, updated_at, closed_at, alert_ids_json, entities_json,
+            evidence_json, collaborators_json, version)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+        """, ...);
+    insertRelations(value(document, "case.id"), alertIds);
+    enqueueCaseMirror(value(document, "case.id"), "upsert", document);
+}
+~~~
+
+cases.version 在 update 时作为乐观锁：
+
+~~~sql
+UPDATE cases
+SET ..., version = version + 1
+WHERE id = ? AND version = ?;
+~~~
+
+更新行数为 0 即表示并发修改，业务层要求刷新后重试。case_alerts.alert_id 有唯一约束，告警不能同时归属多个案件。
+
+### 7.2 outbox 合并、租约和退避分别解决三个问题
+
+实现位置：`src/main/java/com/xscsiem/hsiem_platform/investigation/CaseMirrorDispatcher.java`、`ControlPlaneStore.java`。
+
+case_mirror_outbox 的实际字段：
+
+~~~sql
+CREATE TABLE case_mirror_outbox (
+    id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+    case_id VARCHAR(128) NOT NULL,
+    operation VARCHAR(16) NOT NULL,
+    payload_json TEXT,
+    status VARCHAR(16) NOT NULL DEFAULT 'pending',
+    attempts INTEGER NOT NULL DEFAULT 0,
+    available_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    locked_until TIMESTAMP WITH TIME ZONE,
+    lease_owner VARCHAR(128),
+    last_error TEXT,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT case_mirror_outbox_operation_ck CHECK (operation IN ('upsert', 'delete')),
+    CONSTRAINT case_mirror_outbox_status_ck CHECK (status IN ('pending', 'in_flight', 'succeeded', 'failed'))
+);
+CREATE INDEX case_mirror_outbox_ready_idx
+    ON case_mirror_outbox (status, available_at, locked_until);
+~~~
+
+连续更新同一案件时，enqueueCaseMirror 先把已有 pending/failed upsert 的 payload 替换成最新文档；delete 不允许被旧 upsert 覆盖。dispatcher 领取时写入 owner、lease 和 attempts：
+
+~~~java
+List<Map<String, Object>> batch = control.claimCaseMirrorBatch(
+        owner, Instant.now().plus(lease), 50);
+...
+control.completeCaseMirror(id, owner, true, null, Instant.now());
+~~~
+
+ES 失败时按 min(300s, 2^attempts) 计算下一次时间并保留清洗后的错误；进程重启后 pending/failed 记录仍在数据库，不需要依赖原 JVM 内存。
+
+### 7.3 告警 case_id 是快速索引，业务层仍有补偿
+
+实现位置：`src/main/java/com/xscsiem/hsiem_platform/investigation/CaseService.java`。
+
+案件创建前先检查所有告警 open 且没有其它 case_id。案件和关系成功后，再逐条写 ES alert marker：
+
+~~~java
+for (String id : alertIds) {
+    int code = esCallCode("POST", "/siem-alerts/_update/" + id,
+            "{\"doc\":{\"alert.case_id\":\"" + caseId + "\"}}");
+    if (code / 100 == 2) marked.add(id);
+    else failed.add(id);
+}
+if (!failed.isEmpty()) {
+    for (String id : marked) clearAlertCase(id);
+    throw new IllegalStateException("告警标记案件失败,已回滚成功标记");
+}
+~~~
+
+这段补偿不能制造跨 ES 索引事务，但它把“部分告警已归案、部分没有”的孤儿状态显式暴露出来，并尽力清理已成功 marker。ES 只保留查询镜像，控制面是案件事实源；旧 ES 案件在查询时才惰性导入 PostgreSQL。
+
+## 8. 配置 revision、后台任务和关键度文件的持久化细节
+
+### 8.1 文件配置统一原子写入并记录内容 hash
+
+实现位置：`src/main/java/com/xscsiem/hsiem_platform/control/ConfigRevisionJournal.java`。
+
+ConfigRevisionJournal.atomicWrite 的机制：
+
+~~~java
+Path tmp = Files.createTempFile(parent, path.getFileName().toString(), ".tmp");
+try {
+    Files.writeString(tmp, content, StandardCharsets.UTF_8);
+    try {
+        Files.move(tmp, path, REPLACE_EXISTING, ATOMIC_MOVE);
+    } catch (AtomicMoveNotSupportedException e) {
+        Files.move(tmp, path, REPLACE_EXISTING);
+    }
+} finally {
+    Files.deleteIfExists(tmp);
+}
+~~~
+
+record 对最终文件计算 SHA-256，审计目标形如 kind:path#revision-prefix。规则启停更进一步只替换 YAML 的 enabled: true/false 行，保留注释和字段顺序，避免管理 UI 产生整文件重排。
+
+### 8.2 任务租约让进程内 worker 具备可收敛状态
+
+实现位置：`src/main/java/com/xscsiem/hsiem_platform/control/BackgroundTaskRecovery.java`、`ControlPlaneStore.java`、`src/main/resources/db/migration/V7__outbox_task_leases.sql`。
+
+background_tasks 在 V7 增加：
+
+~~~sql
+ALTER TABLE background_tasks ADD COLUMN lease_owner VARCHAR(128);
+ALTER TABLE background_tasks ADD COLUMN lease_until TIMESTAMP WITH TIME ZONE;
+ALTER TABLE background_tasks ADD COLUMN heartbeat_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE background_tasks ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE background_tasks ADD COLUMN max_attempts INTEGER NOT NULL DEFAULT 3;
+~~~
+
+worker 领取任务、定期 heartbeat、最终更新状态；BackgroundTaskRecovery 在启动和每 60 秒扫描一次，把超过 stale-after（默认 5 分钟）的任务标记为 failed：
+
+~~~java
+control.recoverStaleTasks(
+        Instant.now().minus(staleAfter),
+        "服务重启或任务心跳超时，任务未能完成；请重新提交");
+~~~
+
+这没有把任务伪装成可自动续跑；它准确表达“原执行上下文已经消失，需要人工重试”，避免前端永久显示进行中。
+
+### 8.3 资产关键度更新是全量校验、单次替换
+
+实现位置：`src/main/java/com/xscsiem/hsiem_platform/settings/CriticalityService.java`、`CriticalityRecalcCoordinator.java`、`ProcessCriticalityDeployer.java`。
+
+CriticalityService 只允许 ip/user/host，校验 key 长度、字符集和 IP 格式；级别映射为 low=0.5、medium=1.0、high=1.5、extreme=2.0。批量接口先验证最多 1000 条全部输入，再写一次临时文件并原子替换，任何一项失败都不改变旧文件。
+
+异步重算不是“只返回 200”：CriticalityRecalcCoordinator 写入任务、claim、heartbeat，ProcessCriticalityDeployer 实际调用：
+
+~~~text
+wsl bash -c "python3 infra/elasticsearch/entity-risk.py --write"
+~~~
+
+成功后更新任务、生成通知并记录 actor；外部命令输出会清除 NUL 字符并限制 4000 字节，避免 WSL 的编码污染 PostgreSQL。
+
+## 9. 认证实现展示：输出 DTO、持久会话和首次改密
+
+实现位置：`src/main/java/com/xscsiem/hsiem_platform/auth/AuthUserView.java`、`AuthService.java`、`BearerSessionFilter.java`。
+
+用户实体内部含 passwordHash，但管理 API 使用独立输出类型：
+
+~~~java
+public record AuthUserView(
+        String id, String username, String role, String status,
+        String createdAt, boolean passwordChangeRequired) {
+    public static AuthUserView from(AuthUser user) {
+        return new AuthUserView(user.id, user.username, user.role,
+                user.status, user.createdAt, user.passwordChangeRequired);
+    }
+}
+~~~
+
+登录返回原始 token，但 PostgreSQL 只保存 SHA-256(token)；请求经过 BearerSessionFilter 后才构造 Spring Security Authentication。首次登录账号的 passwordChangeRequired=true 时，除了 login/password/me/logout 之外的 API 直接返回 428：
+
+~~~java
+if (user.passwordChangeRequired && requiresPasswordChange(request)) {
+    response.setStatus(428);
+    response.getWriter().write(
+        "{\"code\":\"PASSWORD_CHANGE_REQUIRED\",\"message\":\"请先修改密码\"}");
+    return;
+}
+~~~
+
+密码修改成功才把标志置为 false；登录失败在 PostgreSQL login_attempts 中按窗口累计并锁定。Authentication#getName 使用用户名字符串，审计日志得到稳定 actor，而不是序列化整个用户对象。
+
+## 10. 运行态健康检查的代码分层
+
+### 10.1 Kafka 检查 topic、分区、group offset 和 lag
+
+实现位置：`src/main/java/com/xscsiem/hsiem_platform/health/OperationalHealthService.java`。
+
+OperationalHealthService.kafka() 不是 Socket.connect：
+
+~~~java
+var description = admin.describeTopics(List.of(kafkaTopic))
+        .allTopicNames().get(4, TimeUnit.SECONDS).get(kafkaTopic);
+if (description == null || description.partitions().isEmpty()) return down("topic 不存在或没有分区");
+List<TopicPartition> partitions = description.partitions().stream()
+        .map(p -> new TopicPartition(kafkaTopic, p.partition())).toList();
+Map<TopicPartition, OffsetSpec> requests = new HashMap<>();
+partitions.forEach(p -> requests.put(p, OffsetSpec.latest()));
+Map<TopicPartition, Long> end =
+        admin.listOffsets(requests).all().get(4, TimeUnit.SECONDS)
+        .entrySet().stream()
+        .collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue().offset()));
+Map<TopicPartition, OffsetAndMetadata> committed =
+        admin.listConsumerGroupOffsets(kafkaGroup)
+        .partitionsToOffsetAndMetadata().get(4, TimeUnit.SECONDS);
+
+long lag = 0;
+int missing = 0;
+for (TopicPartition partition : partitions) {
+    Long latest = end.get(partition);
+    OffsetAndMetadata offset = committed.get(partition);
+    if (latest != null && offset != null) {
+        lag += Math.max(0, latest - offset.offset());
+    }
+    if (offset == null) missing++;
+}
+~~~
+
+没有 topic、所有 partition 都没有 group offset 或 lag 超过 kafkaMaxLag 才会返回 DOWN，并把 topic、group、partition 数和 lag 放进结果；缺失 offset 不会触发空指针，而是计入 missing。
+
+### 10.2 Logstash API 失败时明确标记降级
+
+实现位置：`src/main/java/com/xscsiem/hsiem_platform/health/OperationalHealthService.java`。
+
+~~~java
+Map<String, Object> monitoring = httpJson(
+        "logstash", logstashUrl + "/_node/pipelines",
+        node -> node.path("pipelines").isObject()
+              && node.path("pipelines").size() > 0,
+        "Logstash 没有活动 pipeline");
+if ("UP".equals(monitoring.get("status"))) return monitoring;
+
+Map<String, Object> socket = tcp("logstash", host, port);
+if ("UP".equals(socket.get("status"))) {
+    socket.put("probe", "tcp");
+    socket.put("degraded", true);
+    socket.put("warning", "监控 API 不可用，仅确认端口监听");
+}
+return socket;
+~~~
+
+因此用户看到的 UP 并不掩盖 API 不可用；Flink 还要求 /overview 中存在 RUNNING Job，Kibana 要求 overall level 为 available。扫描本身用 Micrometer 记录次数、耗时和最后扫描时间。
+
+## 11. 前端实现如何承接后端真实状态
+
+### 11.1 所有请求通过一个协议边界
+
+实现位置：`web/src/api.js`、`src/main/java/com/xscsiem/hsiem_platform/onboarding/GlobalExceptionHandler.java`。
+
+web/src/api.js 的 request 直接处理超时、401、非 JSON 和 204：
+
+~~~javascript
+const controller = new AbortController()
+const timeout = window.setTimeout(() => controller.abort(), 10000)
+try {
+  r = await fetch(BASE + path, {
+    ...options,
+    signal: options?.signal || controller.signal,
+    headers: authHeaders(options?.headers),
+  })
+} finally {
+  window.clearTimeout(timeout)
+}
+if (r.status === 401 && path !== '/auth/login') {
+  authToken = ''
+  localStorage.removeItem('siem_token')
+}
+const raw = await r.text()
+let body = null
+if (raw.trim()) {
+  try { body = JSON.parse(raw) } catch {
+    body = { message: raw.slice(0, 200) }
+  }
+}
+if (!r.ok) throw new Error(body?.message || "请求失败: " + r.status)
+return r.status === 204 || !raw.trim() ? null : body
+~~~
+
+后端 GlobalExceptionHandler 将 400/404/409/401/403/500 统一成 ApiError(timestamp,status,code,message,path)，前端不会把后端异常误显示成空数据。
+
+### 11.2 告警详情保留完整对象，页面字段只做索引视图
+
+实现位置：`web/src/App.jsx` 告警表、展开详情和时间/数据源显示组件。
+
+告警表使用 _id 作为 row key，列只展示风险、规则、状态、实体、案件和时间；展开内容保留完整对象：
+
+~~~jsx
+expandedRowRender: (row) => (
+  <>
+    <Typography.Text>
+      事件时间用于检测窗口；告警生成时间表示写入时间。
+    </Typography.Text>
+    <pre style={{ maxHeight: 420, overflow: 'auto',
+                  whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+      {JSON.stringify(row, null, 2)}
+    </pre>
+  </>
+)
+~~~
+
+alertSource 先读 log.source_name/log.source_id，缺失时从 related_events 回退；时间组件将 ISO UTC 转成本地时区，并在 title 中保留原始 UTC。这样表格是索引视图，原始告警不会因为列设计被截断。
+
+### 11.3 调查台和后台任务展示的是后端状态机
+
+实现位置：`web/src/App.jsx` 调查台、数据源任务轮询和通知区域；后端状态来自 `BackgroundTaskController` 与 `LogSourceController`。
+
+自动聚合请求携带 windowMinutes/threshold/groupByRule，页面同时显示“当前条件”的可读文本；数据源、实体风险和规则部署返回 task ID 后，运行态页面每 10 秒刷新 healthScan 与 listTasks。初始化多个 API 中任意一个失败，会集中显示“部分数据加载失败”和具体模块，而不是渲染“暂无数据”。
+
+## 12. 代码级实现与测试的对应关系
+
+| 实现片段 | 直接验证它的测试 |
 | --- | --- |
-| 模板正负样例与保存门禁 | `TemplateGateTest`、`ParserTemplateServiceTest`、`LogstashConfigGeneratorTest` |
-| 激活回滚、端口和生命周期 | `ActivationCoordinatorTest`、`LogSourceServiceTest` |
-| 规则条件、窗口、CEP、基线和抑制 | `RuleEngineTest`、`WindowRuleTest`、`SuppressionTest`、`BaselineAnomalyTest` |
-| 告警处置状态机和乐观锁 | `AlertServiceTest` |
-| 案件状态、实体和关联补偿 | `CaseServiceTest`、`ControlPlaneStoreTest` |
-| 认证、首次改密、用户视图和权限 | `AuthServiceTest`、`AuthUserViewTest`、`SecurityApiTest` |
-| 任务、通知、数据健康和关键度 | `NotificationServiceTest`、`NotificationScannerTest`、`DataHealthServiceTest`、`CriticalityServiceTest` |
-| 规则 YAML 结构和运行时调优 | `RuleConfigLoaderTest`、`RuleLintTest`、`RuntimeTuningTest` |
+| ParserTemplate 正负样例门禁、Grok 首匹配 | TemplateGateTest、ParserTemplateServiceTest |
+| generateInput/generateFilter/generatePipeline 语法与 raw 分支 | LogstashConfigGeneratorTest |
+| 激活备份、配置校验、失败回滚、端口冲突 | ActivationCoordinatorTest、LogSourceServiceTest |
+| 条件树、窗口边界、CEP、基线、抑制状态 | RuleEngineTest、WindowRuleTest、BaselineAnomalyTest、SuppressionTest |
+| 确定性告警 ID、partial update、处置状态机 | DetectionJobSinkTest、AlertServiceTest |
+| 案件关系、版本冲突、控制面迁移 | CaseServiceTest、ControlPlaneStoreTest、PostgresMigrationContainerTest |
+| 用户视图、首次改密、Bearer 权限 | AuthUserViewTest、AuthServiceTest、SecurityApiTest |
+| 健康指标、通知频控、关键度原子批量 | DataHealthServiceTest、NotificationServiceTest、CriticalityServiceTest |
 
-当前实现的可复用核心不是某个组件的堆叠，而是这些细节之间的配合：声明式配置有类型化门禁，生成物有配置校验和补偿，流处理有事件时间、状态和幂等写入，控制面有事实源、租约和审计，前端再把同一组稳定 ID 和时间语义呈现出来。
+代码片段、配置片段和测试需要一起看：单独看 YAML 看不到发布补偿，单独看 Java 看不到运行时字段，单独看前端又看不到状态机和最终一致性。
 
-## 13. 设计取舍与明确边界
+## 13. 由实现直接推导出的边界
 
-- YAML + Git 适合当前单实例、可审查的学习和演示环境；多副本控制面仍需要分布式锁和外部配置中心。
-- Saga 回滚能覆盖当前文件、WSL 和 Docker 发布步骤，但不等于跨系统原子事务；镜像 outbox 解决的是案件事实到 ES 的最终一致性。
-- Flink savepoint 回滚保护规则发布，但修改规则仍有重启检测 Job 的成本；大规模场景需要版本化作业或动态规则广播。
-- raw 索引保留坏数据并阻断检测污染，但不会自动修复模板或上游格式；DataHealth/通知负责把问题暴露出来。
-- ES/Kafka 的生产安全门禁已经在应用启动处存在，实际生产部署仍必须提供 TLS、SASL、凭据和高可用拓扑，不能把本地 Docker 的单节点参数当成生产基线。
+- synchronized、lifecycleInFlight 和端口锁只覆盖单 JVM；多副本控制面仍需要分布式锁。
+- outbox 把案件事实到 ES 变成可重试的最终一致性，不是跨 ES/PostgreSQL 的原子事务。
+- Flink savepoint 保护规则状态，但规则启停仍需要重启 Job；规模扩大后需要动态规则广播或版本化作业。
+- raw 索引保留坏数据并阻止检测污染，但不会自动修复模板；DataHealth 和通知负责暴露问题。
+- 本地 Compose 的 PLAINTEXT、单节点和 RF=1 只适合当前环境；生产必须满足 ProductionSafetyValidator 的 TLS/SASL 门禁并补足拓扑高可用。
