@@ -62,4 +62,4 @@ HISIEM 已完成检测链路、控制面、接入向导、告警处置、调查�
 - “怎么学习组件”：看 `docs/learn/`；学习文档允许保留简化示例，不替代生产配置。
 - “历史审计证据”：看 [`archive/architecture-audit-2026-08.md`](archive/architecture-audit-2026-08.md)。它保留分析过程和风险证据，不作为日常入口。
 
-状态有变化时，先更新本页、[路线图](roadmap.md)和[当前产品契约](product-contract.md)，避免在多个模块文档中维护互相矛盾的状态表。
+状态有变化时，先更新本页、[路线图](roadmap.md)和[当前产品契约](product-contract.md)，再同步派生的[项目进展与遗留问题](project-progress.md)，避免在多个模块文档中维护互相矛盾的状态表。

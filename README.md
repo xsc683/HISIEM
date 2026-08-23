@@ -51,6 +51,7 @@ SIEM/
 | 文档 | 内容 |
 | --- | --- |
 | [docs/current-status.md](docs/current-status.md) | 最近一次验证的能力、部署基线和未闭环生产风险 |
+| [docs/project-progress.md](docs/project-progress.md) | 当前能力进展、遗留问题、关闭条件与建议迭代顺序 |
 | [docs/architecture.md](docs/architecture.md) | 系统架构、数据流、Schema、规则引擎概览 |
 | [docs/deployment.md](docs/deployment.md) | **新机器部署指南**(换环境必备) |
 | [docs/operations.md](docs/operations.md) | 日常启动、健康扫描、端到端冒烟、排障和回滚 |

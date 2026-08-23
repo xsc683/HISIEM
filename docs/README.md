@@ -2,15 +2,16 @@
 
 本目录只保留能指导当前开发、部署、使用和验收的文档。阅读时遵循“当前事实 → 产品契约 → 操作交付 → 技术参考 → 学习资料”的顺序；旧阶段稿和重复 Story 详文已删除，避免 AI 编码助手读取过时接口。
 
-## 先看这 7 份
+## 先看这 8 份
 
 1. [当前状态](current-status.md)：已验证能力、部署基线和未闭环生产风险。
-2. [当前产品契约](product-contract.md)：真实前端路由、API、主旅程、对象关联和验收清单。
-3. [系统架构](architecture.md)：数据面/控制面、数据流和边界。
-4. [架构实现亮点](architecture-deep-dive.md)：通读项目后提炼的配置编译、流处理、可靠性、安全和前端实现细节。
-5. [部署指南](deployment.md)：新环境、重建和升级。
-6. [运行与排障手册](operations.md)：健康扫描、端到端冒烟、排障和回滚。
-7. [统一路线图](roadmap.md)：已完成阶段、验收基线和后续优先级。
+2. [项目进展与遗留问题](project-progress.md)：面向交接的能力进展、风险登记、关闭条件和建议顺序。
+3. [当前产品契约](product-contract.md)：真实前端路由、API、主旅程、对象关联和验收清单。
+4. [系统架构](architecture.md)：数据面/控制面、数据流和边界。
+5. [架构实现亮点](architecture-deep-dive.md)：通读项目后提炼的配置编译、流处理、可靠性、安全和前端实现细节。
+6. [部署指南](deployment.md)：新环境、重建和升级。
+7. [运行与排障手册](operations.md)：健康扫描、端到端冒烟、排障和回滚。
+8. [统一路线图](roadmap.md)：已完成阶段、验收基线和后续优先级。
 
 ## 技术参考
 
@@ -54,7 +55,7 @@
 
 ## 文档变更规则
 
-1. 当前事实只写入 `current-status.md`、`architecture.md` 或 `product-contract.md`。
+1. 当前事实只写入 `current-status.md`、`architecture.md` 或 `product-contract.md`；`project-progress.md` 只做派生的管理视图和问题关闭登记。
 2. 阶段计划只写入 `roadmap.md`；不再新增 `roadmap-next.md` 或 `design/0x-roadmap.md`。
 3. 接口、路由和验收只写入 `product-contract.md`，代码测试是最终验证。
 4. Schema 变更同步 `event-alert-schema.md`、mapping、生产端和测试。
