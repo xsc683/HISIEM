@@ -1,6 +1,6 @@
 # HISIEM 架构、模块实现与关键业务数据流分析
 
-> 学习入口已整理至 [`../architecture-deep-dive.md`](../architecture-deep-dive.md)。本文只保留历史审计证据，不再追加当前设计说明；其中的旧风险和旧接口必须以当前代码、[`../current-status.md`](../current-status.md) 和 [`../product-contract.md`](../product-contract.md) 复核。
+> 当前实现亮点已整理至 [`../architecture-deep-dive.md`](../architecture-deep-dive.md)。本文只保留历史审计证据，不再追加当前设计说明；其中的旧风险和旧接口必须以当前代码、[`../current-status.md`](../current-status.md) 和 [`../product-contract.md`](../product-contract.md) 复核。
 
 > 分析日期：2026-08-21（Asia/Shanghai）  
 > 项目根目录：`.`（本文全部代码证据均相对项目根目录）  

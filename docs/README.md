@@ -7,7 +7,7 @@
 1. [当前状态](current-status.md)：已验证能力、部署基线和未闭环生产风险。
 2. [当前产品契约](product-contract.md)：真实前端路由、API、主旅程、对象关联和验收清单。
 3. [系统架构](architecture.md)：数据面/控制面、数据流和边界。
-4. [架构实现深潜](architecture-deep-dive.md)：从 parser template、Java 编译器到 Logstash/Flink 的代码走读和设计模式。
+4. [架构实现亮点](architecture-deep-dive.md)：通读项目后提炼的配置编译、流处理、可靠性、安全和前端实现细节。
 5. [部署指南](deployment.md)：新环境、重建和升级。
 6. [运行与排障手册](operations.md)：健康扫描、端到端冒烟、排障和回滚。
 7. [统一路线图](roadmap.md)：已完成阶段、验收基线和后续优先级。

@@ -4,7 +4,7 @@
 >
 > 当前实现分为两条链路：Elastic Stack + Kafka + Flink 组成数据面，Spring Boot + PostgreSQL/Flyway 组成控制面。数据面负责事件检测，控制面负责配置、处置、权限和运维状态。
 >
-> 若要从实际代码理解“解析模板 → Java 编译 → Logstash pipeline → Flink 告警”，请继续阅读 [`architecture-deep-dive.md`](architecture-deep-dive.md)。
+> 若要查看通读项目后提炼的实现亮点和关键细节，请阅读 [`architecture-deep-dive.md`](architecture-deep-dive.md)。
 
 ## 1. 整体架构
 
