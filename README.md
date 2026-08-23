@@ -101,4 +101,4 @@ npm --prefix web run dev
 - ✅ Flink checkpointing(重启不重放历史)
 - ✅ Spring Boot 控制面:PostgreSQL/Flyway、登录会话、RBAC、审计、案件、通知、后台任务
 - ✅ 运维能力:六组件健康扫描、Actuator/Micrometer、数据源停用/删除回滚、ES 备份恢复演练
-- ✅ 测试:根项目 74 个测试、Flink 模块 33 个测试,前端生产构建通过
+- ✅ 测试:根项目 75 个测试、Flink 模块 33 个测试,前端生产构建通过

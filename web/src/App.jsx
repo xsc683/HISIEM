@@ -212,11 +212,22 @@ export default function App() {
   useEffect(() => {
     if (!user || user.passwordChangeRequired || activeKey !== 'ops-health') return undefined
     let disposed = false
-    const load = () => {
-      healthScan().then((value) => { if (!disposed) setOpsHealth(value) })
-        .catch((e) => { if (!disposed) message.error(e.message) })
-      listTasks(50).then((value) => { if (!disposed) setTasks(value) })
-        .catch((e) => { if (!disposed) message.error(`任务列表加载失败: ${e.message}`) })
+    let inFlight = false
+    const load = async () => {
+      if (disposed || inFlight) return
+      inFlight = true
+      try {
+        const [healthResult, tasksResult] = await Promise.allSettled([
+          healthScan(), listTasks(50),
+        ])
+        if (disposed) return
+        if (healthResult.status === 'fulfilled') setOpsHealth(healthResult.value)
+        else message.error(`健康扫描失败: ${healthResult.reason?.message || '未知错误'}`)
+        if (tasksResult.status === 'fulfilled') setTasks(tasksResult.value)
+        else message.error(`任务列表加载失败: ${tasksResult.reason?.message || '未知错误'}`)
+      } finally {
+        inFlight = false
+      }
     }
     load()
     const timer = window.setInterval(load, 10000)
@@ -238,10 +249,22 @@ export default function App() {
       setNotifs([])
       return undefined
     }
-    const loadNotifs = () => listNotifications().then(setNotifs).catch((e) => message.error(`通知加载失败: ${e.message}`))
+    let disposed = false
+    let inFlight = false
+    const loadNotifs = async () => {
+      if (disposed || inFlight) return
+      inFlight = true
+      try {
+        setNotifs(await listNotifications())
+      } catch (e) {
+        if (!disposed) message.error(`通知加载失败: ${e.message}`)
+      } finally {
+        inFlight = false
+      }
+    }
     loadNotifs()
     const timer = setInterval(loadNotifs, 20000)
-    return () => clearInterval(timer)
+    return () => { disposed = true; clearInterval(timer) }
   }, [user])
 
   async function handleLogin() {

@@ -1647,7 +1647,7 @@ flowchart LR
 | `docker compose config --quiet` | 成功 | Compose 双监听、Kafka 显式数据卷配置有效 |
 | ES `_cat/indices`、PG schema history | 代码/测试成功 | 事件/告警/案件索引有数据；V1-V7 迁移已通过 H2/真实 PostgreSQL 测试；运行实例需重启后应用 V7 |
 
-README、CLAUDE 和当前文档的测试基线已统一为根项目 74、Flink 33；本归档文件保留的是当时的审计过程，不再维护当前数字。
+当前文档基线已更新为根项目 75、Flink 33；本归档文件保留当时的审计过程，历史验证数字不回写。
 
 ### 13.2 覆盖边界
 

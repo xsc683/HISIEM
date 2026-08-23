@@ -3,6 +3,10 @@
 const BASE = '/api'
 const REQUEST_TIMEOUT_MS = 10000
 
+// 所有来自数据或用户输入的路径段都必须编码，避免 IP、用户名和案件 ID
+// 中的 `:`, `/`, `#` 等字符改变 API 路由边界。
+const pathSegment = (value) => encodeURIComponent(String(value))
+
 // 登录 token(Story 08 RBAC),本地持久化;所有请求自动携带
 let authToken = localStorage.getItem('siem_token') || ''
 
@@ -72,7 +76,7 @@ export function listLogSources() {
 }
 
 export function getLogSource(id) {
-  return request(`/log-sources/${id}`)
+  return request(`/log-sources/${pathSegment(id)}`)
 }
 
 export function createLogSource(payload) {
@@ -84,15 +88,15 @@ export function createLogSource(payload) {
 }
 
 export function activateLogSource(id) {
-  return request(`/log-sources/${id}/activate`, { method: 'POST' })
+  return request(`/log-sources/${pathSegment(id)}/activate`, { method: 'POST' })
 }
 
 export function deactivateLogSource(id) {
-  return request(`/log-sources/${id}/deactivate`, { method: 'POST' })
+  return request(`/log-sources/${pathSegment(id)}/deactivate`, { method: 'POST' })
 }
 
 export function deleteLogSource(id) {
-  return request(`/log-sources/${id}`, { method: 'DELETE' })
+  return request(`/log-sources/${pathSegment(id)}`, { method: 'DELETE' })
 }
 
 // ---- 模板保存(Story 02) ----
@@ -112,11 +116,11 @@ export function listDetectionRules() {
 }
 
 export function getRuleHits(id) {
-  return request(`/detection-rules/${id}/hits`)
+  return request(`/detection-rules/${pathSegment(id)}/hits`)
 }
 
 export function toggleRule(id) {
-  return request(`/detection-rules/${id}/toggle`, { method: 'POST' })
+  return request(`/detection-rules/${pathSegment(id)}/toggle`, { method: 'POST' })
 }
 
 export function deployRules() {
@@ -134,11 +138,11 @@ export function dataHealthSources() {
 }
 
 export function dataHealthTrend(id) {
-  return request(`/data-health/sources/${id}/trend`)
+  return request(`/data-health/sources/${pathSegment(id)}/trend`)
 }
 
 export function dataHealthFailures(id, size) {
-  return request(`/data-health/sources/${id}/failures?size=${size || 50}`)
+  return request(`/data-health/sources/${pathSegment(id)}/failures?size=${size || 50}`)
 }
 
 // ---- 系统设置·资产关键度(Story 06) ----
@@ -148,7 +152,7 @@ export function listCriticality() {
 }
 
 export function setCriticality(type, key, level) {
-  return request(`/settings/criticality/${type}/${key}`, {
+  return request(`/settings/criticality/${pathSegment(type)}/${pathSegment(key)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ level }),
@@ -156,7 +160,7 @@ export function setCriticality(type, key, level) {
 }
 
 export function deleteCriticality(type, key) {
-  return request(`/settings/criticality/${type}/${key}`, { method: 'DELETE' })
+  return request(`/settings/criticality/${pathSegment(type)}/${pathSegment(key)}`, { method: 'DELETE' })
 }
 
 export function recalcCriticality() {
@@ -223,11 +227,11 @@ export function createUser(payload) {
 }
 
 export function deleteUser(username) {
-  return request(`/auth/users/${username}`, { method: 'DELETE' })
+  return request(`/auth/users/${pathSegment(username)}`, { method: 'DELETE' })
 }
 
 export function updateUserRole(username, role) {
-  return request(`/auth/users/${username}/role`, {
+  return request(`/auth/users/${pathSegment(username)}/role`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ role }),
@@ -249,7 +253,7 @@ export function listNotifications(unread) {
 }
 
 export function readNotification(id) {
-  return request(`/notifications/${id}/read`, { method: 'POST' })
+  return request(`/notifications/${pathSegment(id)}/read`, { method: 'POST' })
 }
 
 export function readAllNotifications() {
@@ -257,28 +261,29 @@ export function readAllNotifications() {
 }
 
 export function deleteNotification(id) {
-  return request(`/notifications/${id}`, { method: 'DELETE' })
+  return request(`/notifications/${pathSegment(id)}`, { method: 'DELETE' })
 }
 
 // ---- 告警台(Story 04) ----
 
 export function listAlerts(status) {
-  return request(`/alerts${status ? `?status=${status}` : ''}`)
+  const query = status ? `?${new URLSearchParams({ status }).toString()}` : ''
+  return request(`/alerts${query}`)
 }
 
 export function getAlert(id) {
-  return request(`/alerts/${id}`)
+  return request(`/alerts/${pathSegment(id)}`)
 }
 
 export function updateAlertStatus(id, status) {
-  return request(`/alerts/${id}/status`, {
+  return request(`/alerts/${pathSegment(id)}/status`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ status }),
   })
 }
 
 export function updateAlertVerdict(id, verdict) {
-  return request(`/alerts/${id}/verdict`, {
+  return request(`/alerts/${pathSegment(id)}/verdict`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ verdict }),
   })
@@ -313,7 +318,7 @@ export function listCases(status, entity) {
 }
 
 export function getCase(id) {
-  return request(`/cases/${id}`)
+  return request(`/cases/${pathSegment(id)}`)
 }
 
 export function createCase(alertIds, title) {
@@ -324,29 +329,29 @@ export function createCase(alertIds, title) {
 }
 
 export function addCaseAlerts(id, alertIds) {
-  return request(`/cases/${id}/alerts`, {
+  return request(`/cases/${pathSegment(id)}/alerts`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ alertIds }),
   })
 }
 
 export function removeCaseAlert(id, alertId) {
-  return request(`/cases/${id}/alerts/${alertId}`, { method: 'DELETE' })
+  return request(`/cases/${pathSegment(id)}/alerts/${pathSegment(alertId)}`, { method: 'DELETE' })
 }
 
 export function updateCaseStatus(id, status, verdict) {
-  return request(`/cases/${id}/status`, {
+  return request(`/cases/${pathSegment(id)}/status`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ status, verdict }),
   })
 }
 
 export function caseTimeline(id, size) {
-  return request(`/cases/${id}/timeline?size=${size || 50}`)
+  return request(`/cases/${pathSegment(id)}/timeline?size=${size || 50}`)
 }
 
 export function deleteCase(id) {
-  return request(`/cases/${id}`, { method: 'DELETE' })
+  return request(`/cases/${pathSegment(id)}`, { method: 'DELETE' })
 }
 
 export function aggregateCases() {
@@ -363,14 +368,14 @@ export function aggregateCasesWithOptions({ windowMinutes, groupByRule, threshol
 }
 
 export function updateCaseMetadata(id, payload) {
-  return request(`/cases/${id}/metadata`, {
+  return request(`/cases/${pathSegment(id)}/metadata`, {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   })
 }
 
 export function updateCaseCollaborators(id, usernames) {
-  return request('/cases/' + id + '/collaborators', {
+  return request('/cases/' + pathSegment(id) + '/collaborators', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ usernames }),
   })
@@ -387,5 +392,5 @@ export function listTasks(size) {
 }
 
 export function getTask(id) {
-  return request(`/tasks/${id}`)
+  return request(`/tasks/${pathSegment(id)}`)
 }

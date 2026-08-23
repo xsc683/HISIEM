@@ -196,7 +196,7 @@ MVN="D:/application/IntelliJ IDEA 2026.2.0.1/plugins/maven-plugin/lib/maven3/bin
 "$MVN" -f flink/pom.xml clean package          # 含 33 个 Flink 测试
 "$MVN" -f flink/pom.xml clean package -DskipTests   # 部署时加快
 
-# Spring Boot 控制面(根 pom,含 74 个测试；Flyway 当前 V7)
+# Spring Boot 控制面(根 pom,含 75 个测试；Flyway 当前 V7)
 "$MVN" -f pom.xml clean package
 ```
 

@@ -2,6 +2,7 @@ package com.xscsiem.hsiem_platform.settings;
 
 import com.xscsiem.hsiem_platform.control.ControlPlaneStore;
 import com.xscsiem.hsiem_platform.notify.NotificationService;
+import jakarta.annotation.PreDestroy;
 import org.springframework.stereotype.Component;
 
 import java.util.concurrent.ExecutorService;
@@ -33,20 +34,30 @@ public class CriticalityRecalcCoordinator {
 
     public String enqueue(String actor) {
         String taskId = control.createTask("criticality_recalc", "entity-risk", "等待实体风险重算");
-        EXECUTOR.execute(() -> {
-            if (!control.claimTask(taskId, TASK_OWNER, Instant.now().plusSeconds(600))) return;
-            control.heartbeatTask(taskId, TASK_OWNER, Instant.now().plusSeconds(600),
-                    10, "运行 entity-risk.py");
-            try {
-                deployer.recalcEntityRisk();
-                control.updateTask(taskId, "succeeded", 100, "实体风险已重算", null);
-                notifications.notify("criticality", "entity-risk", "实体风险已按最新资产关键度重算");
-                control.audit(actor == null ? "anonymous" : actor, "criticality.recalc", taskId);
-            } catch (Exception e) {
-                control.updateTask(taskId, "failed", 100, "实体风险重算失败", safeError(e));
-            }
-        });
+        try {
+            EXECUTOR.execute(() -> {
+                if (!control.claimTask(taskId, TASK_OWNER, Instant.now().plusSeconds(600))) return;
+                control.heartbeatTask(taskId, TASK_OWNER, Instant.now().plusSeconds(600),
+                        10, "运行 entity-risk.py");
+                try {
+                    deployer.recalcEntityRisk();
+                    control.updateTask(taskId, "succeeded", 100, "实体风险已重算", null);
+                    notifications.notify("criticality", "entity-risk", "实体风险已按最新资产关键度重算");
+                    control.audit(actor == null ? "anonymous" : actor, "criticality.recalc", taskId);
+                } catch (Exception e) {
+                    control.updateTask(taskId, "failed", 100, "实体风险重算失败", safeError(e));
+                }
+            });
+        } catch (RuntimeException e) {
+            control.updateTask(taskId, "failed", 100, "实体风险重算任务未能排队", safeError(e));
+            throw e;
+        }
         return taskId;
+    }
+
+    @PreDestroy
+    void shutdownExecutor() {
+        EXECUTOR.shutdownNow();
     }
 
     private static String safeError(Exception e) {

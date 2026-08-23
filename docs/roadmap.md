@@ -24,7 +24,7 @@
 npm.cmd --prefix web run build
 ```
 
-当前基线为根项目 74 个测试、Flink 33 个测试，前端生产构建通过；涉及基础设施时还要执行 Docker Compose、健康扫描、Kafka/Flink 链路和 ES 备份恢复验证。结果与环境说明集中记录在[当前状态](current-status.md)和[运维手册](operations.md)。
+当前基线为根项目 75 个测试、Flink 33 个测试，前端生产构建通过；涉及基础设施时还要执行 Docker Compose、健康扫描、Kafka/Flink 链路和 ES 备份恢复验证。结果与环境说明集中记录在[当前状态](current-status.md)和[运维手册](operations.md)。
 
 ## 下一阶段优先级
 

@@ -16,7 +16,7 @@ HISIEM 已完成检测链路、控制面、接入向导、告警处置、调查�
 | 控制面 | Spring Boot + PostgreSQL/Flyway，认证、RBAC、案件、审计、通知和后台任务可用 | [部署](deployment.md)、[路线图](roadmap.md) |
 | 前端 | React/Vite 控制台可构建并访问控制面 API | `web/`、[当前产品契约](product-contract.md) |
 | 运行态 | PostgreSQL、Elasticsearch、Kafka、Logstash、Flink、Kibana 均有健康扫描 | [运维手册](operations.md) |
-| 自动化验证 | 根项目 74 个测试、Flink 33 个测试、前端生产构建通过 | [路线图](roadmap.md) |
+| 自动化验证 | 根项目 75 个测试、Flink 33 个测试、前端生产构建通过 | [路线图](roadmap.md) |
 | 备份恢复 | ES 临时索引备份恢复演练通过 | `infra/elasticsearch/backup-restore-rehearsal.sh` |
 
 ## 当前部署基线

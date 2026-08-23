@@ -1,6 +1,7 @@
 package com.xscsiem.hsiem_platform.onboarding;
 
 import com.xscsiem.hsiem_platform.control.ControlPlaneStore;
+import jakarta.annotation.PreDestroy;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -135,9 +136,15 @@ public class LogSourceService {
         if (!lifecycleInFlight.add(id)) {
             throw new ConflictException("数据源正在执行其他生效任务: " + id);
         }
+        final String taskId;
         try {
-            String taskId = control == null ? null
+            taskId = control == null ? null
                     : control.createTask("log_source_activate", id, "等待数据源配置生效");
+        } catch (RuntimeException e) {
+            lifecycleInFlight.remove(id);
+            throw e;
+        }
+        try {
             // 重试 failed 或 stopped 数据源时先回到中间态，避免前端把旧终态误判为本次任务结果。
             s.status = "creating";
             s.taskId = taskId;
@@ -164,6 +171,7 @@ public class LogSourceService {
             });
         } catch (RuntimeException e) {
             lifecycleInFlight.remove(id);
+            markTaskFailed(taskId, "数据源生效任务未能排队", e);
             throw e;
         }
         return s;
@@ -192,10 +200,17 @@ public class LogSourceService {
 
     public void delete(String id) {
         LogSource s = store.find(id);
-        if ("active".equals(s.status)) {
-            coordinator.deactivate(s);
+        if (!lifecycleInFlight.add(id)) {
+            throw new ConflictException("数据源正在执行其他生命周期任务: " + id);
         }
-        store.delete(id);
+        try {
+            if ("active".equals(s.status)) {
+                coordinator.deactivate(s);
+            }
+            store.delete(id);
+        } finally {
+            lifecycleInFlight.remove(id);
+        }
     }
 
     /** 异步停用但保留声明，失败可重试，成功后状态为 stopped。 */
@@ -205,9 +220,15 @@ public class LogSourceService {
         if (!lifecycleInFlight.add(id)) {
             throw new ConflictException("数据源正在执行其他停用任务: " + id);
         }
+        final String taskId;
         try {
-            String taskId = control == null ? null
+            taskId = control == null ? null
                     : control.createTask("log_source_deactivate", id, "等待数据源停用");
+        } catch (RuntimeException e) {
+            lifecycleInFlight.remove(id);
+            throw e;
+        }
+        try {
             s.taskId = taskId;
             s.lastError = null;
             store.save(s);
@@ -236,8 +257,24 @@ public class LogSourceService {
             });
         } catch (RuntimeException e) {
             lifecycleInFlight.remove(id);
+            markTaskFailed(taskId, "数据源停用任务未能排队", e);
             throw e;
         }
         return s;
+    }
+
+    private void markTaskFailed(String taskId, String message, RuntimeException failure) {
+        if (taskId == null || control == null) return;
+        try {
+            String detail = failure.getMessage() == null ? failure.getClass().getSimpleName() : failure.getMessage();
+            control.updateTask(taskId, "failed", 100, message, detail);
+        } catch (RuntimeException ignored) {
+            // 任务已无法排队；保留原始异常，启动恢复器仍可收敛该记录。
+        }
+    }
+
+    @PreDestroy
+    void shutdownActivator() {
+        ACTIVATOR.shutdownNow();
     }
 }

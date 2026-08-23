@@ -105,4 +105,19 @@ class LogSourceServiceTest {
         service.delete(s.id);
         assertThrows(NotFoundException.class, () -> store.find(s.id));
     }
+
+    @Test
+    void delete_deactivationFailure_keepsDeclarationAndReleasesLifecycleLock() {
+        LogSource s = service.create("web-01", "tcp", "ssh-auth", 5001);
+        s.status = "active";
+        store.save(s);
+        doThrow(new ActivationFailedException("Logstash 不可用")).when(coordinator).deactivate(any());
+
+        assertThrows(ActivationFailedException.class, () -> service.delete(s.id));
+        assertEquals("active", store.find(s.id).status);
+
+        org.mockito.Mockito.doNothing().when(coordinator).deactivate(any());
+        service.delete(s.id);
+        assertThrows(NotFoundException.class, () -> store.find(s.id));
+    }
 }
