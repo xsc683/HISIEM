@@ -21,25 +21,26 @@ set -euo pipefail
 
 KAFKA_CMD="docker exec siem-kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092"
 CONFIG_CMD="docker exec siem-kafka /opt/kafka/bin/kafka-configs.sh --bootstrap-server localhost:9092"
-TOPIC="siem-events"
+TOPICS=("siem-events" "siem-alert-lifecycle" "siem-case-lifecycle")
 PARTITIONS=3
 RETENTION_MS=259200000   # 3 天
 
-echo "==> 确认 topic: $TOPIC"
-if $KAFKA_CMD --list | grep -q "^$TOPIC$"; then
-  CUR=$($KAFKA_CMD --describe --topic "$TOPIC" | grep -cE "Partition: [0-9]+" || true)
-  echo "  [ok] $TOPIC 已存在,当前分区数: $CUR"
-  if [ "$CUR" -lt "$PARTITIONS" ]; then
-    echo "  --> 分区不足,扩容到 $PARTITIONS(只能增不能减)"
-    $KAFKA_CMD --alter --topic "$TOPIC" --partitions "$PARTITIONS"
+for TOPIC in "${TOPICS[@]}"; do
+  echo "==> 确认 topic: $TOPIC"
+  if $KAFKA_CMD --list | grep -q "^$TOPIC$"; then
+    CUR=$($KAFKA_CMD --describe --topic "$TOPIC" | grep -cE "Partition: [0-9]+" || true)
+    echo "  [ok] $TOPIC 已存在,当前分区数: $CUR"
+    if [ "$CUR" -lt "$PARTITIONS" ]; then
+      echo "  --> 分区不足,扩容到 $PARTITIONS(只能增不能减)"
+      $KAFKA_CMD --alter --topic "$TOPIC" --partitions "$PARTITIONS"
+    fi
+  else
+    echo "  --> 创建 $TOPIC,$PARTITIONS 分区,RF=1"
+    $KAFKA_CMD --create --topic "$TOPIC" --partitions "$PARTITIONS" --replication-factor 1
   fi
-else
-  echo "  --> 创建 $TOPIC,$PARTITIONS 分区,RF=1"
-  $KAFKA_CMD --create --topic "$TOPIC" --partitions "$PARTITIONS" --replication-factor 1
-fi
-
-echo "==> 设置保留期 retention.ms=$RETENTION_MS(3 天,Kafka 只作缓冲)"
-$CONFIG_CMD --alter --entity-type topics --entity-name "$TOPIC" --add-config "retention.ms=$RETENTION_MS"
+  echo "==> 设置 $TOPIC 保留期 retention.ms=$RETENTION_MS(3 天,Kafka 只作缓冲)"
+  $CONFIG_CMD --alter --entity-type topics --entity-name "$TOPIC" --add-config "retention.ms=$RETENTION_MS"
+done
 
 echo "==> 当前 topics"
 $KAFKA_CMD --list

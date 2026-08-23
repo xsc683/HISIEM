@@ -47,7 +47,20 @@ public class OnboardingController {
     public Map<String, Object> test(@RequestBody TestRequest req) {
         SampleSizeValidator.requireApiSample(req.sample());
         ParserTemplate template = templates.find(req.templateId());
-        GrokTestService.ParseResult result = grok.test(template, req.sample());
+        return parseResponse(template, req.sample());
+    }
+
+    /** 测试尚未保存的自定义模板，避免为验证 Grok 而先污染规则目录。 */
+    @PostMapping("/parser-templates/test-custom")
+    @PreAuthorize("hasAnyRole('ADMIN', 'OPS')")
+    public Map<String, Object> testCustom(@RequestBody CustomTestRequest req) {
+        SampleSizeValidator.requireApiSample(req.sample());
+        templates.validateDefinition(req.template(), false);
+        return parseResponse(req.template(), req.sample());
+    }
+
+    private Map<String, Object> parseResponse(ParserTemplate template, String sample) {
+        GrokTestService.ParseResult result = grok.test(template, sample);
         Map<String, Object> resp = new LinkedHashMap<>();
         resp.put("ok", result.ok());
         resp.put("fields", result.fields());
@@ -121,6 +134,9 @@ public class OnboardingController {
     }
 
     public record TestRequest(String templateId, String sample) {
+    }
+
+    public record CustomTestRequest(ParserTemplate template, String sample) {
     }
 
     public record LogSourceRequest(String name, String protocol, String templateId, int port, String path) {

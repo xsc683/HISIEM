@@ -13,11 +13,15 @@ import org.apache.flink.cep.pattern.Pattern;
 import org.apache.flink.cep.pattern.conditions.SimpleCondition;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.configuration.RestartStrategyOptions;
-import org.apache.flink.connector.elasticsearch.sink.Elasticsearch8AsyncSinkBuilder;
 import org.apache.flink.connector.kafka.source.KafkaSource;
 import org.apache.flink.connector.kafka.source.KafkaSourceBuilder;
 import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsInitializer;
+import org.apache.flink.connector.base.DeliveryGuarantee;
+import org.apache.flink.connector.kafka.sink.KafkaRecordSerializationSchema;
+import org.apache.flink.connector.kafka.sink.KafkaSink;
+import org.apache.flink.connector.kafka.sink.KafkaSinkBuilder;
 import org.apache.flink.streaming.api.CheckpointingMode;
+import org.apache.flink.streaming.api.datastream.AsyncDataStream;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.KeyedStream;
 import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
@@ -30,7 +34,6 @@ import co.elastic.clients.elasticsearch.core.bulk.UpdateAction;
 import co.elastic.clients.elasticsearch.core.bulk.UpdateOperation;
 import co.elastic.clients.elasticsearch.core.bulk.BulkOperationVariant;
 import co.elastic.clients.json.JsonData;
-import org.apache.http.HttpHost;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -41,6 +44,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 
 
 /**
@@ -246,21 +250,27 @@ public class DetectionJob {
         DataStream<String> alerts = allAlerts.stream().reduce((a, b) -> a.union(b)).get();
 
         alerts.print();
-        Elasticsearch8AsyncSinkBuilder<String> sink = new Elasticsearch8AsyncSinkBuilder<String>()
-                .setHosts(HttpHost.create(System.getenv().getOrDefault("SIEM_ES_URL", "http://siem-elasticsearch:9200")))
-                .setMaxBatchSize(tuning.esBatchSize())
-                .setMaxInFlightRequests(tuning.esMaxInFlightRequests())
-                .setMaxBufferedRequests(tuning.esMaxBufferedRequests())
-                .setMaxTimeInBufferMS(tuning.esMaxTimeInBufferMs())
-                .setElementConverter((element, context) -> alertOperation(element));
+        String esUrl = System.getenv().getOrDefault("SIEM_ES_URL", "http://siem-elasticsearch:9200");
         String esUser = System.getenv("SIEM_ES_USERNAME");
-        if (esUser != null && !esUser.isBlank()) {
-            sink.setUsername(esUser).setPassword(System.getenv().getOrDefault("SIEM_ES_PASSWORD", ""));
-            String fingerprint = System.getenv("SIEM_ES_CERT_FINGERPRINT");
-            if (fingerprint != null && !fingerprint.isBlank()) sink.setCertificateFingerprint(fingerprint);
-        }
-        alerts.sinkTo(sink.build())
-                .uid("es-sink");
+        String esPassword = System.getenv().getOrDefault("SIEM_ES_PASSWORD", "");
+        DataStream<String> indexedAlerts = AsyncDataStream.unorderedWait(
+                        alerts, new AlertElasticsearchIndexer(esUrl, esUser, esPassword),
+                        30, TimeUnit.SECONDS, tuning.esMaxBufferedRequests())
+                .uid("es-index-and-forward");
+
+        KafkaSinkBuilder<String> lifecycleSink = KafkaSink.<String>builder()
+                .setBootstrapServers(System.getenv().getOrDefault("SIEM_KAFKA_BOOTSTRAP", "kafka:9092"))
+                .setRecordSerializer(KafkaRecordSerializationSchema.builder()
+                        .setTopic(System.getenv().getOrDefault(
+                                "SIEM_ALERT_LIFECYCLE_TOPIC", "siem-alert-lifecycle"))
+                        .setValueSerializationSchema(new SimpleStringSchema())
+                        .build())
+                .setDeliveryGuarantee(DeliveryGuarantee.AT_LEAST_ONCE);
+        applyKafkaSecurity(lifecycleSink);
+        indexedAlerts.map(AlertLifecycleEventMapper::map)
+                .uid("alert-lifecycle-contract")
+                .sinkTo(lifecycleSink.build())
+                .uid("alert-lifecycle-kafka");
 
 
         env.execute(
@@ -280,6 +290,19 @@ public class DetectionJob {
     }
 
     private static void setKafkaProperty(KafkaSourceBuilder<?> builder, String key, String value) {
+        if (value != null && !value.isBlank()) builder.setProperty(key, value);
+    }
+
+    private static void applyKafkaSecurity(KafkaSinkBuilder<?> builder) {
+        Map<String, String> env = System.getenv();
+        setKafkaProperty(builder, "security.protocol", env.get("SIEM_KAFKA_SECURITY_PROTOCOL"));
+        setKafkaProperty(builder, "sasl.mechanism", env.get("SIEM_KAFKA_SASL_MECHANISM"));
+        setKafkaProperty(builder, "sasl.jaas.config", env.get("SIEM_KAFKA_SASL_JAAS_CONFIG"));
+        setKafkaProperty(builder, "ssl.truststore.location", env.get("SIEM_KAFKA_SSL_TRUSTSTORE_LOCATION"));
+        setKafkaProperty(builder, "ssl.truststore.password", env.get("SIEM_KAFKA_SSL_TRUSTSTORE_PASSWORD"));
+    }
+
+    private static void setKafkaProperty(KafkaSinkBuilder<?> builder, String key, String value) {
         if (value != null && !value.isBlank()) builder.setProperty(key, value);
     }
 
@@ -303,11 +326,25 @@ public class DetectionJob {
                             .action(new UpdateAction.Builder<JsonData, JsonData>()
                                     .doc(partialDoc)
                                     .upsert(fullDoc)
-                                    .docAsUpsert(true)
                                     .build())
                             .build();
         } catch (Exception e) {
             throw new IllegalArgumentException("告警 JSON 无法生成 ES 更新操作", e);
+        }
+    }
+
+    static String alertUpdateBody(String element) {
+        try {
+            Map<String, Object> full = ALERT_MAPPER.readValue(element, Map.class);
+            Map<String, Object> patch = new HashMap<>(full);
+            Set<String> protectedFields = Set.of(
+                    "alert.status", "alert.analyst_verdict", "alert.operator",
+                    "alert.status_updated_at", "alert.case_id");
+            protectedFields.forEach(patch::remove);
+            return ALERT_MAPPER.writeValueAsString(Map.of(
+                    "doc", patch, "upsert", full));
+        } catch (Exception e) {
+            throw new IllegalArgumentException("告警 JSON 无法生成 ES 更新请求", e);
         }
     }
 
@@ -348,7 +385,7 @@ public class DetectionJob {
      * 计算告警的确定性 _id:sha1(rule_id + 实体 + 事件时间)。
      * 同一事件被重放时计算得到相同 _id,ES 写入变为幂等覆盖,避免重复告警。
      */
-    private static String alertId(String element) {
+    static String alertId(String element) {
         try {
             Map<String, Object> alert = ALERT_MAPPER.readValue(element, Map.class);
             String ruleId = String.valueOf(alert.getOrDefault("alert.rule_id", "unknown"));

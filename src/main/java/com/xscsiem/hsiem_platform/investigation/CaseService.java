@@ -7,6 +7,8 @@ import com.xscsiem.hsiem_platform.control.ControlPlaneStore;
 import com.xscsiem.hsiem_platform.onboarding.ConflictException;
 import com.xscsiem.hsiem_platform.onboarding.NotFoundException;
 import com.xscsiem.hsiem_platform.search.ElasticsearchGateway;
+import com.xscsiem.hsiem_platform.soar.LifecycleEventPublisher;
+import com.xscsiem.hsiem_platform.tenant.TenantContext;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -54,6 +56,7 @@ public class CaseService {
     private final AlertService alerts;
     private final ControlPlaneStore control;
     private final ElasticsearchGateway gateway;
+    private LifecycleEventPublisher lifecyclePublisher;
 
     @Autowired
     public CaseService(@Value("${app.elasticsearch.url:http://localhost:9200}") String esUrl,
@@ -63,6 +66,11 @@ public class CaseService {
         this.alerts = alerts;
         this.control = control;
         this.gateway = gateway;
+    }
+
+    @Autowired(required = false)
+    public void setLifecyclePublisher(LifecycleEventPublisher lifecyclePublisher) {
+        this.lifecyclePublisher = lifecyclePublisher;
     }
 
     /** 轻量构造器仅供不启动 Spring/数据库的状态机单元测试使用。 */
@@ -148,7 +156,17 @@ public class CaseService {
 
     /** 建案(aggregation=manual 手动 / auto 自动聚合)。 */
     public Map<String, Object> create(List<String> alertIds, String title, String operator, String aggregation) {
-        if (alertIds == null || alertIds.size() < 2) {
+        return createInternal(alertIds, title, operator, aggregation, 2);
+    }
+
+    /** SOAR 单告警建案入口；人工聚合 API 仍坚持至少两条告警。 */
+    public Map<String, Object> createFromAlert(String alertId, String title, String operator) {
+        return createInternal(List.of(alertId), title, operator, "soar", 1);
+    }
+
+    private Map<String, Object> createInternal(List<String> alertIds, String title, String operator,
+                                               String aggregation, int minimumAlerts) {
+        if (alertIds == null || alertIds.size() < minimumAlerts) {
             throw new IllegalArgumentException("手动聚合至少需要 2 条告警");
         }
         // 校验:所有告警 open 且未入他案
@@ -211,7 +229,9 @@ public class CaseService {
             }
             throw e;
         }
-        return detail(caseId);
+        Map<String, Object> created = detail(caseId);
+        publishCase("case.created", created);
+        return created;
     }
 
     /** 给告警写归属案件标记;部分失败时清理已成功标记并抛错,由调用方补偿案件文档。 */
@@ -686,12 +706,19 @@ public class CaseService {
             List<String> finalAlertIds = alertIds == null
                     ? strList(updated.get("alert_ids")) : alertIds;
             try {
-                return control.updateCase(caseId, version, updated, finalAlertIds);
+                updated = control.updateCase(caseId, version, updated, finalAlertIds);
             } catch (IllegalStateException e) {
                 throw new ConflictException("案件控制面更新冲突,请刷新后重试: " + caseId);
             }
         }
+        publishCase("case.updated", updated);
         return updated;
+    }
+
+    private void publishCase(String eventType, Map<String, Object> value) {
+        if (lifecyclePublisher != null && value != null) {
+            lifecyclePublisher.publishCase(eventType, value, TenantContext.id());
+        }
     }
 
     private List<Map<String, Object>> extractHits(Map<String, Object> resp) {

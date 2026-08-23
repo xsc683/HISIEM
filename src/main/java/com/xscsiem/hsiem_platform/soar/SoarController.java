@@ -1,175 +1,147 @@
 package com.xscsiem.hsiem_platform.soar;
 
-import jakarta.validation.Valid;
-import jakarta.validation.constraints.NotBlank;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
-import org.springframework.http.HttpStatus;
-import org.springframework.web.bind.annotation.ResponseStatus;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 
-/** SOAR Playbook 查询、手动触发、审批和执行追踪 API。 */
 @RestController
 @RequestMapping("/api/soar")
 public class SoarController {
 
     private final SoarService service;
-    private final SoarConnectorRegistry connectors;
-    private final SoarConnectorGuard connectorGuard;
-    private final SoarTriggerScanner triggerScanner;
+    private final SoarDictionary dictionary;
 
-    public SoarController(SoarService service, SoarConnectorRegistry connectors,
-                          SoarConnectorGuard connectorGuard,
-                          SoarTriggerScanner triggerScanner) {
+    public SoarController(SoarService service, SoarDictionary dictionary) {
         this.service = service;
-        this.connectors = connectors;
-        this.connectorGuard = connectorGuard;
-        this.triggerScanner = triggerScanner;
+        this.dictionary = dictionary;
     }
 
     @GetMapping("/playbooks")
-    @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST', 'AUDIT')")
-    public List<SoarPlaybook> playbooks(@RequestParam(required = false) String resourceType) {
-        return service.listPlaybooks(resourceType);
+    @PreAuthorize("hasAnyRole('ADMIN','ANALYST','OPS','AUDIT')")
+    public List<SoarPlaybook> listPlaybooks() {
+        return service.listPlaybooks();
     }
 
     @GetMapping("/playbooks/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST', 'AUDIT')")
-    public SoarPlaybook playbook(@PathVariable String id) {
-        return service.playbook(id);
+    @PreAuthorize("hasAnyRole('ADMIN','ANALYST','OPS','AUDIT')")
+    public SoarPlaybook getPlaybook(@PathVariable String id) {
+        return service.getPlaybook(id);
     }
 
-    @PostMapping("/playbooks/reload")
+    @PostMapping("/playbooks")
     @PreAuthorize("hasRole('ADMIN')")
-    public List<SoarPlaybook> reload(Authentication authentication) {
-        return service.reload(authentication.getName());
+    public ResponseEntity<SoarPlaybook> createPlaybook(@RequestBody CreatePlaybookRequest request) {
+        SoarPlaybook created = service.createPlaybook(request.name(), request.description(),
+                request.entryType(), request.eventTypes(), actor());
+        return ResponseEntity.status(HttpStatus.CREATED).body(created);
+    }
+
+    @PutMapping("/playbooks/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public SoarPlaybook updatePlaybook(@PathVariable String id,
+                                       @RequestBody UpdatePlaybookRequest request) {
+        return service.updatePlaybook(id, request.name(), request.description(), request.entryType(),
+                request.eventTypes(), request.graph(), request.revision(), actor());
+    }
+
+    @PostMapping("/playbooks/{id}/publish")
+    @PreAuthorize("hasRole('ADMIN')")
+    public SoarPlaybook publishPlaybook(@PathVariable String id, @RequestBody RevisionRequest request) {
+        return service.publishPlaybook(id, request.revision(), actor());
+    }
+
+    @PatchMapping("/playbooks/{id}/enabled")
+    @PreAuthorize("hasRole('ADMIN')")
+    public SoarPlaybook setEnabled(@PathVariable String id, @RequestBody EnabledRequest request) {
+        return service.setEnabled(id, request.enabled(), actor());
+    }
+
+    @DeleteMapping("/playbooks/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<Void> deletePlaybook(@PathVariable String id) {
+        service.deletePlaybook(id, actor());
+        return ResponseEntity.noContent().build();
     }
 
     @GetMapping("/executions")
-    @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST', 'AUDIT')")
-    public List<SoarExecution> executions(@RequestParam(defaultValue = "50") int size) {
-        return service.listExecutions(size);
+    @PreAuthorize("hasAnyRole('ADMIN','ANALYST','OPS','AUDIT')")
+    public List<SoarExecution> listExecutions(@RequestParam(required = false) String status,
+                                              @RequestParam(defaultValue = "100") int size) {
+        return service.listExecutions(status, size);
     }
 
     @GetMapping("/executions/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST', 'AUDIT')")
-    public SoarExecution execution(@PathVariable String id) {
-        return service.detail(id);
-    }
-
-    @GetMapping("/executions/{id}/events")
-    @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST', 'AUDIT')")
-    public List<SoarExecutionEvent> events(@PathVariable String id) {
-        return service.events(id);
-    }
-
-    @GetMapping("/automation-rules")
-    @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST', 'AUDIT')")
-    public List<Map<String, Object>> automationRules() {
-        return service.automationRules();
-    }
-
-    @PostMapping("/automation-rules/scan")
-    @PreAuthorize("hasRole('ADMIN')")
-    public Map<String, Object> scanAutomationRules() {
-        return triggerScanner.scanNow();
-    }
-
-    @GetMapping("/connectors")
-    @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST', 'AUDIT')")
-    public List<Map<String, Object>> connectors() {
-        return connectors.list().stream().map(SoarController::connectorView).toList();
-    }
-
-    @GetMapping("/connectors/runtime")
-    @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST', 'AUDIT')")
-    public List<Map<String, Object>> connectorRuntime() {
-        return connectorGuard.status(com.xscsiem.hsiem_platform.tenant.TenantContext.id());
-    }
-
-    @PostMapping("/connectors/reload")
-    @PreAuthorize("hasRole('ADMIN')")
-    public List<Map<String, Object>> reloadConnectors() {
-        return connectors.reload().stream().map(SoarController::connectorView).toList();
-    }
-
-    @PostMapping("/executions")
-    @ResponseStatus(HttpStatus.ACCEPTED)
-    @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST')")
-    public SoarExecution start(@Valid @RequestBody StartRequest request, Authentication authentication) {
-        return service.start(request.playbookId(), request.resourceType(), request.resourceId(),
-                authentication.getName());
-    }
-
-    @PostMapping("/executions/{id}/approval")
-    @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST')")
-    public SoarExecution approval(@PathVariable String id, @RequestBody ApprovalRequest request,
-                                  Authentication authentication) {
-        return service.approve(id, request.approved(), authentication.getName(), role(authentication));
-    }
-
-    @PostMapping("/executions/{id}/retry")
-    @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST')")
-    public SoarExecution retry(@PathVariable String id, Authentication authentication) {
-        return service.retry(id, authentication.getName());
+    @PreAuthorize("hasAnyRole('ADMIN','ANALYST','OPS','AUDIT')")
+    public SoarExecution getExecution(@PathVariable String id) {
+        return service.getExecution(id);
     }
 
     @PostMapping("/executions/{id}/cancel")
-    @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST')")
-    public SoarExecution cancel(@PathVariable String id, Authentication authentication) {
-        return service.cancel(id, authentication.getName());
+    @PreAuthorize("hasAnyRole('ADMIN','ANALYST')")
+    public ResponseEntity<Void> cancelExecution(@PathVariable String id) {
+        service.cancelExecution(id, actor());
+        return ResponseEntity.noContent().build();
     }
 
-    @PostMapping("/executions/{id}/pause")
-    @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST')")
-    public SoarExecution pause(@PathVariable String id, Authentication authentication) {
-        return service.pause(id, authentication.getName());
+    @GetMapping("/approvals")
+    @PreAuthorize("hasAnyRole('ADMIN','ANALYST','AUDIT')")
+    public List<SoarApproval> listApprovals(@RequestParam(required = false) String status,
+                                            @RequestParam(defaultValue = "100") int size) {
+        return service.listApprovals(status, size);
     }
 
-    @PostMapping("/executions/{id}/resume")
-    @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST')")
-    public SoarExecution resume(@PathVariable String id, Authentication authentication) {
-        return service.resume(id, authentication.getName());
+    @PostMapping("/approvals/{id}/approve")
+    @PreAuthorize("hasAnyRole('ADMIN','ANALYST')")
+    public SoarApproval approve(@PathVariable String id, @RequestBody(required = false) DecisionRequest request) {
+        return service.decideApproval(id, true, request == null ? null : request.note(), actor());
     }
 
-    private static Map<String, Object> connectorView(SoarConnector connector) {
-        Map<String, Object> view = new LinkedHashMap<>();
-        view.put("id", connector.id());
-        view.put("name", connector.name());
-        view.put("description", connector.description());
-        view.put("enabled", connector.isEnabled());
-        String environmentUrl = connector.baseUrlEnv() == null ? null
-                : System.getenv(connector.baseUrlEnv());
-        view.put("configured", connector.baseUrl() != null && !connector.baseUrl().isBlank()
-                || environmentUrl != null && !environmentUrl.isBlank());
-        view.put("actions", connector.actions() == null ? Map.of() : connector.actions());
-        view.put("limits", connector.limits());
-        view.put("mtls", connector.tls() != null && Boolean.TRUE.equals(connector.tls().mtls()));
-        return view;
+    @PostMapping("/approvals/{id}/reject")
+    @PreAuthorize("hasAnyRole('ADMIN','ANALYST')")
+    public SoarApproval reject(@PathVariable String id, @RequestBody(required = false) DecisionRequest request) {
+        return service.decideApproval(id, false, request == null ? null : request.note(), actor());
     }
 
-    private static String role(Authentication authentication) {
-        return authentication.getAuthorities().stream()
-                .map(Object::toString)
-                .filter(authority -> authority.startsWith("ROLE_"))
-                .map(authority -> authority.substring(5).toLowerCase())
-                .findFirst().orElse("audit");
+    @GetMapping("/field-dictionary")
+    @PreAuthorize("hasAnyRole('ADMIN','ANALYST','OPS','AUDIT')")
+    public List<SoarDictionary.FieldDefinition> fieldDictionary(@RequestParam String objectType) {
+        return dictionary.fields(objectType);
     }
 
-    public record StartRequest(@NotBlank String playbookId, @NotBlank String resourceType,
-                               @NotBlank String resourceId) {
+    @GetMapping("/action-dictionary")
+    @PreAuthorize("hasAnyRole('ADMIN','ANALYST','OPS','AUDIT')")
+    public List<SoarDictionary.ActionDefinition> actionDictionary(@RequestParam String objectType) {
+        return dictionary.actions(objectType);
     }
 
-    public record ApprovalRequest(boolean approved) {
+    private String actor() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        return authentication == null || authentication.getName() == null ? "system" : authentication.getName();
     }
+
+    public record CreatePlaybookRequest(String name, String description, String entryType,
+                                        List<String> eventTypes) { }
+
+    public record UpdatePlaybookRequest(String name, String description, String entryType,
+                                        List<String> eventTypes, PlaybookGraph graph, long revision) { }
+
+    public record RevisionRequest(long revision) { }
+
+    public record EnabledRequest(boolean enabled) { }
+
+    public record DecisionRequest(String note) { }
 }

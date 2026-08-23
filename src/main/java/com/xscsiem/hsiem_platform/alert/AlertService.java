@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.xscsiem.hsiem_platform.onboarding.ConflictException;
 import com.xscsiem.hsiem_platform.onboarding.NotFoundException;
 import com.xscsiem.hsiem_platform.search.ElasticsearchGateway;
+import com.xscsiem.hsiem_platform.soar.LifecycleEventPublisher;
+import com.xscsiem.hsiem_platform.tenant.TenantContext;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -39,6 +41,7 @@ public class AlertService {
 
     private final String esUrl;
     private final ElasticsearchGateway gateway;
+    private LifecycleEventPublisher lifecyclePublisher;
 
     @Autowired
     public AlertService(@Value("${app.elasticsearch.url:http://localhost:9200}") String esUrl,
@@ -51,6 +54,11 @@ public class AlertService {
     public AlertService(String esUrl) {
         this.esUrl = esUrl;
         this.gateway = null;
+    }
+
+    @Autowired(required = false)
+    public void setLifecyclePublisher(LifecycleEventPublisher lifecyclePublisher) {
+        this.lifecyclePublisher = lifecyclePublisher;
     }
 
     /** 告警列表(open 默认,按 risk_score DESC + 时间倒序)。 */
@@ -110,7 +118,9 @@ public class AlertService {
             // 重开意味着重新分诊,清掉旧 verdict,避免 FP/TP 统计继续使用过时结论。
             doc.put("alert.analyst_verdict", null);
         }
-        return optimisticUpdate(id, doc, cur);
+        Map<String, Object> updated = optimisticUpdate(id, doc, cur);
+        publishUpdated(updated);
+        return updated;
     }
 
     /** 批量处置:批量 close 前置 verdict;逐条乐观锁更新,收集成功/失败。 */
@@ -168,7 +178,8 @@ public class AlertService {
                         && !"open".equals(str(current.get("alert.status"))) && verdict == null) {
                     doc.put("alert.analyst_verdict", null);
                 }
-                optimisticUpdate(id, doc, current);
+                Map<String, Object> updated = optimisticUpdate(id, doc, current);
+                publishUpdated(updated);
                 succeeded++;
             } catch (Exception e) {
                 failed.add(id);
@@ -179,6 +190,12 @@ public class AlertService {
         out.put("failed", failed);
         out.put("total", ids.size());
         return out;
+    }
+
+    private void publishUpdated(Map<String, Object> alert) {
+        if (lifecyclePublisher != null && alert != null) {
+            lifecyclePublisher.publishAlert("alert.updated", alert, TenantContext.id());
+        }
     }
 
     /** 按规则 FP 率(FP/(TP+FP) 不含 duplicate,>50% 高亮由前端/通知处理)。 */

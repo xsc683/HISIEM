@@ -2,11 +2,11 @@
 
 > 定位：这是项目当前事实的单一入口。内容以代码、`infra/` 配置和最近一次可复现验证为准；详细方案、阶段记录和验收用例分别见设计文档与 Story 文档。
 >
-> 基线日期：2026-08-23（WSL2 + Docker Desktop）
+> 基线日期：2026-08-24（WSL2 + Docker Desktop）
 
 ## 一句话结论
 
-HISIEM 已完成检测链路、控制面、接入向导、告警处置、调查台、SOAR V3 平台化编排和运行态扫描的主要闭环，可以作为开发/演示环境使用；生产级部署仍需完成数据面安全加固、高可用和跨存储一致性治理。
+HISIEM 已完成检测链路、控制面、接入向导、告警处置、调查台、生命周期驱动的 SOAR MVP 和运行态扫描主要闭环，可以作为开发/演示环境使用；生产级部署仍需完成数据面安全加固、高可用和跨存储一致性治理。
 
 ## 已验证能力
 
@@ -16,14 +16,14 @@ HISIEM 已完成检测链路、控制面、接入向导、告警处置、调查�
 | 控制面 | Spring Boot + PostgreSQL/Flyway，认证、RBAC、案件、审计、通知和后台任务可用 | [部署](deployment.md)、[路线图](roadmap.md) |
 | 前端 | Vue 3/Vite + vue-router + Ant Design Vue 控制台；规则 CRUD、深链详情与 Vue Flow SOAR 画布可构建 | `web/`、[当前产品契约](product-contract.md) |
 | 运行态 | PostgreSQL、Elasticsearch、Kafka、Logstash、Flink、Kibana 均有健康扫描 | [运维手册](operations.md) |
-| SOAR | V3 拖拽图、revision 四眼审批/灰度、子流程/循环/map、多租户执行、Vault/mTLS/代理、限流/熔断/配额和持久 Worker 可用 | [SOAR 设计](soar.md)、`infra/soar/` |
-| 自动化验证 | 根项目 102 个测试、Flink 33 个测试、前端生产构建通过；包含真实 PostgreSQL V10 和 8 Worker/1000 租约竞争 | [路线图](roadmap.md) |
+| SOAR | 两个 lifecycle topic、六类 DAG 节点、字段/动作字典、持久 Wait/Human、节点 I/O、消息去重和 Vue Flow 编辑器可用 | [SOAR 设计](soar.md)、`src/main/java/**/soar/` |
+| 自动化验证 | 根项目 96 个测试、Flink 35 个测试、前端生产构建通过；包含真实 PostgreSQL V12、Handler 重试历史和 lifecycle/审批/等待测试 | [路线图](roadmap.md) |
 | 备份恢复 | ES 临时索引备份恢复演练通过 | `infra/elasticsearch/backup-restore-rehearsal.sh` |
 
 ## 当前部署基线
 
 - 编排文件：`infra/docker-compose.yml`，固定 Compose 项目名为 `infra`。
-- Kafka：内部客户端使用 `kafka:9092`，宿主机验证入口使用 `localhost:9092`；`siem-events` 已按检测作业要求保留 3 个分区。
+- Kafka：内部客户端使用 `kafka:9092`，宿主机验证入口使用 `localhost:9092`；`siem-events`、`siem-alert-lifecycle`、`siem-case-lifecycle` 均配置为 3 个分区。
 - Logstash：容器内监控 API 在 `127.0.0.1:9600`，宿主机扫描显示 `UP / degraded TCP` 时，只代表端口监听，需按[运维手册](operations.md)进入容器确认 pipeline。
 - 数据源配置：`infra/log-sources/` 与 `infra/logstash/pipeline/log-sources/` 是可审计的项目配置；生成或修改配置必须走控制面接口或部署脚本，不能直接改运行容器。
 
@@ -45,9 +45,9 @@ HISIEM 已完成检测链路、控制面、接入向导、告警处置、调查�
 1. Elasticsearch/Kafka 默认仍是单节点、明文和低副本配置，需按部署环境启用认证、TLS、持久化和 RF≥2。
 2. Case 的 PostgreSQL 事实源与 Elasticsearch 镜像依赖 outbox/重放，仍需持续演练断点、重试和告警清理。
 3. 后台任务已有租约和启动恢复，但具体 handler 的自动重放、幂等键和跨实例协调仍需补齐。
-4. SOAR 控制面已实现 tenant 成员校验、版本/执行/配额隔离；告警、案件和 ES 数据面仍缺少 tenant 字段、索引隔离和文档级权限。
+4. SOAR 控制面按 tenant 隔离 Playbook/执行/审批；告警、案件和 ES 数据面仍缺少完整 tenant 字段、索引隔离和文档级权限。
 5. 真实生产负载下的容量、保留策略、升级回滚和灾备 RTO/RPO 还需要环境级压测与演练。
-6. SOAR 自动扫描默认关闭；已完成的 1000 租约竞争是正确性压测，仍需在目标硬件上进行长时间吞吐、外部 Connector 故障注入和跨地域恢复演练。
+6. SOAR 控制面发布 lifecycle 消息还不是事务 outbox；生产还需 DLQ、长时间吞吐/重启故障注入和跨地域恢复演练。外部 Connector、复杂图和凭据治理不属于当前实现。
 
 ## 文档使用规则
 

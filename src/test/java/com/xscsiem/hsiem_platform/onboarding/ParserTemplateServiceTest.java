@@ -20,6 +20,7 @@ class ParserTemplateServiceTest {
     private ParserTemplate sshTemplate() {
         ParserTemplate t = new ParserTemplate();
         t.id = "ssh-test";
+        t.name = "SSH test";
         t.patterns = List.of(
                 "%{SYSLOGTIMESTAMP:timestamp} %{HOSTNAME:host.name} sshd.*Failed password for %{USERNAME:user.name} from %{IP:source.ip}");
         ParserTemplate.Test test = new ParserTemplate.Test();
@@ -75,5 +76,20 @@ class ParserTemplateServiceTest {
         ParserTemplate t = sshTemplate();
         t.tests = null;
         assertThrows(IllegalArgumentException.class, () -> svc().save(t));
+    }
+
+    @Test
+    void save_pathTraversalId_rejected() {
+        ParserTemplate t = sshTemplate();
+        t.id = "../outside";
+        assertThrows(IllegalArgumentException.class, () -> svc().save(t));
+    }
+
+    @Test
+    void validateDefinition_draftWithoutIdentity_canBeTested() {
+        ParserTemplate t = sshTemplate();
+        t.id = null;
+        t.name = null;
+        svc().validateDefinition(t, false);
     }
 }

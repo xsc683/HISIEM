@@ -2,6 +2,7 @@
   <div class="page-shell">
     <PageHeader title="解析规则库" description="解析模板是独立资产：先验证样例和 ECS 输出，再由数据源引用模板。">
       <a-button @click="router.push('/sources')">查看数据源</a-button>
+      <a-button v-if="canManage" type="primary" @click="openEditor('new')">新建自定义规则</a-button>
       <a-button type="primary" @click="router.push('/sources/new')">使用模板接入</a-button>
     </PageHeader>
     <div class="template-grid">
@@ -21,6 +22,10 @@
         <a-empty v-if="!selected" description="从左侧选择模板" />
         <template v-else>
           <a-alert type="info" show-icon :message="`${selected.patterns?.length || 0} 个 Grok pattern · 时区 ${selected.timestamp?.timezone || '未指定'}`" style="margin-bottom: 14px" />
+          <a-space v-if="canManage" style="margin-bottom: 14px">
+            <a-button @click="openEditor('edit')">编辑当前规则</a-button>
+            <a-button @click="openEditor('copy')">复制为自定义规则</a-button>
+          </a-space>
           <a-textarea v-model:value="sample" :rows="7" placeholder="粘贴一条真实日志；测试不会保存数据" />
           <a-button type="primary" :loading="testing" style="margin-top: 12px" @click="test">测试解析</a-button>
           <template v-if="result">
@@ -37,19 +42,23 @@
         </template>
       </a-card>
     </div>
+    <ParserTemplateEditor v-model:open="editorOpen" :template="editorTemplate" :mode="editorMode" @saved="saved" />
   </div>
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { listTemplates, testParse } from '../../api/index.js'
+import { useAuth } from '../../composables/useAuth.js'
 import PageHeader from '../../components/common/PageHeader.vue'
 import LoadState from '../../components/common/LoadState.vue'
 import StatusTag from '../../components/common/StatusTag.vue'
+import ParserTemplateEditor from '../../components/sources/ParserTemplateEditor.vue'
 
 const router = useRouter()
+const auth = useAuth()
 const templates = ref([])
 const selected = ref(null)
 const sample = ref('')
@@ -57,9 +66,17 @@ const result = ref(null)
 const loading = ref(false)
 const testing = ref(false)
 const error = ref('')
-async function load() {
+const editorOpen = ref(false)
+const editorMode = ref('new')
+const editorTemplate = ref(null)
+const canManage = computed(() => ['admin', 'ops'].includes(auth.state.user?.role))
+async function load(preferredId = selected.value?.id) {
   loading.value = true; error.value = ''
-  try { templates.value = await listTemplates(); if (templates.value.length) select(templates.value[0]) } catch (cause) { error.value = cause.message } finally { loading.value = false }
+  try {
+    templates.value = await listTemplates()
+    const next = templates.value.find((template) => template.id === preferredId) || templates.value[0]
+    if (next) select(next)
+  } catch (cause) { error.value = cause.message } finally { loading.value = false }
 }
 function select(template) {
   selected.value = template
@@ -71,6 +88,12 @@ async function test() {
   testing.value = true
   try { result.value = await testParse(selected.value.id, sample.value) } catch (cause) { message.error(cause.message) } finally { testing.value = false }
 }
+function openEditor(mode) {
+  editorMode.value = mode
+  editorTemplate.value = mode === 'new' ? null : JSON.parse(JSON.stringify(selected.value))
+  editorOpen.value = true
+}
+async function saved(template) { await load(template.id) }
 onMounted(load)
 </script>
 

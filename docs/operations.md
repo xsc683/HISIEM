@@ -28,7 +28,7 @@ curl -H "Authorization: Bearer $TOKEN" \
 | 检查 | 命令/入口 | 通过标准 |
 | --- | --- | --- |
 | 容器 | `docker compose -f infra/docker-compose.yml ps kafka` | 容器运行且日志无持续重启 |
-| 宿主机客户端 | `localhost:9092` | 能获取 `siem-events` 元数据和 3 个分区 |
+| 宿主机客户端 | `localhost:9092` | 能获取 `siem-events` 和两个 lifecycle topic 元数据 |
 | 容器内客户端 | `kafka:9092` | 能列出 topic、读取 offset |
 | 检测作业 | Flink 作业页面或 API | 作业 `RUNNING`，消费组 lag 可解释 |
 
@@ -38,6 +38,14 @@ curl -H "Authorization: Bearer $TOKEN" \
 docker logs --tail 100 siem-kafka
 docker exec siem-kafka /opt/kafka/bin/kafka-topics.sh \
   --bootstrap-server kafka:9092 --describe --topic siem-events
+```
+
+SOAR 还需确认两个 topic 与消费组：
+
+```bash
+docker exec siem-kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --describe --topic siem-alert-lifecycle
+docker exec siem-kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --describe --topic siem-case-lifecycle
+docker exec siem-kafka /opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server kafka:9092 --describe --group siem-soar-runtime
 ```
 
 ### Logstash
@@ -77,6 +85,7 @@ curl -fsS http://localhost:9200/_cat/indices/siem-alerts?v
 3. 在 Elasticsearch 查询 `siem-events-*`，确认 `@timestamp`、`source.ip`、`event.outcome` 等字段。
 4. 检查 Kafka offset 与 Flink 作业，再查询 `siem-alerts`；窗口规则需要达到阈值才会生成告警。
 5. 在告警台完成状态、verdict、备注和建案操作，最后在审计日志中确认真实操作者。
+6. 若已发布 SOAR Playbook，查询 `/api/soar/executions`，确认对应 `alert.created/updated` 自动产生执行；Human 节点到 `/soar/approvals` 处理。
 
 ## 常见现象与处理
 
@@ -88,6 +97,9 @@ curl -fsS http://localhost:9200/_cat/indices/siem-alerts?v
 | 有事件无告警 | Kafka offset、Flink `RUNNING`、规则 `enabled` | 区分事件已入 ES 与检测链路已消费 |
 | 规则发布后作业下线 | Flink savepoint/cancel/submit 日志 | 保留旧配置，按部署脚本恢复；不要手工改运行容器 |
 | 数据源停用后仍轮询 | 控制面状态、后台任务、端口和 pipeline | 等待任务收敛；重复操作前检查任务 ID 和审计记录 |
+| SOAR 无执行 | Playbook 是否 published+enabled、两个 lifecycle topic、`siem-soar-runtime` lag | 不检查 `siem-events`，先确认 lifecycle 消息和字典/发布门禁 |
+| SOAR 长时间 waiting | `next_run_at`、Worker 指标和数据库时钟 | Wait 到期才会领取；不要通过重启服务跳过等待 |
+| SOAR waiting_human | `/soar/approvals` 是否存在 pending 记录 | 批准/拒绝后沿显式分支恢复，不新建执行 |
 
 ## 变更、备份与回滚
 

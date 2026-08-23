@@ -54,12 +54,29 @@ class SecurityApiTest {
     void soarPlaybooksAreReadableButMutationIsForbiddenForAudit() throws Exception {
         mvc.perform(get("/api/soar/playbooks").with(user("auditor").roles("AUDIT")))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].id").isString());
-        mvc.perform(post("/api/soar/playbooks/reload").with(user("auditor").roles("AUDIT")))
-                .andExpect(status().isForbidden());
-        mvc.perform(post("/api/soar/executions").with(user("auditor").roles("AUDIT"))
+                .andExpect(jsonPath("$").isArray());
+        mvc.perform(post("/api/soar/playbooks").with(user("auditor").roles("AUDIT"))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"playbookId\":\"x\",\"resourceType\":\"alert\",\"resourceId\":\"a\"}"))
+                        .content("{\"name\":\"x\",\"entryType\":\"alert\"}"))
                 .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void opsCanTestUnsavedCustomParserTemplate() throws Exception {
+        mvc.perform(post("/api/parser-templates/test-custom").with(user("operator").roles("OPS"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "sample": "source=192.0.2.10",
+                                  "template": {
+                                    "patterns": ["source=%{IP:source.ip}"],
+                                    "ecs": {"event.category": "network"}
+                                  }
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.ok").value(true))
+                .andExpect(jsonPath("$.fields['source.ip']").value("192.0.2.10"))
+                .andExpect(jsonPath("$.fields['event.category']").value("network"));
     }
 }

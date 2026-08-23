@@ -5,7 +5,8 @@ export const labels = {
     open: '待处置', acknowledged: '已确认', investigating: '调查中', resolved: '已解决', closed: '已关闭',
     active: '运行中', stopped: '已停用', creating: '配置中', failed: '失败', succeeded: '成功', queued: '排队中',
     waiting_approval: '等待审批', waiting_child: '等待子流程', paused: '已暂停', cancelled: '已取消', running: '执行中',
-    draft: '草稿', pending_approval: '待审批', approved: '已批准', published: '已发布', rejected: '已拒绝', retired: '已退役',
+    draft: '草稿', pending: '待执行', success: '成功', waiting: '等待中', waiting_human: '等待人工',
+    disabled: '已停用', approved: '已批准', published: '已发布', rejected: '已拒绝', retired: '已退役',
   },
   severity: { low: '低', medium: '中', high: '高', critical: '严重' },
   verdict: { true_positive: '真实攻击', false_positive: '误报', duplicate: '重复告警' },
@@ -22,9 +23,9 @@ export function displayLabel(group, value) {
 export function statusColor(value) {
   if (value === 'UP') return 'green'
   if (value === 'DOWN') return 'red'
-  if (['active', 'succeeded', 'approved', 'published', 'resolved'].includes(value)) return 'green'
+  if (['active', 'succeeded', 'success', 'approved', 'published', 'resolved'].includes(value)) return 'green'
   if (['critical', 'failed', 'rejected', 'closed', 'cancelled'].includes(value)) return 'red'
-  if (['high', 'creating', 'queued', 'pending_approval', 'waiting_approval', 'waiting_child', 'paused'].includes(value)) return 'orange'
+  if (['high', 'creating', 'queued', 'pending', 'waiting', 'waiting_human', 'pending_approval', 'waiting_approval', 'waiting_child', 'paused', 'disabled'].includes(value)) return 'orange'
   if (['investigating', 'acknowledged', 'running'].includes(value)) return 'blue'
   return 'default'
 }

@@ -14,12 +14,15 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.regex.Pattern;
 
 /**
  * 加载 infra/parser-templates/*.yaml 为解析模板;支持保存(Story 02,正负样本门禁)。
  */
 @Service
 public class ParserTemplateService {
+
+    private static final Pattern SAFE_ID = Pattern.compile("[a-z0-9][a-z0-9_-]{0,63}");
 
     private final ObjectMapper yamlMapper = new ObjectMapper(new YAMLFactory());
     private final String templatesDir;
@@ -88,16 +91,15 @@ public class ParserTemplateService {
 
     /** 正负样本门禁(先于保存)。 */
     public void validateGate(ParserTemplate t) {
-        if (t.id == null || t.id.isBlank()) {
-            throw new IllegalArgumentException("模板 id 不能为空");
-        }
-        if (t.patterns == null || t.patterns.isEmpty()) {
-            throw new IllegalArgumentException("模板至少需要一个 grok 模式");
-        }
+        validateDefinition(t, true);
         if (t.tests == null || t.tests.isEmpty()) {
             throw new IllegalArgumentException("模板至少需要一个正样本(请先验证样例日志)");
         }
         for (ParserTemplate.Test test : t.tests) {
+            if (test == null || test.sample == null || test.sample.isBlank()) {
+                throw new IllegalArgumentException("正样本不能为空");
+            }
+            SampleSizeValidator.requireApiSample(test.sample);
             GrokTestService.ParseResult r = grok.test(t, test.sample);
             if (!r.ok()) {
                 throw new IllegalArgumentException("正样本未命中任何 grok 模式: " + test.sample);
@@ -114,11 +116,29 @@ public class ParserTemplateService {
         }
         if (t.negative != null) {
             for (String neg : t.negative) {
+                SampleSizeValidator.requireApiSample(neg);
                 GrokTestService.ParseResult r = grok.test(t, neg);
                 if (r.ok()) {
                     throw new IllegalArgumentException("负样本不应命中任何 grok 模式: " + neg);
                 }
             }
+        }
+    }
+
+    /** 校验可执行的模板定义；草稿测试时允许尚未填写 ID 和名称。 */
+    public void validateDefinition(ParserTemplate t, boolean requireIdentity) {
+        if (t == null) {
+            throw new IllegalArgumentException("模板不能为空");
+        }
+        if (requireIdentity && (t.id == null || !SAFE_ID.matcher(t.id).matches())) {
+            throw new IllegalArgumentException("模板 id 仅支持 1-64 位小写字母、数字、下划线和连字符，且必须以字母或数字开头");
+        }
+        if (requireIdentity && (t.name == null || t.name.isBlank())) {
+            throw new IllegalArgumentException("模板名称不能为空");
+        }
+        if (t.patterns == null || t.patterns.isEmpty()
+                || t.patterns.stream().anyMatch(pattern -> pattern == null || pattern.isBlank())) {
+            throw new IllegalArgumentException("模板至少需要一个非空 grok 模式");
         }
     }
 }

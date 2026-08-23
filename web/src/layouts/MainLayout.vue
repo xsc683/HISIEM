@@ -13,7 +13,6 @@
           <a-button type="text" class="collapse-button" @click="collapsed = !collapsed">
             <MenuUnfoldOutlined v-if="collapsed" /><MenuFoldOutlined v-else />
           </a-button>
-          <div class="route-context"><span>安全运营平台</span><strong>{{ route.meta.title || '控制台' }}</strong></div>
         </div>
         <div class="topbar-right">
           <a-select v-if="tenants.length > 1" v-model:value="tenantId" style="width: 180px" @change="changeTenant"
@@ -84,7 +83,11 @@ const menuItems = [
     { key: '/sources', label: '数据源' },
     { key: '/parser-templates', label: '解析规则库' },
   ] },
-  { key: '/soar', icon: icon(RobotOutlined), label: 'SOAR 自动化' },
+  { key: 'soar', icon: icon(RobotOutlined), label: 'SOAR 自动化', children: [
+    { key: '/soar/playbooks', label: 'Playbook' },
+    { key: '/soar/executions', label: '执行实例' },
+    { key: '/soar/approvals', label: '人工审批' },
+  ] },
   { key: 'operations', icon: icon(ThunderboltOutlined), label: '运行与治理', children: [
     { key: '/health', icon: icon(BarChartOutlined), label: '数据健康' },
     { key: '/ops/health', label: '运行态扫描' },
@@ -174,8 +177,6 @@ onBeforeUnmount(() => window.clearInterval(clockTimer))
 .topbar { position: sticky; top: 0; z-index: 15; height: 64px; padding: 0 24px; display: flex; align-items: center; justify-content: space-between; background: rgb(255 255 255 / 94%); border-bottom: 1px solid #dce5eb; backdrop-filter: blur(10px); }
 .topbar-left, .topbar-right { display: flex; align-items: center; gap: 12px; }
 .collapse-button { font-size: 18px; }
-.route-context span { display: block; color: #7a8a99; font-size: 11px; }
-.route-context strong { display: block; color: #163047; font-size: 15px; }
 .clock { color: #687b8c; font-variant-numeric: tabular-nums; }
 .user-button { color: #29485e; }
 .content { padding: 24px 28px 40px; }

@@ -102,20 +102,20 @@ else
 fi
 if [ "$REQUIRE_CONTROL_PLANE_SCHEMA" = "1" ]; then
     control_tables="$(docker exec siem-postgres psql -U siem -d siem -tAc \
-        "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('roles','users','audit_logs','cases','case_alerts','notifications','background_tasks','case_mirror_outbox','soar_executions','soar_step_executions')" \
+        "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('roles','users','audit_logs','cases','case_alerts','notifications','background_tasks','case_mirror_outbox','soar_executions','soar_step_executions','soar_playbook','soar_execution','soar_node_run','soar_approval','soar_node_execution','soar_approval_task','soar_action_receipt')" \
         2>/dev/null | tr -d '[:space:]' || true)"
-    if [ "$control_tables" = "10" ]; then
-        echo "  [ok] PostgreSQL 控制面 10 张表已由 Flyway 创建"
+    if [ "$control_tables" = "17" ]; then
+        echo "  [ok] PostgreSQL 控制面 17 张关键表已由 Flyway 创建"
     else
-        fail "PostgreSQL 控制面表不完整(检测到 $control_tables/10),请先启动 Spring Boot 应用执行 Flyway"
+        fail "PostgreSQL 控制面表不完整(检测到 $control_tables/17),请先启动 Spring Boot 应用执行 Flyway"
     fi
     flyway_version="$(docker exec siem-postgres psql -U siem -d siem -tAc \
         "SELECT version FROM flyway_schema_history WHERE success = TRUE ORDER BY installed_rank DESC LIMIT 1" \
         2>/dev/null | tr -d '[:space:]' || true)"
-    if [ -n "$flyway_version" ] && [ "$flyway_version" -ge 8 ] 2>/dev/null; then
+    if [ -n "$flyway_version" ] && [ "$flyway_version" -ge 12 ] 2>/dev/null; then
         echo "  [ok] Flyway V${flyway_version} 控制面迁移已完成"
     else
-        fail "Flyway 当前版本为 ${flyway_version:-unknown},预期至少 V8(密码轮换、outbox、任务租约、SOAR 执行记录)"
+        fail "Flyway 当前版本为 ${flyway_version:-unknown},预期至少 V12(SOAR Handler 与 attempt runtime)"
     fi
 fi
 if curl -fsS "$ES/_cluster/health?filter_path=status" | grep -qE 'green|yellow'; then
@@ -135,11 +135,13 @@ else
 fi
 
 echo "==> 5) Kafka topic"
-if docker exec siem-kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list 2>/dev/null | grep -qx 'siem-events'; then
-    echo "  [ok] Kafka topic siem-events"
-else
-    fail "Kafka topic siem-events 不存在"
-fi
+for topic in siem-events siem-alert-lifecycle siem-case-lifecycle; do
+    if docker exec siem-kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list 2>/dev/null | grep -qx "$topic"; then
+        echo "  [ok] Kafka topic $topic"
+    else
+        fail "Kafka topic $topic 不存在"
+    fi
+done
 
 if [ "$REQUIRE_DETECTION_JOB" = "1" ]; then
     echo "==> 6) Flink 检测作业"

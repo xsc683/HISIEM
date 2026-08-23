@@ -15,7 +15,7 @@
 | 检测规则 | `/rules`、`/rules/new`、`/rules/:id`、`/rules/:id/edit` | 逻辑摘要、完整 DSL、创建编辑和启停/部署 | `/api/detection-rules/*` |
 | 告警台 | `/alerts`、`/alerts/:id` | 风险排序、批量处置及结构化证据详情 | `/api/alerts/*` |
 | 调查台 | `/cases`、`/cases/new`、`/cases/:id` | 自动聚合、手动建案和完整调查工作区 | `/api/cases/*` |
-| SOAR 自动化 | `/soar`、`/soar/designer`、`/soar/executions/:id` | 运行台、Vue Flow 设计/治理和执行时间线 | `/api/soar/*` |
+| SOAR 自动化 | `/soar/playbooks`、`/soar/playbooks/new`、`/soar/playbooks/:id/edit`、`/soar/executions`、`/soar/executions/:id`、`/soar/approvals` | 生命周期驱动的 Playbook、执行 I/O 和人工审批 | `/api/soar/*` |
 | 数据健康 | `/health` | 数据源事件量、失败率、趋势和失败下钻 | `/api/data-health/*` |
 | 运行态扫描 | `/ops/health` | PostgreSQL/ES/Kafka/Logstash/Flink/Kibana 探针和任务 | `/api/ops/health-scan`、`/api/tasks/*` |
 | 资产关键度 | `/criticality`、`/criticality/new`、`/criticality/:type/:key/edit` | IP/用户/主机风险权重维护和重算 | `/api/settings/criticality/*` |
@@ -31,8 +31,8 @@
 | 规则 | `rule.id` | 告警的 `alert.rule_id` |
 | 告警 | `alert.id` | 案件的 `alert_ids`、告警的 `alert.case_id` |
 | 案件 | `case.id` | 关联告警、实体、时间线和证据 |
-| SOAR 执行 | `soar-{uuid}` | Playbook 快照、目标告警/案件、frontier、节点尝试和事件时间线 |
-| Playbook revision | `tenant + playbookId + revision` | 草稿布局、审批、灰度比例和执行快照 |
+| SOAR 执行 | `exec-{uuid}` | 触发 message ID、Playbook 图快照、目标告警/案件和节点 I/O |
+| Playbook | `tenant + playbookId + revision` | 草稿/发布/停用状态和执行快照 |
 | 实体 | `source.ip` 优先，其次 `user.name`/`host.name` | 规则、告警、案件、实体风险 |
 
 ## 2. API 契约索引
@@ -143,35 +143,26 @@ DELETE /api/notifications/{id}
 ```text
 GET    /api/soar/playbooks
 GET    /api/soar/playbooks/{id}
-POST   /api/soar/playbooks/reload
+POST   /api/soar/playbooks
+PUT    /api/soar/playbooks/{id}
+DELETE /api/soar/playbooks/{id}
+POST   /api/soar/playbooks/{id}/publish
+PATCH  /api/soar/playbooks/{id}/enabled
 GET    /api/soar/executions
 GET    /api/soar/executions/{id}
-GET    /api/soar/executions/{id}/events
-POST   /api/soar/executions
-POST   /api/soar/executions/{id}/approval
-POST   /api/soar/executions/{id}/retry
-POST   /api/soar/executions/{id}/pause
-POST   /api/soar/executions/{id}/resume
 POST   /api/soar/executions/{id}/cancel
-GET    /api/soar/automation-rules
-POST   /api/soar/automation-rules/scan
-GET    /api/soar/connectors
-POST   /api/soar/connectors/reload
-GET    /api/soar/connectors/runtime
-GET    /api/soar/designer/revisions
-POST   /api/soar/designer/drafts
-PUT    /api/soar/designer/{playbookId}/revisions/{revision}
-POST   /api/soar/designer/{playbookId}/revisions/{revision}/submit
-POST   /api/soar/designer/{playbookId}/revisions/{revision}/review
-POST   /api/soar/designer/{playbookId}/revisions/{revision}/publish
-POST   /api/soar/designer/import-git
+GET    /api/soar/approvals
+POST   /api/soar/approvals/{id}/approve
+POST   /api/soar/approvals/{id}/reject
+GET    /api/soar/field-dictionary?objectType=alert|case
+GET    /api/soar/action-dictionary?objectType=alert|case
 GET    /api/tenants/mine
 GET    /api/tenants
 POST   /api/tenants
 PUT    /api/tenants/{tenantId}/members/{username}
 ```
 
-Git 中的 `infra/soar/playbooks/*.yaml` 只作为初始/导入源；运行时只解析 PostgreSQL 中已发布的 revision。V3 条件图动作必须属于后端白名单，支持子 Playbook、loop 和 map。创建接口返回 `202`，数据库租约 Worker 异步推进并保存定义快照、frontier、节点尝试和事件时间线。审批拒绝沿 `rejected` 边运行，不一定立即终止；失败执行可重试。自动规则扫描支持租户、条件和窗口去重，但定时扫描默认关闭。外部动作只允许 `infra/soar/connectors/*.yaml` 登记的固定基址和动作 Schema，不提供任意 Shell、任意 URL 或任意 Header。
+Playbook 和执行均以 V11/V12 PostgreSQL 表为准，不再从 `infra/soar/*.yaml` 加载。唯一触发入口是 Kafka 的 `siem-alert-lifecycle` 与 `siem-case-lifecycle`，不存在手工创建执行接口。发布且启用的 Playbook 按对象类型和 created/updated 事件匹配；同一 message 对同一 Playbook 由数据库唯一键去重。节点只支持 Start/End/Condition/Business/Human/Wait，由独立 NodeHandler 执行并返回统一结果；每次 retry 保留独立 attempt，同一逻辑 visit 共享幂等键。审批拒绝沿显式 reject 分支继续，Wait 通过 `next_run_at` 跨重启恢复。完整实现见 [`soar.md`](soar.md)。
 
 ## 3. 端到端主旅程
 
@@ -202,14 +193,14 @@ Git 中的 `infra/soar/playbooks/*.yaml` 只作为初始/导入源；运行时�
 
 ### SOAR 辅助处置
 
-1. 在告警展开区或案件详情点击“运行 SOAR”，页面携带稳定资源 ID 进入 `/soar`。
-2. 选择与 `alert` 或 `case` 兼容的 Playbook；后端先校验 Playbook 级 `when` 条件再创建执行。
-3. 管理员在 `/soar/designer` 从输出 Handle 拖到输入 Handle 连线，保存草稿后由另一位管理员完成四眼审批，再选择稳定/灰度比例发布；Git 导入也必须走这条链路。
-4. 展开 Playbook 确认条件边、并行分支、join、子流程、loop/map 和失败边；启动后先看到 `queued/running`，不能假设 HTTP 请求已同步完成。
-5. 查看 frontier、父子执行、map 汇总、节点状态/尝试/耗时和事件时间线；`waiting_approval` 必须由满足 `requiredRole` 的用户批准或拒绝。
-6. 验证暂停/恢复/取消；失败执行可以重试，已落库的成功节点在恢复路由时不能重复调用。
-7. 管理员可手动扫描启用的自动化规则，并确认相同租户/资源在 dedup 窗口内不会创建重复执行。
-8. 查看 Connector 运行态中的限流、配额、并发和熔断信息，再回到告警、案件、通知和审计页面确认闭环。
+1. 管理员在 `/soar/playbooks/new` 选择告警或案件入口以及 created/updated 生命周期事件；创建后后端自动生成唯一 Start/End。
+2. 在 `/soar/playbooks/:id/edit` 添加 Condition、Business、Human、Wait，从输出 Handle 连接下游；条件字段和业务动作只从字典下拉框选择。
+3. 草稿自动保存；发布时确认所有路径可达且收敛到 End，Condition 有 true/false，Human 有 approve/reject。发布成功即启用。
+4. 触发一次真实告警或案件变更；Flink/控制面在事实存储成功后将生命周期消息写入 Kafka，消费者自动创建执行，不从页面手工启动。
+5. 在 `/soar/executions` 找到对应 event type 和对象 ID，进入详情核对 payload 快照、图快照以及每个节点解析后的输入/输出。
+6. Human 节点进入 `waiting_human` 后到 `/soar/approvals` 批准或拒绝，确认原执行沿对应分支恢复；Wait 节点到期前不应忙轮询执行动作。
+7. 重发同一 `message_id`，确认同一 Playbook 不产生第二个执行；再让另一匹配 Playbook 启用，确认同一消息可各创建一个实例。
+8. 停用 Playbook 后再次触发消息，确认不再创建新实例；历史执行和节点 I/O 仍可查询。
 
 ## 4. 当前验收清单
 
@@ -221,13 +212,13 @@ Git 中的 `infra/soar/playbooks/*.yaml` 只作为初始/导入源；运行时�
 - 所有时间字段说明事件时间、告警生成时间和页面本地时区，避免把三者混为“平台时间”。
 - 展开告警时能查看完整原始 JSON，长数组和嵌套对象不被截断；详情页可从告警跳到案件/实体/事件上下文。
 - 写操作带真实操作者和审计记录；无权限请求返回 401/403，不伪装成空列表。
-- SOAR 未知 action、不可达节点、坏边和错误动作参数在加载阶段被拒绝；审批并发返回 409；历史执行继续使用启动时快照。
-- Worker 租约过期后执行重新入队；重试遵守 attempt 上限，失败边与整体失败可区分；连接器 API 不暴露基址或凭据引用。
-- `X-Tenant-ID` 必须通过成员关系校验；执行、revision、dedup 和 Connector 运行状态不能跨租户读取。
-- 创建者不能审批自己的 revision；灰度路由对同一租户/资源保持稳定，执行始终使用启动快照。
-- loop/map 有明确上限；父流程等待子 Playbook 时释放租约；Connector 超时、配额拒绝和熔断均可观察。
+- SOAR 未知节点/action、不可达节点、坏边、循环和错误动作参数在发布阶段被拒绝；审批并发返回 409；历史执行继续使用启动时图快照。
+- Worker 用租约领取到期节点；Human/Wait 释放租约，取消与 Playbook 停用使用不同状态。
+- `X-Tenant-ID` 必须通过成员关系校验；Playbook、执行、审批和 message 去重不能跨租户读取。
+- SOAR 不订阅 `siem-events`；Flink 只有在告警 ES 更新成功后才发布 `alert.created`。
+- 页面和 API 不出现 Connector、外部设备、子 Playbook、loop/map、并行网关、灰度或四眼发布等未实现语义。
 - 变更后执行根项目测试、Flink 测试、前端构建；涉及 `infra/` 时再执行健康扫描和端到端冒烟。
 
 ## 5. 不在当前契约中的内容
 
-ES/Kafka 生产 TLS/高可用、外部通知投递、完整 OCSF 合规，以及全 SIEM 数据面多租户、SOAR 完整触发器、OAuth2、dead-letter、容器级第三方代码 Runner 和跨地域恢复仍是路线图事项。SOAR 控制面已经实现可视化编辑、发布审批/灰度、租户隔离、Vault Transit/KV、mTLS、统一代理以及连接器限流/熔断/配额；不得把这些控制面能力扩大描述为 ES 数据面或任意代码沙箱已经租户化/隔离。
+ES/Kafka 生产 TLS/高可用、外部通知投递、完整 OCSF 合规，以及全 SIEM 数据面多租户、SOAR 事务 outbox、DLQ 管理、完整触发器、外部 Connector/凭据、并行/循环/子流程和跨地域恢复仍是路线图事项。旧 V8-V10 代码曾尝试的 Vault、mTLS、灰度和复杂图语义已退出当前运行时，不得继续写成已实现功能。
