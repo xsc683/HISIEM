@@ -1,28 +1,30 @@
 package com.xscsiem.hsiem_platform.soar;
 
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
-import java.time.Duration;
 import java.time.Instant;
 
-/** 将进程退出后遗留的 queued/running SOAR 执行收敛为可人工重试的 failed。 */
+/** 回收崩溃 Worker 的过期租约并重新入队，不把可恢复执行误标为终态失败。 */
 @Component
 public class SoarExecutionRecovery {
 
     private final SoarExecutionStore store;
-    private final Duration staleAfter;
 
-    public SoarExecutionRecovery(SoarExecutionStore store,
-                                 @Value("${app.soar.stale-after:PT5M}") Duration staleAfter) {
+    public SoarExecutionRecovery(SoarExecutionStore store) {
         this.store = store;
-        this.staleAfter = staleAfter;
     }
 
     @Scheduled(initialDelayString = "${app.soar.recovery-initial-delay-ms:60000}",
             fixedDelayString = "${app.soar.recovery-interval-ms:60000}")
     public void recover() {
-        store.recoverStale(Instant.now().minus(staleAfter));
+        store.recoverExpiredLeases(Instant.now());
+    }
+
+    @EventListener(ApplicationReadyEvent.class)
+    public void recoverOnStartup() {
+        recover();
     }
 }

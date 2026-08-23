@@ -25,6 +25,9 @@ class JdbcSoarExecutionStoreTest {
         String id = "soar-test-" + UUID.randomUUID();
         SoarPlaybook.Step approval = new SoarPlaybook.Step("approve-step", "审批", "approval",
                 Map.of("requiredRole", "admin"), null);
+        SoarPlaybook.Node approvalNode = new SoarPlaybook.Node(approval.id(), approval.name(),
+                "approval", null, approval.parameters(), null, null, null,
+                null, null, null, null, List.of());
         SoarPlaybook playbook = new SoarPlaybook("store-playbook", "Store Test", "", "1.0", true,
                 List.of("alert"), null, List.of(approval));
         Instant now = Instant.now();
@@ -32,13 +35,17 @@ class JdbcSoarExecutionStoreTest {
                 "queued", "alice", 0, playbook, Map.of("alertId", "a-1"), null, null,
                 null, null, now, now, null, 0, List.of()));
 
-        assertTrue(store.claimQueued(id));
-        store.startStep(id, 0, approval, approval.parameters());
-        store.waitForApproval(id, 0, approval.id(), "批准处置");
+        Instant claimTime = Instant.now();
+        assertEquals(id, store.claimNext("worker-1", claimTime, claimTime.plusSeconds(45)).id());
+        store.startNode(id, 0, approvalNode, 1, approval.parameters());
+        store.waitForApproval(id, "worker-1", approval.id(), "批准处置",
+                List.of(approval.id()), Map.of("alertId", "a-1"), 1);
         assertEquals("waiting_approval", store.find(id).status());
-        assertTrue(store.resolveApproval(id, approval.id(), true, "admin"));
+        assertTrue(store.resolveApproval(id, approval.id(), true, "admin",
+                List.of("end"), Map.of("alertId", "a-1"), true));
         assertEquals("queued", store.find(id).status());
         assertEquals(1, store.find(id).currentStep());
+        assertEquals(List.of("end"), store.find(id).frontier());
         assertEquals("succeeded", store.listSteps(id).getFirst().status());
     }
 }

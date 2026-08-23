@@ -8,6 +8,7 @@ import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SoarPlaybookRegistryTest {
 
@@ -51,5 +52,51 @@ class SoarPlaybookRegistryTest {
 
         SoarPlaybookRegistry registry = new SoarPlaybookRegistry(tempDir.toString());
         assertThrows(IllegalArgumentException.class, registry::initialize);
+    }
+
+    @Test
+    void reloadAcceptsConditionalGraphAndRejectsBrokenActionSchema() throws Exception {
+        Files.writeString(tempDir.resolve("graph.yaml"), """
+                formatVersion: "2"
+                id: graph-playbook
+                name: 条件图
+                version: "2.0"
+                resourceTypes: [alert]
+                entrypoint: route-alert
+                nodes:
+                  - id: route-alert
+                    name: 条件路由
+                    type: decision
+                    transitions:
+                      - target: remember-risk
+                  - id: remember-risk
+                    name: 保存上下文
+                    type: action
+                    action: context.set
+                    with:
+                      values: {band: high}
+                    transitions:
+                      - target: completed
+                  - id: completed
+                    name: 完成
+                    type: end
+                    result: succeeded
+                """);
+        SoarPlaybookRegistry registry = new SoarPlaybookRegistry(tempDir.toString());
+        registry.initialize();
+        assertTrue(registry.get("graph-playbook").isGraph());
+
+        Files.writeString(tempDir.resolve("broken.yaml"), """
+                id: broken-context
+                name: 错误参数
+                version: "1.0"
+                resourceTypes: [alert]
+                steps:
+                  - id: remember-risk
+                    name: 保存上下文
+                    action: context.set
+                    with: {band: high}
+                """);
+        assertThrows(IllegalArgumentException.class, registry::reload);
     }
 }

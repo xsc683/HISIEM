@@ -1,0 +1,18 @@
+id: threat-intel-http
+name: 威胁情报 HTTP 连接器模板
+description: 固定 HTTPS 基址的 IP 情报查询动作；启用前配置基址和 Token 环境变量。
+enabled: false
+baseUrlEnv: SOAR_THREAT_INTEL_BASE_URL
+allowPrivateNetwork: false
+allowInsecureHttp: false
+auth:
+  type: bearer
+  secretEnv: SOAR_THREAT_INTEL_TOKEN
+actions:
+  lookup-ip:
+    method: GET
+    path: /api/v1/ip/${ip}
+    timeoutSeconds: 10
+    maxResponseBytes: 1048576
+    required:
+      - ip

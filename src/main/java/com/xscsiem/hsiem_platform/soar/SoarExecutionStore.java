@@ -4,35 +4,56 @@ import java.util.List;
 import java.util.Map;
 import java.time.Instant;
 
-/** SOAR 执行持久化边界；条件更新保证同一次执行只有一个推进者。 */
+/** SOAR 持久化边界；所有状态迁移都由条件更新和租约保护。 */
 public interface SoarExecutionStore {
 
-    void create(SoarExecution execution);
+    boolean create(SoarExecution execution);
 
     SoarExecution find(String id);
 
     List<SoarExecution> list(int size);
 
-    boolean claimQueued(String id);
+    SoarExecution claimNext(String owner, Instant now, Instant leaseUntil);
+
+    boolean heartbeat(String executionId, String owner, Instant leaseUntil);
 
     SoarStepExecution findStep(String executionId, String stepId);
 
     List<SoarStepExecution> listSteps(String executionId);
 
-    void startStep(String executionId, int index, SoarPlaybook.Step step, Map<String, Object> input);
+    int startNode(String executionId, int index, SoarPlaybook.Node node,
+                  int maxAttempts, Map<String, Object> input);
 
-    void finishStep(String executionId, String stepId, String status,
+    void finishNode(String executionId, String stepId, String status,
                     Map<String, Object> output, String error);
 
-    void advance(String executionId, int nextStep);
+    void saveProgress(String executionId, String owner, List<String> frontier,
+                      String currentNode, Map<String, Object> context, int nodesExecuted);
 
-    void waitForApproval(String executionId, int stepIndex, String stepId, String message);
+    void release(String executionId, String owner, List<String> frontier, String currentNode,
+                 Map<String, Object> context, int nodesExecuted, Instant nextRunAt, String error);
 
-    boolean resolveApproval(String executionId, String stepId, boolean approved, String actor);
+    void waitForApproval(String executionId, String owner, String stepId, String message,
+                         List<String> frontier, Map<String, Object> context, int nodesExecuted);
 
-    void finishExecution(String executionId, String status, String error);
+    boolean resolveApproval(String executionId, String stepId, boolean approved, String actor,
+                            List<String> frontier, Map<String, Object> context, boolean continueExecution);
+
+    void finishExecution(String executionId, String owner, String status, String error,
+                         Map<String, Object> context, int nodesExecuted);
 
     boolean prepareRetry(String executionId);
 
-    int recoverStale(Instant cutoff);
+    boolean requestCancel(String executionId);
+
+    boolean requestPause(String executionId);
+
+    boolean resume(String executionId);
+
+    int recoverExpiredLeases(Instant now);
+
+    void appendEvent(String executionId, String eventType, String nodeId,
+                     String actor, Map<String, Object> details);
+
+    List<SoarExecutionEvent> listEvents(String executionId);
 }

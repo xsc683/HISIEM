@@ -1,7 +1,8 @@
+formatVersion: "2"
 id: alert-high-risk-triage
-name: 高危告警标准处置
-description: 确认告警、通知分析师，并在管理员批准后进入调查状态。
-version: "1.0"
+name: 高危告警分级响应
+description: 按风险分流，并行记录上下文与通知；高风险处置经审批后进入调查，失败走补偿分支。
+version: "2.0"
 enabled: true
 resourceTypes:
   - alert
@@ -9,27 +10,164 @@ when:
   field: resource.alert.risk_score
   operator: gte
   value: 60
-steps:
+defaults:
+  timeoutSeconds: 15
+  retry:
+    maxAttempts: 3
+    delaySeconds: 2
+    backoffMultiplier: 2.0
+triggers:
+  - id: critical-alert-created
+    type: alert
+    enabled: false
+    dedupWindow: PT1H
+    when:
+      all:
+        - field: resource.alert.status
+          operator: eq
+          value: open
+        - field: resource.alert.risk_score
+          operator: gte
+          value: 90
+entrypoint: acknowledge-alert
+nodes:
   - id: acknowledge-alert
-    name: 确认高危告警
+    name: 确认告警已被编排接管
+    type: action
     action: alert.set_status
     with:
       status: acknowledged
-  - id: notify-analyst
-    name: 发送处置通知
+    transitions:
+      - target: severity-route
+        on: success
+      - target: acknowledge-failed
+        on: failure
+
+  - id: severity-route
+    name: 按风险选择响应路径
+    type: decision
+    exclusive: true
+    transitions:
+      - target: high-risk-fanout
+        when:
+          field: resource.alert.risk_score
+          operator: gte
+          value: 85
+      - target: standard-notification
+
+  - id: high-risk-fanout
+    name: 启动并行高风险准备任务
+    type: decision
+    transitions:
+      - target: high-risk-notification
+      - target: capture-risk-context
+
+  - id: high-risk-notification
+    name: 通知分析师高风险告警待审批
+    type: action
     action: notification.create
     with:
       type: soar-alert-triage
       target: "alert:${alertId}"
-      message: "SOAR 已接管告警 ${resource.alert.rule_name}（${alertId}），等待处置审批。"
+      message: "SOAR 已接管 ${resource.alert.rule_name}（${alertId}），风险 ${resource.alert.risk_score}，等待处置审批。"
+    transitions:
+      - target: approve-investigation
+        on: success
+
+  - id: capture-risk-context
+    name: 固化本次编排判断上下文
+    type: action
+    action: context.set
+    with:
+      values:
+        riskBand: high
+        observedRisk: "${resource.alert.risk_score}"
+        responseOwner: soc-l2
+    transitions:
+      - target: approve-investigation
+        on: success
+
   - id: approve-investigation
-    name: 审批进入调查阶段
-    action: approval
+    name: 管理员审批进入调查阶段
+    type: approval
+    join: all
     with:
       requiredRole: admin
-      message: "确认将告警 ${alertId} 转入 investigating 状态"
+      message: "确认将告警 ${alertId} 转入 investigating；风险分级为 ${variables.riskBand}。"
+    transitions:
+      - target: start-investigation
+        on: approved
+      - target: rejected-notification
+        on: rejected
+
   - id: start-investigation
-    name: 转入调查状态
+    name: 告警进入调查状态
+    type: action
     action: alert.set_status
     with:
       status: investigating
+    transitions:
+      - target: completed
+        on: success
+      - target: investigation-failed
+        on: failure
+
+  - id: standard-notification
+    name: 标准风险告警通知
+    type: action
+    action: notification.create
+    with:
+      type: soar-alert-observed
+      target: "alert:${alertId}"
+      message: "告警 ${alertId} 已确认，风险 ${resource.alert.risk_score}，无需高风险审批。"
+    transitions:
+      - target: completed
+        on: success
+
+  - id: rejected-notification
+    name: 记录审批拒绝
+    type: action
+    action: notification.create
+    with:
+      type: soar-approval-rejected
+      target: "alert:${alertId}"
+      message: "告警 ${alertId} 的自动调查请求被 ${nodes.approve-investigation.output.actor} 拒绝。"
+    transitions:
+      - target: rejected
+
+  - id: acknowledge-failed
+    name: 通知接管失败
+    type: action
+    action: notification.create
+    with:
+      type: soar-action-failed
+      target: "alert:${alertId}"
+      message: "SOAR 无法确认告警 ${alertId}，已停止自动处置。"
+    transitions:
+      - target: failed
+
+  - id: investigation-failed
+    name: 通知进入调查失败
+    type: action
+    action: notification.create
+    with:
+      type: soar-action-failed
+      target: "alert:${alertId}"
+      message: "告警 ${alertId} 已获批准，但转入 investigating 失败，需要人工接管。"
+    transitions:
+      - target: failed
+
+  - id: completed
+    name: 响应流程完成
+    type: end
+    result: succeeded
+
+  - id: rejected
+    name: 审批拒绝结束
+    type: end
+    result: rejected
+
+  - id: failed
+    name: 补偿通知后失败结束
+    type: end
+    result: failed

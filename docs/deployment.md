@@ -56,7 +56,7 @@ java -jar target/hsiem-platform-0.0.1-SNAPSHOT.jar
 # WSL: export SIEM_BOOTSTRAP_PASSWORD='<至少12位临时口令>'
 ```
 
-Flyway 首次启动会创建控制面表并导入旧版本 `infra/auth/users.yaml` 用户；当前迁移为 V8，包含首次登录改密、案件镜像 outbox、任务租约与 SOAR 执行/步骤表；之后 PostgreSQL 是用户、角色、审计和 SOAR 执行记录的唯一来源。
+Flyway 首次启动会创建控制面表并导入旧版本 `infra/auth/users.yaml` 用户；当前迁移为 V9，包含首次登录改密、案件镜像 outbox、任务租约，以及 SOAR 执行/节点/事件时间线和 Worker 租约字段；之后 PostgreSQL 是用户、角色、审计和 SOAR 执行记录的唯一来源。
 登录 Token 只在响应中返回一次，数据库保存 SHA-256 后的会话值；默认会话 8 小时，连续 5 次失败后锁定 15 分钟。控制面 API 需要 `Authorization: Bearer <token>`。首次登录或管理员新建用户必须先调用密码轮换接口，业务 API 在轮换完成前返回 428。
 
 Logstash 的 healthcheck 同时检查 5000/5001/5002/5004/5005/5006 和 9600,
@@ -197,7 +197,7 @@ MVN="D:/application/IntelliJ IDEA 2026.2.0.1/plugins/maven-plugin/lib/maven3/bin
 "$MVN" -f flink/pom.xml clean package          # 含 33 个 Flink 测试
 "$MVN" -f flink/pom.xml clean package -DskipTests   # 部署时加快
 
-# Spring Boot 控制面(根 pom,含 81 个测试；Flyway 当前 V8)
+# Spring Boot 控制面（根 pom；Flyway 当前 V9，测试数量以 Maven 输出为准）
 "$MVN" -f pom.xml clean package
 ```
 

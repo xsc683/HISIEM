@@ -414,6 +414,22 @@ export function getSoarExecution(id) {
   return request(`/soar/executions/${pathSegment(id)}`)
 }
 
+export function getSoarExecutionEvents(id) {
+  return request(`/soar/executions/${pathSegment(id)}/events`)
+}
+
+export function listSoarAutomationRules() {
+  return request('/soar/automation-rules')
+}
+
+export function scanSoarAutomationRules() {
+  return request('/soar/automation-rules/scan', { method: 'POST' })
+}
+
+export function listSoarConnectors() {
+  return request('/soar/connectors')
+}
+
 export function startSoarExecution(playbookId, resourceType, resourceId) {
   return request('/soar/executions', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -430,4 +446,16 @@ export function decideSoarApproval(id, approved) {
 
 export function retrySoarExecution(id) {
   return request(`/soar/executions/${pathSegment(id)}/retry`, { method: 'POST' })
+}
+
+export function cancelSoarExecution(id) {
+  return request(`/soar/executions/${pathSegment(id)}/cancel`, { method: 'POST' })
+}
+
+export function pauseSoarExecution(id) {
+  return request(`/soar/executions/${pathSegment(id)}/pause`, { method: 'POST' })
+}
+
+export function resumeSoarExecution(id) {
+  return request(`/soar/executions/${pathSegment(id)}/resume`, { method: 'POST' })
 }

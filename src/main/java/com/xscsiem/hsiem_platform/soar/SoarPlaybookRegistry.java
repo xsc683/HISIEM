@@ -30,8 +30,13 @@ public class SoarPlaybookRegistry {
             "case.set_status",
             "case.add_alert",
             "case.add_evidence",
-            "notification.create");
-    private static final Set<String> OPERATORS = Set.of("eq", "ne", "gt", "gte", "lt", "lte", "exists", "contains");
+            "notification.create",
+            "context.set",
+            "connector.call");
+    private static final Set<String> NODE_TYPES = Set.of("action", "decision", "approval", "delay", "end");
+    private static final Set<String> EVENTS = Set.of("success", "failure", "approved", "rejected", "always");
+    private static final Set<String> OPERATORS = Set.of(
+            "eq", "ne", "gt", "gte", "lt", "lte", "exists", "contains", "matches");
     private static final Pattern ID = Pattern.compile("[a-z0-9][a-z0-9-]{2,127}");
 
     private final Path directory;
@@ -95,8 +100,15 @@ public class SoarPlaybookRegistry {
             throw new IllegalArgumentException(playbook.id() + " 的 resourceTypes 仅支持 alert/case");
         }
         validateCondition(playbook.id(), playbook.when());
+        if (playbook.isGraph()) validateGraph(playbook);
+        else validateLegacy(playbook);
+        validateDefaults(playbook);
+        validateTriggers(playbook);
+    }
+
+    private static void validateLegacy(SoarPlaybook playbook) {
         if (playbook.steps() == null || playbook.steps().isEmpty() || playbook.steps().size() > 50) {
-            throw new IllegalArgumentException(playbook.id() + " 的步骤数需在 1-50 之间");
+            throw new IllegalArgumentException(playbook.id() + " 的 V1 步骤数需在 1-50 之间");
         }
         Set<String> stepIds = new HashSet<>();
         for (SoarPlaybook.Step step : playbook.steps()) {
@@ -109,6 +121,7 @@ public class SoarPlaybookRegistry {
             if (blank(step.name()) || !ALLOWED_ACTIONS.contains(step.action())) {
                 throw new IllegalArgumentException(playbook.id() + "/" + step.id() + " 的 name/action 非法");
             }
+            validateActionParameters(playbook.id() + "/" + step.id(), step.action(), parameters(step));
             validateCondition(playbook.id() + "/" + step.id(), step.when());
             if ("approval".equals(step.action())) {
                 String role = string(parameters(step).getOrDefault("requiredRole", "analyst"));
@@ -119,14 +132,167 @@ public class SoarPlaybookRegistry {
         }
     }
 
+    private static void validateGraph(SoarPlaybook playbook) {
+        if (!"2".equals(playbook.formatVersion())) {
+            throw new IllegalArgumentException(playbook.id() + " 的图 Playbook 必须声明 formatVersion: \"2\"");
+        }
+        if (playbook.nodes().size() > 100 || blank(playbook.entrypoint())) {
+            throw new IllegalArgumentException(playbook.id() + " 的节点数需在 1-100 且必须声明 entrypoint");
+        }
+        Set<String> ids = new HashSet<>();
+        for (SoarPlaybook.Node node : playbook.nodes()) {
+            if (node == null || node.id() == null || !ID.matcher(node.id()).matches()
+                    || !ids.add(node.id())) {
+                throw new IllegalArgumentException(playbook.id() + " 存在非法或重复 node.id");
+            }
+            if (blank(node.name()) || !NODE_TYPES.contains(node.type())) {
+                throw new IllegalArgumentException(playbook.id() + "/" + node.id() + " 的 name/type 非法");
+            }
+            if ("action".equals(node.type()) && !ALLOWED_ACTIONS.contains(node.action())) {
+                throw new IllegalArgumentException(playbook.id() + "/" + node.id() + " 的 action 未进入白名单");
+            }
+            if ("action".equals(node.type())) {
+                validateActionParameters(playbook.id() + "/" + node.id(), node.action(),
+                        node.parameters() == null ? Map.of() : node.parameters());
+            }
+            if ("approval".equals(node.type())) validateApproval(playbook.id(), node.id(), node.parameters());
+            if ("delay".equals(node.type()) && bounded(node.delaySeconds(), 1, 86400) == null) {
+                throw new IllegalArgumentException(playbook.id() + "/" + node.id() + " 的 delaySeconds 需在 1-86400");
+            }
+            if (node.timeoutSeconds() != null && bounded(node.timeoutSeconds(), 1, 300) == null) {
+                throw new IllegalArgumentException(playbook.id() + "/" + node.id() + " 的 timeoutSeconds 需在 1-300");
+            }
+            validateRetry(playbook.id() + "/" + node.id(), node.retry());
+            validateCondition(playbook.id() + "/" + node.id(), node.when());
+        }
+        if (!ids.contains(playbook.entrypoint())) {
+            throw new IllegalArgumentException(playbook.id() + " 的 entrypoint 不存在");
+        }
+        for (SoarPlaybook.Node node : playbook.nodes()) {
+            for (SoarPlaybook.Transition transition : SoarGraph.transitions(node)) {
+                String event = blank(transition.event()) ? "success" : transition.event();
+                if (!ids.contains(transition.target()) || !EVENTS.contains(event)) {
+                    throw new IllegalArgumentException(playbook.id() + "/" + node.id() + " 存在非法 transition");
+                }
+                validateCondition(playbook.id() + "/" + node.id() + "->" + transition.target(), transition.when());
+            }
+        }
+        Set<String> reachable = new HashSet<>();
+        visit(playbook.entrypoint(), SoarGraph.compile(playbook), reachable);
+        if (reachable.size() != ids.size()) {
+            Set<String> unreachable = new HashSet<>(ids);
+            unreachable.removeAll(reachable);
+            throw new IllegalArgumentException(playbook.id() + " 存在不可达节点: " + unreachable);
+        }
+    }
+
+    private static void validateDefaults(SoarPlaybook playbook) {
+        if (playbook.defaults() == null) return;
+        if (playbook.defaults().timeoutSeconds() != null
+                && bounded(playbook.defaults().timeoutSeconds(), 1, 300) == null) {
+            throw new IllegalArgumentException(playbook.id() + " 默认 timeoutSeconds 需在 1-300");
+        }
+        validateRetry(playbook.id() + "/defaults", playbook.defaults().retry());
+    }
+
+    private static void validateTriggers(SoarPlaybook playbook) {
+        if (playbook.triggers() == null) return;
+        Set<String> ids = new HashSet<>();
+        for (SoarPlaybook.Trigger trigger : playbook.triggers()) {
+            if (trigger == null || trigger.id() == null || !ID.matcher(trigger.id()).matches()
+                    || !ids.add(trigger.id()) || !Set.of("alert", "case").contains(trigger.type())) {
+                throw new IllegalArgumentException(playbook.id() + " 存在非法或重复 trigger");
+            }
+            if (!playbook.resourceTypes().contains(trigger.type())) {
+                throw new IllegalArgumentException(playbook.id() + "/" + trigger.id() + " 触发资源类型不兼容");
+            }
+            validateCondition(playbook.id() + "/" + trigger.id(), trigger.when());
+            if (!blank(trigger.dedupWindow())) {
+                try {
+                    if (java.time.Duration.parse(trigger.dedupWindow()).isNegative()) throw new Exception();
+                } catch (Exception e) {
+                    throw new IllegalArgumentException(playbook.id() + "/" + trigger.id() + " dedupWindow 非法");
+                }
+            }
+        }
+    }
+
+    private static void validateRetry(String owner, SoarPlaybook.RetryPolicy retry) {
+        if (retry == null) return;
+        if (retry.maxAttempts() != null && bounded(retry.maxAttempts(), 1, 10) == null
+                || retry.delaySeconds() != null && bounded(retry.delaySeconds(), 0, 3600) == null
+                || retry.backoffMultiplier() != null
+                && (retry.backoffMultiplier() < 1.0 || retry.backoffMultiplier() > 10.0)) {
+            throw new IllegalArgumentException(owner + " 的 retry 策略非法");
+        }
+    }
+
+    private static void validateApproval(String playbookId, String nodeId, Map<String, Object> parameters) {
+        String role = string((parameters == null ? Map.of() : parameters)
+                .getOrDefault("requiredRole", "analyst"));
+        if (!Set.of("admin", "analyst").contains(role)) {
+            throw new IllegalArgumentException(playbookId + "/" + nodeId + " 的审批角色仅支持 admin/analyst");
+        }
+    }
+
+    /** 动作输入在定义加载期失败，而不是等到事件处置中途才暴露拼写或结构错误。 */
+    private static void validateActionParameters(String owner, String action,
+                                                 Map<String, Object> parameters) {
+        switch (action) {
+            case "alert.set_status", "case.set_status" -> require(owner, parameters, "status");
+            case "alert.set_verdict" -> require(owner, parameters, "verdict");
+            case "case.add_alert" -> require(owner, parameters, "alertId");
+            case "case.add_evidence" -> require(owner, parameters, "title");
+            case "notification.create" -> require(owner, parameters, "message");
+            case "context.set" -> {
+                if (!(parameters.get("values") instanceof Map<?, ?> values) || values.isEmpty()) {
+                    throw new IllegalArgumentException(owner + " 的 context.set 必须声明非空 with.values");
+                }
+            }
+            case "connector.call" -> {
+                require(owner, parameters, "connector");
+                require(owner, parameters, "operation");
+                Object arguments = parameters.get("arguments");
+                if (arguments != null && !(arguments instanceof Map<?, ?>)) {
+                    throw new IllegalArgumentException(owner + " 的 connector.call.with.arguments 必须是对象");
+                }
+            }
+            default -> {
+                // 无必填参数的动作由 Runner 执行类型化校验。
+            }
+        }
+    }
+
+    private static void require(String owner, Map<String, Object> parameters, String key) {
+        Object value = parameters.get(key);
+        if (value == null || value instanceof String text && text.isBlank()) {
+            throw new IllegalArgumentException(owner + " 缺少 with." + key);
+        }
+    }
+
+    private static void visit(String id, SoarGraph graph, Set<String> visited) {
+        if (!visited.add(id)) return;
+        SoarPlaybook.Node node = graph.node(id);
+        if (node != null) SoarGraph.transitions(node).forEach(edge -> visit(edge.target(), graph, visited));
+    }
+
     static Map<String, Object> parameters(SoarPlaybook.Step step) {
         return step.parameters() == null ? Map.of() : step.parameters();
     }
 
     private static void validateCondition(String owner, SoarPlaybook.Condition condition) {
-        if (condition != null && (blank(condition.field()) || !OPERATORS.contains(condition.operator()))) {
-            throw new IllegalArgumentException(owner + " 的 when 条件非法");
-        }
+        if (condition == null) return;
+        boolean leaf = !blank(condition.field()) && OPERATORS.contains(condition.operator());
+        boolean group = condition.all() != null && !condition.all().isEmpty()
+                || condition.any() != null && !condition.any().isEmpty() || condition.not() != null;
+        if (!leaf && !group) throw new IllegalArgumentException(owner + " 的 when 条件非法");
+        if (condition.all() != null) condition.all().forEach(item -> validateCondition(owner, item));
+        if (condition.any() != null) condition.any().forEach(item -> validateCondition(owner, item));
+        validateCondition(owner, condition.not());
+    }
+
+    private static Integer bounded(Integer value, int min, int max) {
+        return value != null && value >= min && value <= max ? value : null;
     }
 
     private static boolean blank(String value) {

@@ -4,6 +4,8 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -12,7 +14,9 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /** SOAR Playbook 查询、手动触发、审批和执行追踪 API。 */
 @RestController
@@ -20,9 +24,14 @@ import java.util.List;
 public class SoarController {
 
     private final SoarService service;
+    private final SoarConnectorRegistry connectors;
+    private final SoarTriggerScanner triggerScanner;
 
-    public SoarController(SoarService service) {
+    public SoarController(SoarService service, SoarConnectorRegistry connectors,
+                          SoarTriggerScanner triggerScanner) {
         this.service = service;
+        this.connectors = connectors;
+        this.triggerScanner = triggerScanner;
     }
 
     @GetMapping("/playbooks")
@@ -55,7 +64,38 @@ public class SoarController {
         return service.detail(id);
     }
 
+    @GetMapping("/executions/{id}/events")
+    @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST', 'AUDIT')")
+    public List<SoarExecutionEvent> events(@PathVariable String id) {
+        return service.events(id);
+    }
+
+    @GetMapping("/automation-rules")
+    @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST', 'AUDIT')")
+    public List<Map<String, Object>> automationRules() {
+        return service.automationRules();
+    }
+
+    @PostMapping("/automation-rules/scan")
+    @PreAuthorize("hasRole('ADMIN')")
+    public Map<String, Object> scanAutomationRules() {
+        return triggerScanner.scanNow();
+    }
+
+    @GetMapping("/connectors")
+    @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST', 'AUDIT')")
+    public List<Map<String, Object>> connectors() {
+        return connectors.list().stream().map(SoarController::connectorView).toList();
+    }
+
+    @PostMapping("/connectors/reload")
+    @PreAuthorize("hasRole('ADMIN')")
+    public List<Map<String, Object>> reloadConnectors() {
+        return connectors.reload().stream().map(SoarController::connectorView).toList();
+    }
+
     @PostMapping("/executions")
+    @ResponseStatus(HttpStatus.ACCEPTED)
     @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST')")
     public SoarExecution start(@Valid @RequestBody StartRequest request, Authentication authentication) {
         return service.start(request.playbookId(), request.resourceType(), request.resourceId(),
@@ -73,6 +113,38 @@ public class SoarController {
     @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST')")
     public SoarExecution retry(@PathVariable String id, Authentication authentication) {
         return service.retry(id, authentication.getName());
+    }
+
+    @PostMapping("/executions/{id}/cancel")
+    @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST')")
+    public SoarExecution cancel(@PathVariable String id, Authentication authentication) {
+        return service.cancel(id, authentication.getName());
+    }
+
+    @PostMapping("/executions/{id}/pause")
+    @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST')")
+    public SoarExecution pause(@PathVariable String id, Authentication authentication) {
+        return service.pause(id, authentication.getName());
+    }
+
+    @PostMapping("/executions/{id}/resume")
+    @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST')")
+    public SoarExecution resume(@PathVariable String id, Authentication authentication) {
+        return service.resume(id, authentication.getName());
+    }
+
+    private static Map<String, Object> connectorView(SoarConnector connector) {
+        Map<String, Object> view = new LinkedHashMap<>();
+        view.put("id", connector.id());
+        view.put("name", connector.name());
+        view.put("description", connector.description());
+        view.put("enabled", connector.isEnabled());
+        String environmentUrl = connector.baseUrlEnv() == null ? null
+                : System.getenv(connector.baseUrlEnv());
+        view.put("configured", connector.baseUrl() != null && !connector.baseUrl().isBlank()
+                || environmentUrl != null && !environmentUrl.isBlank());
+        view.put("actions", connector.actions() == null ? Map.of() : connector.actions());
+        return view;
     }
 
     private static String role(Authentication authentication) {

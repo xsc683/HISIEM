@@ -14,6 +14,7 @@
 | 4.4 | 能力补全 | 已完成 | checkpoint、数据源接入、通知治理、资产关键度、调查台 |
 | 4.4.1 | 可靠性与用户旅程收口 | 已完成 | 脱敏、强制改密、租约恢复、partial update、并发配置、前端错误处理、健康语义 |
 | 4.5 | SOAR MVP | 已完成 | YAML Playbook、告警/案件入口、条件、审批、内部白名单动作、执行快照与失败重试 |
+| 4.6 | SOAR V2 编排内核 | 已完成 | 条件图、并行/汇聚、延迟、持久租约 Worker、超时退避、自动规则去重、受控连接器和执行时间线 |
 
 ## 当前验收基线
 
@@ -25,7 +26,7 @@
 npm.cmd --prefix web run build
 ```
 
-当前基线为根项目 81 个测试、Flink 33 个测试，前端生产构建通过；涉及基础设施时还要执行 Docker Compose、健康扫描、Kafka/Flink 链路和 ES 备份恢复验证。结果与环境说明集中记录在[当前状态](current-status.md)和[运维手册](operations.md)。
+当前基线要求根项目、Flink 33 个测试和前端生产构建全部通过；测试数量随新增回归用例变化，不再把易过期数字作为成功条件。涉及基础设施时还要执行 Docker Compose、健康扫描、Kafka/Flink 链路和 ES 备份恢复验证。结果与环境说明集中记录在[当前状态](current-status.md)和[运维手册](operations.md)。
 
 ## 下一阶段优先级
 
@@ -45,7 +46,7 @@ npm.cmd --prefix web run build
 - 真实负载下的分区、checkpoint、索引生命周期、保留策略和 RTO/RPO 压测。
 - 多租户字段、索引隔离、文档级权限和更细粒度的角色模型。
 - 通知渠道、更多接入协议和可视化信息架构的持续评估。
-- SOAR 持久 worker、自动触发/去重/熔断，以及具备凭据引用和网络出口 allowlist 的连接器 SDK。
+- SOAR 连接器级限流/熔断、Vault/KMS 与 egress proxy、Playbook 草稿/审批发布和横向扩展压测。
 
 ## 学习路线
 

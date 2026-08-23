@@ -6,7 +6,7 @@
 
 ## 一句话结论
 
-HISIEM 已完成检测链路、控制面、接入向导、告警处置、调查台、SOAR 人工触发/审批和运行态扫描的主要闭环，可以作为开发/演示环境使用；生产级部署仍需完成安全加固、高可用和跨存储一致性治理。
+HISIEM 已完成检测链路、控制面、接入向导、告警处置、调查台、SOAR V2 图编排和运行态扫描的主要闭环，可以作为开发/演示环境使用；生产级部署仍需完成安全加固、高可用和跨存储一致性治理。
 
 ## 已验证能力
 
@@ -16,8 +16,8 @@ HISIEM 已完成检测链路、控制面、接入向导、告警处置、调查�
 | 控制面 | Spring Boot + PostgreSQL/Flyway，认证、RBAC、案件、审计、通知和后台任务可用 | [部署](deployment.md)、[路线图](roadmap.md) |
 | 前端 | React/Vite 控制台可构建并访问控制面 API | `web/`、[当前产品契约](product-contract.md) |
 | 运行态 | PostgreSQL、Elasticsearch、Kafka、Logstash、Flink、Kibana 均有健康扫描 | [运维手册](operations.md) |
-| SOAR | 告警/案件 Playbook、条件、审批、执行快照、步骤记录和失败重试可用 | [SOAR 设计](soar.md)、`infra/soar/playbooks/` |
-| 自动化验证 | 根项目 81 个测试、Flink 33 个测试、前端生产构建通过 | [路线图](roadmap.md) |
+| SOAR | V2 条件图、并行/汇聚、审批/延迟、持久 Worker、重试/失败边、自动规则去重、受控连接器和时间线可用 | [SOAR 设计](soar.md)、`infra/soar/` |
+| 自动化验证 | 根项目 89 个测试、Flink 33 个测试、前端生产构建通过 | [路线图](roadmap.md) |
 | 备份恢复 | ES 临时索引备份恢复演练通过 | `infra/elasticsearch/backup-restore-rehearsal.sh` |
 
 ## 当前部署基线
@@ -46,7 +46,7 @@ HISIEM 已完成检测链路、控制面、接入向导、告警处置、调查�
 3. 后台任务已有租约和启动恢复，但具体 handler 的自动重放、幂等键和跨实例协调仍需补齐。
 4. 尚未实现租户字段、索引隔离和文档级权限；当前模型是单租户。
 5. 真实生产负载下的容量、保留策略、升级回滚和灾备 RTO/RPO 还需要环境级压测与演练。
-6. SOAR 当前仅支持人工触发和内部白名单动作；自动触发、长任务 worker、连接器凭据/出口控制和全局熔断尚未完成。
+6. SOAR 已具备持久 Worker、自动规则去重和固定端点连接器，但自动扫描默认关闭；尚缺连接器级限流/熔断、Vault/KMS、egress proxy、发布审批和规模压测。
 
 ## 文档使用规则
 

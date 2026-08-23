@@ -61,7 +61,7 @@
    - 时间窗口规则(事件时间窗口 + watermark)→ 窗口关闭时统计命中数,≥阈值生成关联告警
    - CEP 序列和基线异常分别处理攻击链、统计异常，并统一写入告警字段
 6. 告警写入 ES `siem-alerts`;Kibana 与控制台展示/处置
-7. 控制台写操作通过 Spring Security 鉴权；案件处置状态、SOAR 执行快照/步骤、用户会话、通知、审计和后台任务写入 PostgreSQL，Flyway 负责当前 V1-V8 迁移。
+7. 控制台写操作通过 Spring Security 鉴权；案件处置状态、SOAR 执行快照/节点/frontier/事件时间线、用户会话、通知、审计和后台任务写入 PostgreSQL，Flyway 负责当前 V1-V9 迁移。
 
 ## 4. 控制面边界与接口
 
@@ -72,7 +72,7 @@
 | 认证与 RBAC | Spring Security、Bearer 会话、登录失败限制、首次改密 | `/api/auth/**`、`users`/`auth_sessions` |
 | 数据源接入 | 模板预览、创建、生效、停用、删除与失败回滚 | `/api/log-sources/**`、`infra/log-sources/*.yaml` |
 | 告警与案件 | 告警状态/verdict、案件聚合、负责人/证据、时间线 | `/api/alerts/**`、`/api/cases/**`、案件关系表 + ES 镜像 |
-| SOAR | YAML Playbook、条件、白名单动作、审批、失败重试和步骤审计 | `/api/soar/**`、`soar_executions`/`soar_step_executions` |
+| SOAR | V2 条件图、并行/汇聚、审批/延迟、租约 Worker、自动规则、受控连接器和事件时间线 | `/api/soar/**`、三个 `soar_*` 运行表、`infra/soar/` |
 | 运维治理 | 六组件健康扫描、后台任务租约/恢复、指标、备份恢复演练 | `/api/ops/health-scan`、`/api/tasks/**`、Actuator |
 
 控制面默认连接 `localhost:5432/siem`；真实部署时先确认 PostgreSQL、ES、Kafka、Logstash、Flink、Kibana 均通过健康检查，再启动 Spring Boot。

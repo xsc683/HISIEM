@@ -31,7 +31,7 @@ class PostgresMigrationContainerTest {
         Flyway.configure().dataSource(dataSource).locations("classpath:db/migration").load().migrate();
 
         JdbcTemplate jdbc = new JdbcTemplate(dataSource);
-        assertEquals(8, jdbc.queryForObject(
+        assertEquals(9, jdbc.queryForObject(
                 "SELECT COUNT(*) FROM flyway_schema_history WHERE success = TRUE", Integer.class));
         assertTrue(jdbc.queryForObject("""
                 SELECT COUNT(*) FROM information_schema.tables
@@ -42,10 +42,10 @@ class PostgresMigrationContainerTest {
                 WHERE table_schema = 'public' AND table_name = 'cases'
                   AND column_name IN ('owner', 'evidence_json', 'collaborators_json')
                 """, Integer.class));
-        assertEquals(2, jdbc.queryForObject("""
+        assertEquals(3, jdbc.queryForObject("""
                 SELECT COUNT(*) FROM information_schema.tables
                 WHERE table_schema = 'public'
-                  AND table_name IN ('soar_executions', 'soar_step_executions')
+                  AND table_name IN ('soar_executions', 'soar_step_executions', 'soar_execution_events')
                 """, Integer.class));
     }
 }
