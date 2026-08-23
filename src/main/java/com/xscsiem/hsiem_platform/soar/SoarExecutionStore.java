@@ -11,7 +11,11 @@ public interface SoarExecutionStore {
 
     SoarExecution find(String id);
 
-    List<SoarExecution> list(int size);
+    List<SoarExecution> list(String tenantId, int size);
+
+    default List<SoarExecution> list(int size) {
+        return list("default", size);
+    }
 
     SoarExecution claimNext(String owner, Instant now, Instant leaseUntil);
 
@@ -26,6 +30,13 @@ public interface SoarExecutionStore {
 
     void finishNode(String executionId, String stepId, String status,
                     Map<String, Object> output, String error);
+
+    void finishWaitingNode(String executionId, String stepId, String status,
+                           Map<String, Object> output, String error);
+
+    void waitForChild(String executionId, String stepId, Map<String, Object> output);
+
+    void resetNodes(String executionId, List<String> stepIds);
 
     void saveProgress(String executionId, String owner, List<String> frontier,
                       String currentNode, Map<String, Object> context, int nodesExecuted);

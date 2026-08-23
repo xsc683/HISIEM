@@ -33,8 +33,10 @@ public class SoarPlaybookRegistry {
             "notification.create",
             "context.set",
             "connector.call");
-    private static final Set<String> NODE_TYPES = Set.of("action", "decision", "approval", "delay", "end");
-    private static final Set<String> EVENTS = Set.of("success", "failure", "approved", "rejected", "always");
+    private static final Set<String> NODE_TYPES = Set.of(
+            "action", "decision", "approval", "delay", "subplaybook", "loop", "map", "end");
+    private static final Set<String> EVENTS = Set.of(
+            "success", "failure", "approved", "rejected", "complete", "always");
     private static final Set<String> OPERATORS = Set.of(
             "eq", "ne", "gt", "gte", "lt", "lte", "exists", "contains", "matches");
     private static final Pattern ID = Pattern.compile("[a-z0-9][a-z0-9-]{2,127}");
@@ -155,6 +157,11 @@ public class SoarPlaybookRegistry {
                 validateActionParameters(playbook.id() + "/" + node.id(), node.action(),
                         node.parameters() == null ? Map.of() : node.parameters());
             }
+            if ("subplaybook".equals(node.type())) {
+                require(playbook.id() + "/" + node.id(), SoarGraph.parameters(node), "playbookId");
+            }
+            if ("map".equals(node.type())) validateMap(playbook.id(), node);
+            if ("loop".equals(node.type())) validateLoop(playbook.id(), node);
             if ("approval".equals(node.type())) validateApproval(playbook.id(), node.id(), node.parameters());
             if ("delay".equals(node.type()) && bounded(node.delaySeconds(), 1, 86400) == null) {
                 throw new IllegalArgumentException(playbook.id() + "/" + node.id() + " 的 delaySeconds 需在 1-86400");
@@ -235,6 +242,30 @@ public class SoarPlaybookRegistry {
         }
     }
 
+    private static void validateMap(String playbookId, SoarPlaybook.Node node) {
+        Map<String, Object> parameters = SoarGraph.parameters(node);
+        require(playbookId + "/" + node.id(), parameters, "items");
+        String action = string(parameters.get("action"));
+        if (!ALLOWED_ACTIONS.contains(action) || "approval".equals(action)) {
+            throw new IllegalArgumentException(playbookId + "/" + node.id() + " 的 map action 非法");
+        }
+        int maxItems = integer(parameters.getOrDefault("maxItems", 100), -1);
+        int concurrency = integer(parameters.getOrDefault("concurrency", 4), -1);
+        if (maxItems < 1 || maxItems > 1000 || concurrency < 1 || concurrency > 32) {
+            throw new IllegalArgumentException(playbookId + "/" + node.id() + " 的 map 上限非法");
+        }
+    }
+
+    private static void validateLoop(String playbookId, SoarPlaybook.Node node) {
+        int maxIterations = integer(SoarGraph.parameters(node).getOrDefault("maxIterations", 10), -1);
+        if (maxIterations < 1 || maxIterations > 100) {
+            throw new IllegalArgumentException(playbookId + "/" + node.id() + " 的 loop.maxIterations 需在 1-100");
+        }
+        boolean hasComplete = SoarGraph.transitions(node).stream()
+                .anyMatch(edge -> "complete".equals(edge.event()));
+        if (!hasComplete) throw new IllegalArgumentException(playbookId + "/" + node.id() + " 缺少 complete 路由");
+    }
+
     /** 动作输入在定义加载期失败，而不是等到事件处置中途才暴露拼写或结构错误。 */
     private static void validateActionParameters(String owner, String action,
                                                  Map<String, Object> parameters) {
@@ -301,5 +332,14 @@ public class SoarPlaybookRegistry {
 
     private static String string(Object value) {
         return value == null ? "" : String.valueOf(value);
+    }
+
+    private static int integer(Object value, int fallback) {
+        if (value instanceof Number number) return number.intValue();
+        try {
+            return Integer.parseInt(String.valueOf(value));
+        } catch (Exception ignored) {
+            return fallback;
+        }
     }
 }

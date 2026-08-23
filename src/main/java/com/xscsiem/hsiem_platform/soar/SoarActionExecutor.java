@@ -71,8 +71,9 @@ public class SoarActionExecutor {
                 if (values.isEmpty()) throw new IllegalArgumentException("context.set 缺少 with.values");
                 yield Map.of("values", values);
             }
-            case "connector.call" -> connectors.call(requiredString(input, "connector"),
-                    requiredString(input, "operation"), map(input.get("arguments")));
+            case "connector.call" -> connectors.call(execution.tenantId(),
+                    requiredString(input, "connector"), requiredString(input, "operation"),
+                    map(input.get("arguments")), execution.id());
             default -> throw new IllegalArgumentException("未允许的 SOAR action: " + action);
         };
     }

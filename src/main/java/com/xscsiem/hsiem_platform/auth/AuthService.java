@@ -24,6 +24,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import com.xscsiem.hsiem_platform.tenant.TenantService;
 
 /**
  * 控制台认证与权限(story-08 RBAC):
@@ -59,6 +60,7 @@ public class AuthService {
     @Value("${app.auth.bootstrap-password:}")
     private String bootstrapPassword;
     private MeterRegistry metrics;
+    private TenantService tenants;
 
     /** 生产构造器:用户、角色、审计均落 PostgreSQL。 */
     @Autowired
@@ -77,6 +79,11 @@ public class AuthService {
         this.metrics = metrics;
     }
 
+    @Autowired(required = false)
+    public void setTenantService(TenantService tenants) {
+        this.tenants = tenants;
+    }
+
     /** 轻量构造器仅供不启动 Spring/数据库的单元测试使用。 */
     public AuthService(UserStore store) {
         this.store = store;
@@ -91,6 +98,7 @@ public class AuthService {
             if (!legacy.isEmpty()) {
                 legacy.forEach(user -> user.passwordChangeRequired = true);
                 legacy.forEach(control::insertUser);
+                if (tenants != null) legacy.forEach(user -> tenants.ensureDefaultMembership(user.username));
                 audit("migration_users", "users.yaml");
                 return;
             }
@@ -111,6 +119,7 @@ public class AuthService {
                 store.save(new ArrayList<>(List.of(admin)));
             } else {
                 control.insertUser(admin);
+                if (tenants != null) tenants.ensureDefaultMembership(admin.username);
             }
             audit("bootstrap_admin", "admin");
         }
@@ -241,6 +250,7 @@ public class AuthService {
             store.save(users);
         } else {
             control.insertUser(u);
+            if (tenants != null) tenants.ensureDefaultMembership(u.username);
         }
         audit("create_user", username + "(" + role + ")");
         return u;

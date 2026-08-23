@@ -14,6 +14,7 @@ import org.springframework.security.web.AuthenticationEntryPoint;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.access.AccessDeniedHandler;
 import org.springframework.security.web.authentication.AnonymousAuthenticationFilter;
+import com.xscsiem.hsiem_platform.tenant.TenantContextFilter;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 
@@ -40,6 +41,7 @@ public class SecurityConfig {
 
     @Bean
     SecurityFilterChain apiSecurity(HttpSecurity http, BearerSessionFilter bearerSessionFilter,
+                                    TenantContextFilter tenantContextFilter,
                                     ObjectMapper mapper) throws Exception {
         http
                 .csrf(csrf -> csrf.disable())
@@ -55,6 +57,7 @@ public class SecurityConfig {
                                 "UNAUTHORIZED", "未登录或会话已过期"))
                         .accessDeniedHandler(jsonDenied(mapper)))
                 .addFilterBefore(bearerSessionFilter, AnonymousAuthenticationFilter.class)
+                .addFilterAfter(tenantContextFilter, BearerSessionFilter.class)
                 .httpBasic(basic -> basic.disable())
                 .formLogin(form -> form.disable());
         return http.build();

@@ -4,9 +4,11 @@ import com.xscsiem.hsiem_platform.alert.AlertService;
 import com.xscsiem.hsiem_platform.auth.ForbiddenException;
 import com.xscsiem.hsiem_platform.control.ControlPlaneStore;
 import com.xscsiem.hsiem_platform.investigation.CaseService;
+import com.xscsiem.hsiem_platform.tenant.TenantContext;
 import com.xscsiem.hsiem_platform.onboarding.ConflictException;
 import com.xscsiem.hsiem_platform.onboarding.NotFoundException;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
@@ -25,14 +27,29 @@ import java.util.UUID;
 public class SoarService {
 
     private final SoarPlaybookRegistry registry;
+    private final SoarPlaybookCatalog catalog;
     private final SoarExecutionStore store;
     private final AlertService alerts;
     private final CaseService cases;
     private final ControlPlaneStore control;
 
+    @Autowired
+    public SoarService(SoarPlaybookRegistry registry, SoarPlaybookCatalog catalog,
+                       SoarExecutionStore store,
+                       AlertService alerts, CaseService cases, ControlPlaneStore control) {
+        this.registry = registry;
+        this.catalog = catalog;
+        this.store = store;
+        this.alerts = alerts;
+        this.cases = cases;
+        this.control = control;
+    }
+
+    /** 轻量单元测试兼容构造器。 */
     public SoarService(SoarPlaybookRegistry registry, SoarExecutionStore store,
                        AlertService alerts, CaseService cases, ControlPlaneStore control) {
         this.registry = registry;
+        this.catalog = null;
         this.store = store;
         this.alerts = alerts;
         this.cases = cases;
@@ -40,25 +57,35 @@ public class SoarService {
     }
 
     public List<SoarPlaybook> listPlaybooks(String resourceType) {
-        return registry.list().stream().filter(SoarPlaybook::isEnabled)
+        List<SoarPlaybook> source = catalog == null ? registry.list()
+                : catalog.listPublished(TenantContext.id());
+        return source.stream().filter(SoarPlaybook::isEnabled)
                 .filter(playbook -> resourceType == null || resourceType.isBlank()
                         || playbook.resourceTypes().contains(resourceType)).toList();
     }
 
     public SoarPlaybook playbook(String id) {
-        return registry.get(id);
+        return catalog == null ? registry.get(id) : catalog.resolve(TenantContext.id(), id, "read");
     }
 
     public List<SoarPlaybook> reload(String actor) {
-        List<SoarPlaybook> result = registry.reload();
-        control.audit(actor, "soar.reload_playbooks", "count=" + result.size());
-        return result;
+        if (catalog == null) {
+            List<SoarPlaybook> result = registry.reload();
+            control.audit(actor, "soar.reload_playbooks", "count=" + result.size());
+            return result;
+        }
+        int imported = catalog.importGitAsDraft(TenantContext.id(), actor).size();
+        control.audit(actor, "soar.import_playbook_drafts", "count=" + imported);
+        return listPlaybooks(null);
     }
 
     @Transactional
     public SoarExecution start(String playbookId, String resourceType, String resourceId, String actor) {
-        return startInternal(registry.get(playbookId), resourceType, resourceId,
-                actor, "manual", null, null);
+        String tenantId = TenantContext.id();
+        SoarPlaybook selected = catalog == null ? registry.get(playbookId)
+                : catalog.resolve(tenantId, playbookId, resourceId);
+        return startInternal(tenantId, selected,
+                resourceType, resourceId, actor, "manual", null, null, null, null);
     }
 
     @Transactional
@@ -70,15 +97,17 @@ public class SoarService {
             long seconds = Math.max(1, Duration.parse(trigger.dedupWindow()).toSeconds());
             bucket = String.valueOf(Instant.now().getEpochSecond() / seconds);
         }
-        String dedup = playbook.id() + ":" + playbook.version() + ":" + trigger.id()
+        String dedup = TenantContext.id() + ":" + playbook.id() + ":" + playbook.version() + ":" + trigger.id()
                 + ":" + resourceType + ":" + resourceId + ":" + bucket;
-        return startInternal(playbook, resourceType, resourceId,
-                "soar-trigger:" + trigger.id(), trigger.type(), dedup, resource);
+        return startInternal(TenantContext.id(), playbook, resourceType, resourceId,
+                "soar-trigger:" + trigger.id(), trigger.type(), dedup, resource, null, null);
     }
 
-    private SoarExecution startInternal(SoarPlaybook playbook, String resourceType, String resourceId,
+    SoarExecution startInternal(String tenantId, SoarPlaybook playbook,
+                                        String resourceType, String resourceId,
                                         String actor, String triggerType, String dedupKey,
-                                        Map<String, Object> suppliedResource) {
+                                        Map<String, Object> suppliedResource,
+                                        String parentExecutionId, String parentNodeId) {
         if (!playbook.isEnabled()) throw new IllegalArgumentException("SOAR Playbook 已停用: " + playbook.id());
         if (!playbook.resourceTypes().contains(resourceType)) {
             throw new IllegalArgumentException("Playbook " + playbook.id() + " 不支持资源类型 " + resourceType);
@@ -91,6 +120,7 @@ public class SoarService {
         Map<String, Object> context = new LinkedHashMap<>();
         context.put("executionId", id);
         context.put("playbookId", playbook.id());
+        context.put("tenantId", tenantId);
         context.put("resourceType", resourceType);
         context.put("resourceId", resourceId);
         context.put("resource", resource);
@@ -107,7 +137,7 @@ public class SoarService {
                 resourceType, resourceId, "queued", actor, 0, graph.entrypoint(),
                 List.of(graph.entrypoint()), playbook, context, triggerType, dedupKey,
                 null, null, null, null, now, null, null, false, false, 0,
-                now, now, null, 0, List.of());
+                now, now, null, 0, tenantId, parentExecutionId, parentNodeId, List.of());
         if (!store.create(execution)) {
             SoarExecution existing = store.find(id);
             if (existing != null) return withSteps(existing);
@@ -185,7 +215,7 @@ public class SoarService {
     }
 
     public List<SoarExecution> listExecutions(int size) {
-        return store.list(size).stream().map(this::withSteps).toList();
+        return store.list(TenantContext.id(), size).stream().map(this::withSteps).toList();
     }
 
     public SoarExecution detail(String id) {
@@ -199,7 +229,7 @@ public class SoarService {
 
     public List<Map<String, Object>> automationRules() {
         List<Map<String, Object>> out = new ArrayList<>();
-        for (SoarPlaybook playbook : registry.list()) {
+        for (SoarPlaybook playbook : listPlaybooks(null)) {
             for (SoarPlaybook.Trigger trigger : playbook.triggers() == null
                     ? List.<SoarPlaybook.Trigger>of() : playbook.triggers()) {
                 Map<String, Object> row = new LinkedHashMap<>();
@@ -227,6 +257,9 @@ public class SoarService {
     private SoarExecution required(String id) {
         SoarExecution execution = store.find(id);
         if (execution == null) throw new NotFoundException("SOAR 执行不存在: " + id);
+        if (!TenantContext.id().equals(execution.tenantId())) {
+            throw new NotFoundException("SOAR 执行不存在: " + id);
+        }
         return execution;
     }
 

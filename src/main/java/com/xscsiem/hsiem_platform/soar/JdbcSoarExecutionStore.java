@@ -38,14 +38,16 @@ public class JdbcSoarExecutionStore implements SoarExecutionStore {
             jdbc.update("""
                     INSERT INTO soar_executions(id, playbook_id, playbook_version, resource_type, resource_id,
                         status, actor, current_step, current_node, frontier_json, playbook_snapshot_json,
-                        context_json, trigger_type, dedup_key, next_run_at, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, 'queued', ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        context_json, trigger_type, dedup_key, next_run_at, created_at, updated_at,
+                        tenant_id, parent_execution_id, parent_node_id)
+                    VALUES (?, ?, ?, ?, ?, 'queued', ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, execution.id(), execution.playbookId(), execution.playbookVersion(),
                     execution.resourceType(), execution.resourceId(), execution.actor(),
                     execution.currentNode(), json(execution.frontier()), json(execution.playbookSnapshot()),
                     json(execution.context()), execution.triggerType(), execution.dedupKey(),
                     timestamp(execution.nextRunAt()), timestamp(execution.createdAt()),
-                    timestamp(execution.updatedAt()));
+                    timestamp(execution.updatedAt()), execution.tenantId(),
+                    execution.parentExecutionId(), execution.parentNodeId());
             return true;
         } catch (DuplicateKeyException e) {
             return false;
@@ -60,10 +62,10 @@ public class JdbcSoarExecutionStore implements SoarExecutionStore {
     }
 
     @Override
-    public List<SoarExecution> list(int size) {
+    public List<SoarExecution> list(String tenantId, int size) {
         int limit = Math.min(Math.max(size, 1), 200);
-        return jdbc.query("SELECT * FROM soar_executions ORDER BY updated_at DESC LIMIT ?",
-                (rs, rowNum) -> execution(rs), limit);
+        return jdbc.query("SELECT * FROM soar_executions WHERE tenant_id = ? ORDER BY updated_at DESC LIMIT ?",
+                (rs, rowNum) -> execution(rs), tenantId, limit);
     }
 
     @Override
@@ -146,6 +148,38 @@ public class JdbcSoarExecutionStore implements SoarExecutionStore {
                 WHERE execution_id = ? AND step_id = ? AND status = 'running'
                 """, status, output == null ? null : json(output), error, timestamp(now), duration,
                 executionId, stepId);
+    }
+
+    @Override
+    public void finishWaitingNode(String executionId, String stepId, String status,
+                                  Map<String, Object> output, String error) {
+        Instant now = Instant.now();
+        requireUpdate(jdbc.update("""
+                UPDATE soar_step_executions SET status = ?, output_json = ?, error = ?,
+                    finished_at = ?, duration_ms = 0
+                WHERE execution_id = ? AND step_id = ? AND status = 'waiting_child'
+                """, status, output == null ? null : json(output), error, timestamp(now),
+                executionId, stepId), "子 Playbook 等待节点结果更新失败");
+    }
+
+    @Override
+    public void waitForChild(String executionId, String stepId, Map<String, Object> output) {
+        requireUpdate(jdbc.update("""
+                UPDATE soar_step_executions SET status = 'waiting_child', output_json = ?,
+                    finished_at = NULL, duration_ms = NULL
+                WHERE execution_id = ? AND step_id = ? AND status = 'running'
+                """, json(output), executionId, stepId), "子 Playbook 节点进入等待失败");
+    }
+
+    @Override
+    public void resetNodes(String executionId, List<String> stepIds) {
+        if (stepIds == null || stepIds.isEmpty()) return;
+        String placeholders = String.join(",", java.util.Collections.nCopies(stepIds.size(), "?"));
+        List<Object> arguments = new java.util.ArrayList<>();
+        arguments.add(executionId);
+        arguments.addAll(stepIds);
+        jdbc.update("DELETE FROM soar_step_executions WHERE execution_id = ? AND step_id IN ("
+                + placeholders + ")", arguments.toArray());
     }
 
     @Override
@@ -270,14 +304,17 @@ public class JdbcSoarExecutionStore implements SoarExecutionStore {
         if (terminal == 1) {
             jdbc.update("""
                     UPDATE soar_step_executions SET status = 'cancelled', finished_at = CURRENT_TIMESTAMP
-                    WHERE execution_id = ? AND status IN ('running', 'waiting_approval', 'retrying')
+                    WHERE execution_id = ? AND status IN ('running', 'waiting_approval', 'waiting_child', 'retrying')
                     """, executionId);
+            cancelDescendants(executionId);
             return true;
         }
-        return jdbc.update("""
+        boolean requested = jdbc.update("""
                 UPDATE soar_executions SET cancel_requested = TRUE, updated_at = CURRENT_TIMESTAMP,
                     version = version + 1 WHERE id = ? AND status = 'running'
                 """, executionId) == 1;
+        if (requested) cancelDescendants(executionId);
+        return requested;
     }
 
     @Override
@@ -339,6 +376,33 @@ public class JdbcSoarExecutionStore implements SoarExecutionStore {
                 instant(rs.getTimestamp("created_at"))), executionId);
     }
 
+    private void cancelDescendants(String parentId) {
+        List<String> pending = new java.util.ArrayList<>(List.of(parentId));
+        for (int depth = 0; depth < 5 && !pending.isEmpty(); depth++) {
+            List<String> next = new java.util.ArrayList<>();
+            for (String current : pending) {
+                List<String> children = jdbc.queryForList("""
+                        SELECT id FROM soar_executions WHERE parent_execution_id = ?
+                        """, String.class, current);
+                for (String child : children) {
+                    jdbc.update("""
+                            UPDATE soar_executions SET status = CASE WHEN status = 'running' THEN status ELSE 'cancelled' END,
+                                cancel_requested = TRUE, finished_at = CASE WHEN status = 'running' THEN finished_at ELSE CURRENT_TIMESTAMP END,
+                                updated_at = CURRENT_TIMESTAMP, version = version + 1
+                            WHERE id = ? AND status IN ('queued', 'running', 'waiting_approval', 'paused')
+                            """, child);
+                    jdbc.update("""
+                            UPDATE soar_step_executions SET status = 'cancelled', finished_at = CURRENT_TIMESTAMP
+                            WHERE execution_id = ? AND status IN
+                              ('running', 'waiting_approval', 'waiting_child', 'retrying')
+                            """, child);
+                    next.add(child);
+                }
+            }
+            pending = next;
+        }
+    }
+
     private SoarExecution execution(ResultSet rs) throws SQLException {
         return new SoarExecution(
                 rs.getString("id"), rs.getString("playbook_id"), rs.getString("playbook_version"),
@@ -353,7 +417,9 @@ public class JdbcSoarExecutionStore implements SoarExecutionStore {
                 instant(rs.getTimestamp("lease_expires_at")), rs.getBoolean("cancel_requested"),
                 rs.getBoolean("pause_requested"), rs.getInt("nodes_executed"),
                 instant(rs.getTimestamp("created_at")), instant(rs.getTimestamp("updated_at")),
-                instant(rs.getTimestamp("finished_at")), rs.getLong("version"), List.of());
+                instant(rs.getTimestamp("finished_at")), rs.getLong("version"),
+                rs.getString("tenant_id"), rs.getString("parent_execution_id"),
+                rs.getString("parent_node_id"), List.of());
     }
 
     private SoarStepExecution step(ResultSet rs) throws SQLException {

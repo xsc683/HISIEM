@@ -2,13 +2,15 @@ import { useEffect, useMemo, useState } from 'react'
 import { Alert, Button, Card, Col, Descriptions, Empty, Input, Row, Select, Space, Statistic, Table, Tag, Typography, message } from 'antd'
 import {
   cancelSoarExecution, decideSoarApproval, getSoarExecution, getSoarExecutionEvents,
-  listSoarAutomationRules, listSoarConnectors, listSoarExecutions, listSoarPlaybooks,
+  getActiveTenant, getSoarConnectorRuntime, listMyTenants, listSoarAutomationRules,
+  listSoarConnectors, listSoarExecutions, listSoarPlaybooks,
   pauseSoarExecution, reloadSoarPlaybooks, resumeSoarExecution, retrySoarExecution,
-  scanSoarAutomationRules, startSoarExecution,
+  scanSoarAutomationRules, setActiveTenant, startSoarExecution,
 } from '../api.js'
 import { TimeText } from '../components/common.jsx'
 import ExecutionTimeline from '../components/soar/ExecutionTimeline.jsx'
 import PlaybookGraph from '../components/soar/PlaybookGraph.jsx'
+import PlaybookDesigner from '../components/soar/PlaybookDesigner.jsx'
 
 const STATUS_COLORS = {
   queued: 'default', running: 'processing', waiting_approval: 'gold', paused: 'cyan',
@@ -22,6 +24,9 @@ export default function SoarView({ user }) {
   const [executions, setExecutions] = useState([])
   const [automationRules, setAutomationRules] = useState([])
   const [connectors, setConnectors] = useState([])
+  const [connectorRuntime, setConnectorRuntime] = useState([])
+  const [tenants, setTenants] = useState([])
+  const [tenantId, setTenantId] = useState(getActiveTenant())
   const [resourceType, setResourceType] = useState(query.get('resourceType') || 'alert')
   const [resourceId, setResourceId] = useState(query.get('resourceId') || '')
   const [playbookId, setPlaybookId] = useState('')
@@ -41,13 +46,16 @@ export default function SoarView({ user }) {
 
   async function refresh() {
     try {
-      const [nextPlaybooks, nextExecutions, nextRules, nextConnectors] = await Promise.all([
+      const [nextPlaybooks, nextExecutions, nextRules, nextConnectors, runtime, memberships] = await Promise.all([
         listSoarPlaybooks(), listSoarExecutions(50), listSoarAutomationRules(), listSoarConnectors(),
+        getSoarConnectorRuntime(), listMyTenants(),
       ])
       setPlaybooks(nextPlaybooks)
       setExecutions(nextExecutions)
       setAutomationRules(nextRules)
       setConnectors(nextConnectors)
+      setConnectorRuntime(runtime)
+      setTenants(memberships)
       if (!playbookId || !nextPlaybooks.some((item) => item.id === playbookId && item.resourceTypes.includes(resourceType))) {
         setPlaybookId(nextPlaybooks.find((item) => item.resourceTypes.includes(resourceType))?.id || '')
       }
@@ -116,7 +124,7 @@ export default function SoarView({ user }) {
   async function reloadDefinitions() {
     try {
       setPlaybooks(await reloadSoarPlaybooks())
-      message.success('Playbook 已完成校验并从 YAML 重新加载')
+      message.success('Git/YAML 变更已校验并导入为草稿，需完成审批和发布后才会承载流量')
     } catch (e) { message.error(e.message) }
   }
 
@@ -128,19 +136,29 @@ export default function SoarView({ user }) {
     } catch (e) { message.error(e.message) }
   }
 
+  function switchTenant(value) {
+    setActiveTenant(value)
+    setTenantId(value)
+    setDetail(null)
+    setEvents([])
+    window.setTimeout(refresh, 0)
+  }
+
   return (
     <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-      <Alert showIcon type="info" message="SOAR V2 编排与安全边界"
-        description="条件图由持久化 Worker 推进，支持并行分支、汇聚、审批、延迟、超时重试、失败路由、暂停/恢复和执行时间线。外部调用只能使用管理员登记的固定端点连接器，凭据来自环境变量；不允许任意 Shell、动态 URL 或任意 Header。" />
+      <Alert showIcon type="info" message="SOAR V3 平台化编排"
+        description={<Space wrap>当前租户 <Select value={tenantId} onChange={switchTenant} style={{ width: 190 }} options={tenants.map((item) => ({ value: item.id, label: `${item.name} (${item.tenantRole})` }))} /> 支持可视化图、版本审批、灰度、父子流程、循环/批量映射、分布式 Worker 与受控出站连接器。</Space>} />
 
       <Row gutter={[12, 12]}>
-        <Col xs={12} lg={6}><Card><Statistic title="图式 Playbook" value={playbooks.filter((item) => item.formatVersion === '2').length} suffix={`/ ${playbooks.length}`} /></Card></Col>
+        <Col xs={12} lg={6}><Card><Statistic title="已发布图式 Playbook" value={playbooks.filter((item) => item.formatVersion === '2').length} suffix={`/ ${playbooks.length}`} /></Card></Col>
         <Col xs={12} lg={6}><Card><Statistic title="自动化规则" value={automationRules.filter((item) => item.active).length} suffix={`/ ${automationRules.length}`} /></Card></Col>
         <Col xs={12} lg={6}><Card><Statistic title="连接器可用" value={connectors.filter((item) => item.enabled && item.configured).length} suffix={`/ ${connectors.length}`} /></Card></Col>
         <Col xs={12} lg={6}><Card><Statistic title="待审批 / 运行中" value={executions.filter((item) => ['queued', 'running', 'waiting_approval'].includes(item.status)).length} /></Card></Col>
       </Row>
 
-      <Card title="启动自动化处置" extra={<Space><Button onClick={refresh}>刷新</Button>{user?.role === 'admin' && <><Button onClick={scanRules}>扫描自动化规则</Button><Button onClick={reloadDefinitions}>重新加载 YAML</Button></>}</Space>}>
+      <PlaybookDesigner enabled={user?.role === 'admin'} onPublished={refresh} />
+
+      <Card title="启动自动化处置" extra={<Space><Button onClick={refresh}>刷新</Button>{user?.role === 'admin' && <><Button onClick={scanRules}>扫描自动化规则</Button><Button onClick={reloadDefinitions}>导入 Git 草稿</Button></>}</Space>}>
         <Space wrap>
           <Select value={resourceType} style={{ width: 120 }} onChange={(value) => { setResourceType(value); setPlaybookId(playbooks.find((item) => item.resourceTypes.includes(value))?.id || '') }} options={[{ value: 'alert', label: '告警' }, { value: 'case', label: '案件' }]} />
           <Input value={resourceId} onChange={(event) => setResourceId(event.target.value)} style={{ width: 330 }} placeholder={resourceType === 'alert' ? '告警 _id' : '案件 ID'} />
@@ -161,6 +179,15 @@ export default function SoarView({ user }) {
             { title: '节点', render: (_, row) => (row.nodes || row.steps || []).length },
             { title: '说明', dataIndex: 'description' },
           ]} />
+      </Card>
+
+      <Card title="Connector 分布式保护状态">
+        <Table rowKey="connectorId" size="small" pagination={false} dataSource={connectorRuntime} columns={[
+          { title: 'Connector', dataIndex: 'connectorId', render: (value) => <code>{value}</code> },
+          { title: '分钟调用', dataIndex: 'windowCalls' }, { title: '当日调用', dataIndex: 'dailyCalls' },
+          { title: '并发占用', dataIndex: 'inFlight' }, { title: '连续失败', dataIndex: 'consecutiveFailures' },
+          { title: '熔断至', dataIndex: 'circuitOpenUntil', render: (value) => value ? <TimeText value={value} /> : '—' },
+        ]} />
       </Card>
 
       <Card title={`执行记录（${executions.length}）`}>
@@ -187,6 +214,8 @@ export default function SoarView({ user }) {
           <Descriptions.Item label="已执行节点">{detail.nodesExecuted}</Descriptions.Item>
           <Descriptions.Item label="待运行 frontier">{detail.frontier?.length ? detail.frontier.map((id) => <Tag key={id}>{id}</Tag>) : '—'}</Descriptions.Item>
           <Descriptions.Item label="资源">{detail.resourceType}: <code>{detail.resourceId}</code></Descriptions.Item>
+          <Descriptions.Item label="租户"><code>{detail.tenantId}</code></Descriptions.Item>
+          <Descriptions.Item label="父执行">{detail.parentExecutionId ? <code>{detail.parentExecutionId}</code> : '—'}</Descriptions.Item>
           <Descriptions.Item label="发起人">{detail.actor}</Descriptions.Item>
           <Descriptions.Item label="审批人">{detail.approvedBy || '—'}</Descriptions.Item>
           {detail.nextRunAt && <Descriptions.Item label="下次运行"><TimeText value={detail.nextRunAt} /></Descriptions.Item>}

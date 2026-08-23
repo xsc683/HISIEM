@@ -3,6 +3,7 @@ package com.xscsiem.hsiem_platform.soar;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Component;
+import jakarta.annotation.PreDestroy;
 
 import java.net.InetAddress;
 import java.net.URI;
@@ -17,6 +18,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 /** 固定基址连接器 Runner：禁止输入 URL，限制 DNS、重定向、超时和响应体。 */
 @Component
@@ -25,17 +30,27 @@ public class SoarConnectorClient {
     private static final Pattern VARIABLE = Pattern.compile("\\$\\{([a-zA-Z0-9_.-]+)}");
     private static final TypeReference<Map<String, Object>> MAP = new TypeReference<>() {};
     private final SoarConnectorRegistry registry;
+    private final SoarHttpClientFactory clients;
+    private final SoarSecretResolver secrets;
+    private final SoarConnectorGuard guard;
     private final ObjectMapper mapper = new ObjectMapper();
-    private final HttpClient client = HttpClient.newBuilder()
-            .followRedirects(HttpClient.Redirect.NEVER)
-            .connectTimeout(Duration.ofSeconds(5)).build();
+    private final ExecutorService isolationPool = Executors.newVirtualThreadPerTaskExecutor();
 
-    public SoarConnectorClient(SoarConnectorRegistry registry) {
+    public SoarConnectorClient(SoarConnectorRegistry registry, SoarHttpClientFactory clients,
+                               SoarSecretResolver secrets, SoarConnectorGuard guard) {
         this.registry = registry;
+        this.clients = clients;
+        this.secrets = secrets;
+        this.guard = guard;
     }
 
     public Map<String, Object> call(String connectorId, String operation,
                                     Map<String, Object> arguments) {
+        return call("default", connectorId, operation, arguments, null);
+    }
+
+    public Map<String, Object> call(String tenantId, String connectorId, String operation,
+                                    Map<String, Object> arguments, String executionId) {
         SoarConnector connector = registry.get(connectorId);
         if (!connector.isEnabled()) throw new IllegalStateException("SOAR 连接器未启用: " + connectorId);
         SoarConnector.Action action = connector.actions().get(operation);
@@ -46,6 +61,34 @@ public class SoarConnectorClient {
                 throw new IllegalArgumentException("连接器动作缺少参数: " + required);
             }
         }
+        int timeout = action.timeoutSeconds() == null ? 10 : action.timeoutSeconds();
+        Duration timeoutDuration = Duration.ofSeconds(timeout);
+        SoarConnectorGuard.Permit permit;
+        try {
+            permit = guard.acquire(tenantId, connector, timeoutDuration);
+        } catch (SoarConnectorGuard.ConnectorRejectedException rejected) {
+            guard.rejected(tenantId, connectorId, operation, executionId, rejected.code());
+            throw rejected;
+        }
+        long started = System.nanoTime();
+        Future<Map<String, Object>> isolated = isolationPool.submit(
+                () -> invoke(connectorId, operation, connector, action, args));
+        try {
+            Map<String, Object> result = isolated.get(timeout + 1L, TimeUnit.SECONDS);
+            guard.success(permit, operation, executionId, elapsed(started));
+            return result;
+        } catch (Exception e) {
+            isolated.cancel(true);
+            Throwable cause = e.getCause() == null ? e : e.getCause();
+            guard.failure(permit, connector, operation, executionId, elapsed(started), errorCode(cause));
+            if (cause instanceof IllegalArgumentException argument) throw argument;
+            if (cause instanceof IllegalStateException state) throw state;
+            throw new IllegalStateException("连接器调用失败: " + cause.getMessage(), cause);
+        }
+    }
+
+    private Map<String, Object> invoke(String connectorId, String operation, SoarConnector connector,
+                                       SoarConnector.Action action, Map<String, Object> args) {
         try {
             URI base = URI.create(baseUrl(connector));
             validateBase(base, connector);
@@ -66,6 +109,7 @@ public class SoarConnectorClient {
                 request.header("Content-Type", "application/json")
                         .method(method, HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(args)));
             }
+            HttpClient client = clients.create(connector);
             HttpResponse<byte[]> response = client.send(request.build(), HttpResponse.BodyHandlers.ofByteArray());
             int maxBytes = action.maxResponseBytes() == null ? 1_048_576 : action.maxResponseBytes();
             if (response.body().length > maxBytes) throw new IllegalStateException("连接器响应超过上限");
@@ -141,10 +185,9 @@ public class SoarConnectorClient {
         return out.toString();
     }
 
-    private static void applyAuth(HttpRequest.Builder request, SoarConnector.Auth auth) {
+    private void applyAuth(HttpRequest.Builder request, SoarConnector.Auth auth) {
         if (auth == null || "none".equals(auth.type())) return;
-        String secret = System.getenv(auth.secretEnv());
-        if (secret == null || secret.isBlank()) throw new IllegalStateException("连接器凭据环境变量未配置");
+        String secret = secrets.resolve(auth.reference());
         if ("bearer".equals(auth.type())) request.header("Authorization", "Bearer " + secret);
         else request.header(auth.header() == null ? "X-API-Key" : auth.header(), secret);
     }
@@ -152,5 +195,21 @@ public class SoarConnectorClient {
     private static int effectivePort(URI uri) {
         if (uri.getPort() >= 0) return uri.getPort();
         return "https".equalsIgnoreCase(uri.getScheme()) ? 443 : 80;
+    }
+
+    private static long elapsed(long started) {
+        return Math.max(0, TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started));
+    }
+
+    private static String errorCode(Throwable error) {
+        if (error instanceof java.util.concurrent.TimeoutException) return "TIMEOUT";
+        if (error instanceof java.net.http.HttpTimeoutException) return "HTTP_TIMEOUT";
+        if (error instanceof java.io.IOException) return "IO_ERROR";
+        return "CONNECTOR_ERROR";
+    }
+
+    @PreDestroy
+    public void close() {
+        isolationPool.shutdownNow();
     }
 }

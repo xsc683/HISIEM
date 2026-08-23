@@ -7,7 +7,15 @@ allowPrivateNetwork: false
 allowInsecureHttp: false
 auth:
   type: bearer
-  secretEnv: SOAR_THREAT_INTEL_TOKEN
+  secretRef: env://SOAR_THREAT_INTEL_TOKEN
+tls:
+  mtls: false
+limits:
+  perMinute: 60
+  perDay: 5000
+  maxConcurrent: 4
+  failureThreshold: 5
+  circuitOpenSeconds: 60
 actions:
   lookup-ip:
     method: GET

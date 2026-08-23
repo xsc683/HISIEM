@@ -6,7 +6,7 @@
 
 ## 一句话结论
 
-HISIEM 已完成检测链路、控制面、接入向导、告警处置、调查台、SOAR V2 图编排和运行态扫描的主要闭环，可以作为开发/演示环境使用；生产级部署仍需完成安全加固、高可用和跨存储一致性治理。
+HISIEM 已完成检测链路、控制面、接入向导、告警处置、调查台、SOAR V3 平台化编排和运行态扫描的主要闭环，可以作为开发/演示环境使用；生产级部署仍需完成数据面安全加固、高可用和跨存储一致性治理。
 
 ## 已验证能力
 
@@ -16,8 +16,8 @@ HISIEM 已完成检测链路、控制面、接入向导、告警处置、调查�
 | 控制面 | Spring Boot + PostgreSQL/Flyway，认证、RBAC、案件、审计、通知和后台任务可用 | [部署](deployment.md)、[路线图](roadmap.md) |
 | 前端 | React/Vite 控制台可构建并访问控制面 API | `web/`、[当前产品契约](product-contract.md) |
 | 运行态 | PostgreSQL、Elasticsearch、Kafka、Logstash、Flink、Kibana 均有健康扫描 | [运维手册](operations.md) |
-| SOAR | V2 条件图、并行/汇聚、审批/延迟、持久 Worker、重试/失败边、自动规则去重、受控连接器和时间线可用 | [SOAR 设计](soar.md)、`infra/soar/` |
-| 自动化验证 | 根项目 89 个测试、Flink 33 个测试、前端生产构建通过 | [路线图](roadmap.md) |
+| SOAR | V3 拖拽图、revision 四眼审批/灰度、子流程/循环/map、多租户执行、Vault/mTLS/代理、限流/熔断/配额和持久 Worker 可用 | [SOAR 设计](soar.md)、`infra/soar/` |
+| 自动化验证 | 根项目 95 个测试、Flink 33 个测试、前端生产构建通过；包含真实 PostgreSQL V10 和 8 Worker/1000 租约竞争 | [路线图](roadmap.md) |
 | 备份恢复 | ES 临时索引备份恢复演练通过 | `infra/elasticsearch/backup-restore-rehearsal.sh` |
 
 ## 当前部署基线
@@ -44,9 +44,9 @@ HISIEM 已完成检测链路、控制面、接入向导、告警处置、调查�
 1. Elasticsearch/Kafka 默认仍是单节点、明文和低副本配置，需按部署环境启用认证、TLS、持久化和 RF≥2。
 2. Case 的 PostgreSQL 事实源与 Elasticsearch 镜像依赖 outbox/重放，仍需持续演练断点、重试和告警清理。
 3. 后台任务已有租约和启动恢复，但具体 handler 的自动重放、幂等键和跨实例协调仍需补齐。
-4. 尚未实现租户字段、索引隔离和文档级权限；当前模型是单租户。
+4. SOAR 控制面已实现 tenant 成员校验、版本/执行/配额隔离；告警、案件和 ES 数据面仍缺少 tenant 字段、索引隔离和文档级权限。
 5. 真实生产负载下的容量、保留策略、升级回滚和灾备 RTO/RPO 还需要环境级压测与演练。
-6. SOAR 已具备持久 Worker、自动规则去重和固定端点连接器，但自动扫描默认关闭；尚缺连接器级限流/熔断、Vault/KMS、egress proxy、发布审批和规模压测。
+6. SOAR 自动扫描默认关闭；已完成的 1000 租约竞争是正确性压测，仍需在目标硬件上进行长时间吞吐、外部 Connector 故障注入和跨地域恢复演练。
 
 ## 文档使用规则
 

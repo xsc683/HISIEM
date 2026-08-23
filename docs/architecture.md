@@ -61,7 +61,7 @@
    - 时间窗口规则(事件时间窗口 + watermark)→ 窗口关闭时统计命中数,≥阈值生成关联告警
    - CEP 序列和基线异常分别处理攻击链、统计异常，并统一写入告警字段
 6. 告警写入 ES `siem-alerts`;Kibana 与控制台展示/处置
-7. 控制台写操作通过 Spring Security 鉴权；案件处置状态、SOAR 执行快照/节点/frontier/事件时间线、用户会话、通知、审计和后台任务写入 PostgreSQL，Flyway 负责当前 V1-V9 迁移。
+7. 控制台写操作通过 Spring Security 鉴权；案件处置状态、SOAR 租户/版本/执行快照/节点/frontier/事件时间线/Connector 保护状态、用户会话、通知、审计和后台任务写入 PostgreSQL，Flyway 负责当前 V1-V10 迁移。
 
 ## 4. 控制面边界与接口
 

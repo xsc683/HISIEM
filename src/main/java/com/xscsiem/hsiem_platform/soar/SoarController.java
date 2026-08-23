@@ -25,12 +25,15 @@ public class SoarController {
 
     private final SoarService service;
     private final SoarConnectorRegistry connectors;
+    private final SoarConnectorGuard connectorGuard;
     private final SoarTriggerScanner triggerScanner;
 
     public SoarController(SoarService service, SoarConnectorRegistry connectors,
+                          SoarConnectorGuard connectorGuard,
                           SoarTriggerScanner triggerScanner) {
         this.service = service;
         this.connectors = connectors;
+        this.connectorGuard = connectorGuard;
         this.triggerScanner = triggerScanner;
     }
 
@@ -86,6 +89,12 @@ public class SoarController {
     @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST', 'AUDIT')")
     public List<Map<String, Object>> connectors() {
         return connectors.list().stream().map(SoarController::connectorView).toList();
+    }
+
+    @GetMapping("/connectors/runtime")
+    @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST', 'AUDIT')")
+    public List<Map<String, Object>> connectorRuntime() {
+        return connectorGuard.status(com.xscsiem.hsiem_platform.tenant.TenantContext.id());
     }
 
     @PostMapping("/connectors/reload")
@@ -144,6 +153,8 @@ public class SoarController {
         view.put("configured", connector.baseUrl() != null && !connector.baseUrl().isBlank()
                 || environmentUrl != null && !environmentUrl.isBlank());
         view.put("actions", connector.actions() == null ? Map.of() : connector.actions());
+        view.put("limits", connector.limits());
+        view.put("mtls", connector.tls() != null && Boolean.TRUE.equals(connector.tls().mtls()));
         return view;
     }
 

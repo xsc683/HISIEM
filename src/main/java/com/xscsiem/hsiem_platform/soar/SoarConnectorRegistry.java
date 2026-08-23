@@ -113,10 +113,30 @@ public class SoarConnectorRegistry {
                 .contains(connector.auth().type())) {
             throw new IllegalArgumentException(connector.id() + " 的 auth.type 非法");
         }
-        if (connector.auth() != null && !"none".equals(connector.auth().type())
-                && (blank(connector.auth().secretEnv())
-                || !ENV.matcher(connector.auth().secretEnv()).matches())) {
-            throw new IllegalArgumentException(connector.id() + " 的凭据环境变量引用非法");
+        if (connector.auth() != null && !"none".equals(connector.auth().type())) {
+            boolean legacyEnv = !blank(connector.auth().secretEnv())
+                    && ENV.matcher(connector.auth().secretEnv()).matches();
+            boolean reference = validSecretRef(connector.auth().secretRef());
+            if (legacyEnv == reference) {
+                throw new IllegalArgumentException(connector.id() + " 的 secretEnv/secretRef 必须二选一");
+            }
+        }
+        if (connector.tls() != null && Boolean.TRUE.equals(connector.tls().mtls())
+                && (!validSecretRef(connector.tls().keyStoreRef())
+                || !validSecretRef(connector.tls().keyStorePasswordRef()))) {
+            throw new IllegalArgumentException(connector.id() + " 的 mTLS 必须配置 keyStoreRef/keyStorePasswordRef");
+        }
+        if (connector.tls() != null && connector.tls().trustStoreRef() != null
+                && !validSecretRef(connector.tls().trustStoreRef())) {
+            throw new IllegalArgumentException(connector.id() + " 的 trustStoreRef 非法");
+        }
+        SoarConnector.Limits limits = connector.limits();
+        if (limits != null && (!between(limits.perMinute(), 1, 100000)
+                || !between(limits.perDay(), 1, 10000000)
+                || !between(limits.maxConcurrent(), 1, 1000)
+                || !between(limits.failureThreshold(), 1, 100)
+                || !between(limits.circuitOpenSeconds(), 1, 86400))) {
+            throw new IllegalArgumentException(connector.id() + " 的 limits 非法");
         }
     }
 
@@ -141,5 +161,14 @@ public class SoarConnectorRegistry {
 
     private static boolean blank(String value) {
         return value == null || value.isBlank();
+    }
+
+    private static boolean validSecretRef(String value) {
+        return value != null && (value.startsWith("env://") || value.startsWith("vault://")
+                || value.startsWith("vault-transit://"));
+    }
+
+    private static boolean between(Integer value, int min, int max) {
+        return value == null || value >= min && value <= max;
     }
 }

@@ -1,7 +1,8 @@
 import { Empty, Space, Tag, Typography } from 'antd'
 
 const TYPE_COLORS = {
-  action: 'blue', decision: 'purple', approval: 'gold', delay: 'cyan', end: 'default',
+  action: 'blue', decision: 'purple', approval: 'gold', delay: 'cyan',
+  subplaybook: 'geekblue', loop: 'magenta', map: 'green', end: 'default',
 }
 
 export default function PlaybookGraph({ playbook }) {

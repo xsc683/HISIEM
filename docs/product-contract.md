@@ -31,6 +31,7 @@
 | 告警 | `alert.id` | 案件的 `alert_ids`、告警的 `alert.case_id` |
 | 案件 | `case.id` | 关联告警、实体、时间线和证据 |
 | SOAR 执行 | `soar-{uuid}` | Playbook 快照、目标告警/案件、frontier、节点尝试和事件时间线 |
+| Playbook revision | `tenant + playbookId + revision` | 草稿布局、审批、灰度比例和执行快照 |
 | 实体 | `source.ip` 优先，其次 `user.name`/`host.name` | 规则、告警、案件、实体风险 |
 
 ## 2. API 契约索引
@@ -153,9 +154,21 @@ GET    /api/soar/automation-rules
 POST   /api/soar/automation-rules/scan
 GET    /api/soar/connectors
 POST   /api/soar/connectors/reload
+GET    /api/soar/connectors/runtime
+GET    /api/soar/designer/revisions
+POST   /api/soar/designer/drafts
+PUT    /api/soar/designer/{playbookId}/revisions/{revision}
+POST   /api/soar/designer/{playbookId}/revisions/{revision}/submit
+POST   /api/soar/designer/{playbookId}/revisions/{revision}/review
+POST   /api/soar/designer/{playbookId}/revisions/{revision}/publish
+POST   /api/soar/designer/import-git
+GET    /api/tenants/mine
+GET    /api/tenants
+POST   /api/tenants
+PUT    /api/tenants/{tenantId}/members/{username}
 ```
 
-Playbook 只来自 `infra/soar/playbooks/*.yaml`，V2 使用条件图，动作必须属于后端白名单。创建接口返回 `202`，数据库租约 Worker 异步推进并保存定义快照、frontier、节点尝试和事件时间线。审批拒绝沿 `rejected` 边运行，不一定立即终止；失败执行可重试。自动规则扫描支持条件和窗口去重，但定时扫描默认关闭。外部动作只允许 `infra/soar/connectors/*.yaml` 登记的固定基址和动作 Schema，不提供任意 Shell、任意 URL 或任意 Header。
+Git 中的 `infra/soar/playbooks/*.yaml` 只作为初始/导入源；运行时只解析 PostgreSQL 中已发布的 revision。V3 条件图动作必须属于后端白名单，支持子 Playbook、loop 和 map。创建接口返回 `202`，数据库租约 Worker 异步推进并保存定义快照、frontier、节点尝试和事件时间线。审批拒绝沿 `rejected` 边运行，不一定立即终止；失败执行可重试。自动规则扫描支持租户、条件和窗口去重，但定时扫描默认关闭。外部动作只允许 `infra/soar/connectors/*.yaml` 登记的固定基址和动作 Schema，不提供任意 Shell、任意 URL 或任意 Header。
 
 ## 3. 端到端主旅程
 
@@ -187,11 +200,12 @@ Playbook 只来自 `infra/soar/playbooks/*.yaml`，V2 使用条件图，动作�
 
 1. 在告警展开区或案件详情点击“运行 SOAR”，页面携带稳定资源 ID 进入 `/soar`。
 2. 选择与 `alert` 或 `case` 兼容的 Playbook；后端先校验 Playbook 级 `when` 条件再创建执行。
-3. 展开 Playbook 确认条件边、并行分支、join 和失败边；启动后先看到 `queued/running`，不能假设 HTTP 请求已同步完成。
-4. 查看 frontier、节点状态/尝试/耗时和事件时间线；`waiting_approval` 必须由满足 `requiredRole` 的用户批准或拒绝。
-5. 验证暂停/恢复/取消；失败执行可以重试，已落库的成功节点在恢复路由时不能重复调用。
-6. 管理员可手动扫描启用的自动化规则，并确认相同资源在 dedup 窗口内不会创建重复执行。
-7. 回到告警、案件、通知和审计页面，确认动作使用相同资源 ID 形成可追踪闭环。
+3. 管理员在拖拽画布保存草稿，由另一位管理员完成四眼审批，再选择稳定/灰度比例发布；Git 导入也必须走这条链路。
+4. 展开 Playbook 确认条件边、并行分支、join、子流程、loop/map 和失败边；启动后先看到 `queued/running`，不能假设 HTTP 请求已同步完成。
+5. 查看 frontier、父子执行、map 汇总、节点状态/尝试/耗时和事件时间线；`waiting_approval` 必须由满足 `requiredRole` 的用户批准或拒绝。
+6. 验证暂停/恢复/取消；失败执行可以重试，已落库的成功节点在恢复路由时不能重复调用。
+7. 管理员可手动扫描启用的自动化规则，并确认相同租户/资源在 dedup 窗口内不会创建重复执行。
+8. 查看 Connector 运行态中的限流、配额、并发和熔断信息，再回到告警、案件、通知和审计页面确认闭环。
 
 ## 4. 当前验收清单
 
@@ -203,8 +217,11 @@ Playbook 只来自 `infra/soar/playbooks/*.yaml`，V2 使用条件图，动作�
 - 写操作带真实操作者和审计记录；无权限请求返回 401/403，不伪装成空列表。
 - SOAR 未知 action、不可达节点、坏边和错误动作参数在加载阶段被拒绝；审批并发返回 409；历史执行继续使用启动时快照。
 - Worker 租约过期后执行重新入队；重试遵守 attempt 上限，失败边与整体失败可区分；连接器 API 不暴露基址或凭据引用。
+- `X-Tenant-ID` 必须通过成员关系校验；执行、revision、dedup 和 Connector 运行状态不能跨租户读取。
+- 创建者不能审批自己的 revision；灰度路由对同一租户/资源保持稳定，执行始终使用启动快照。
+- loop/map 有明确上限；父流程等待子 Playbook 时释放租约；Connector 超时、配额拒绝和熔断均可观察。
 - 变更后执行根项目测试、Flink 测试、前端构建；涉及 `infra/` 时再执行健康扫描和端到端冒烟。
 
 ## 5. 不在当前契约中的内容
 
-多租户、ES/Kafka 生产 TLS/高可用、外部通知投递、完整 OCSF 合规，以及 SOAR 可视化编辑/发布审批、完整触发器、连接器限流熔断、Vault/KMS 和隔离 Runner 仍是路线图事项。它们可以在专项设计中讨论，但不能在页面、API 或 Story 中写成已实现能力。
+ES/Kafka 生产 TLS/高可用、外部通知投递、完整 OCSF 合规，以及全 SIEM 数据面多租户、SOAR 完整触发器、OAuth2、dead-letter、容器级第三方代码 Runner 和跨地域恢复仍是路线图事项。SOAR 控制面已经实现可视化编辑、发布审批/灰度、租户隔离、Vault Transit/KV、mTLS、统一代理以及连接器限流/熔断/配额；不得把这些控制面能力扩大描述为 ES 数据面或任意代码沙箱已经租户化/隔离。

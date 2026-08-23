@@ -9,11 +9,26 @@ const pathSegment = (value) => encodeURIComponent(String(value))
 
 // 登录 token(Story 08 RBAC),本地持久化;所有请求自动携带
 let authToken = localStorage.getItem('siem_token') || ''
+let activeTenant = localStorage.getItem('siem_tenant') || 'default'
 
 function authHeaders(extra) {
   const h = { ...(extra || {}) }
   if (authToken) h.Authorization = `Bearer ${authToken}`
+  if (authToken) h['X-Tenant-ID'] = activeTenant
   return h
+}
+
+export function setActiveTenant(tenantId) {
+  activeTenant = tenantId || 'default'
+  localStorage.setItem('siem_tenant', activeTenant)
+}
+
+export function getActiveTenant() {
+  return activeTenant
+}
+
+export function listMyTenants() {
+  return request('/tenants/mine')
 }
 
 async function request(path, options) {
@@ -428,6 +443,47 @@ export function scanSoarAutomationRules() {
 
 export function listSoarConnectors() {
   return request('/soar/connectors')
+}
+
+export function getSoarConnectorRuntime() {
+  return request('/soar/connectors/runtime')
+}
+
+export function listSoarRevisions(state) {
+  const query = state ? `?${new URLSearchParams({ state }).toString()}` : ''
+  return request(`/soar/designer/revisions${query}`)
+}
+
+export function createSoarDraft(definition, layout) {
+  return request('/soar/designer/drafts', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ definition, layout }),
+  })
+}
+
+export function updateSoarDraft(playbookId, revision, definition, layout, lockVersion) {
+  return request(`/soar/designer/${pathSegment(playbookId)}/revisions/${revision}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ definition, layout, lockVersion }),
+  })
+}
+
+export function submitSoarRevision(playbookId, revision) {
+  return request(`/soar/designer/${pathSegment(playbookId)}/revisions/${revision}/submit`, { method: 'POST' })
+}
+
+export function reviewSoarRevision(playbookId, revision, approved, note) {
+  return request(`/soar/designer/${pathSegment(playbookId)}/revisions/${revision}/review`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ approved, note }),
+  })
+}
+
+export function publishSoarRevision(playbookId, revision, rolloutPercentage) {
+  return request(`/soar/designer/${pathSegment(playbookId)}/revisions/${revision}/publish`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ rolloutPercentage }),
+  })
 }
 
 export function startSoarExecution(playbookId, resourceType, resourceId) {

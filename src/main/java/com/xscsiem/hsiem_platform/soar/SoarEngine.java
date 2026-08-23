@@ -3,6 +3,7 @@ package com.xscsiem.hsiem_platform.soar;
 import com.xscsiem.hsiem_platform.control.ControlPlaneStore;
 import jakarta.annotation.PreDestroy;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
@@ -29,18 +30,34 @@ public class SoarEngine {
     private static final Set<String> JOIN_TERMINAL = Set.of("succeeded", "skipped", "failed", "rejected");
     private final SoarExecutionStore store;
     private final SoarActionExecutor actions;
+    private final SoarChildExecutionLauncher children;
     private final ControlPlaneStore control;
     private final ExecutorService actionPool = Executors.newVirtualThreadPerTaskExecutor();
     private final Duration leaseDuration;
     private final int maxNodes;
     private final int maxParallel;
 
-    public SoarEngine(SoarExecutionStore store, SoarActionExecutor actions, ControlPlaneStore control,
+    @Autowired
+    public SoarEngine(SoarExecutionStore store, SoarActionExecutor actions,
+                      SoarChildExecutionLauncher children, ControlPlaneStore control,
                       @Value("${app.soar.worker-lease:PT45S}") Duration leaseDuration,
                       @Value("${app.soar.max-node-executions:500}") int maxNodes,
                       @Value("${app.soar.max-parallel-actions:8}") int maxParallel) {
         this.store = store;
         this.actions = actions;
+        this.children = children;
+        this.control = control;
+        this.leaseDuration = leaseDuration;
+        this.maxNodes = Math.max(10, maxNodes);
+        this.maxParallel = Math.max(1, Math.min(maxParallel, 32));
+    }
+
+    /** 单元测试兼容构造器；高级节点测试使用完整 Spring 构造器。 */
+    public SoarEngine(SoarExecutionStore store, SoarActionExecutor actions, ControlPlaneStore control,
+                      Duration leaseDuration, int maxNodes, int maxParallel) {
+        this.store = store;
+        this.actions = actions;
+        this.children = null;
         this.control = control;
         this.leaseDuration = leaseDuration;
         this.maxNodes = Math.max(10, maxNodes);
@@ -139,6 +156,31 @@ public class SoarEngine {
                 }
 
                 SoarPlaybook.Node node = ready.get(0);
+                if ("loop".equals(node.type())) {
+                    int iteration = loopIteration(context, node.id());
+                    int maxIterations = integer(SoarGraph.parameters(node).getOrDefault("maxIterations", 10), 10);
+                    boolean repeat = iteration < maxIterations && SoarExpression.matches(node.when(), context);
+                    nodesExecuted++;
+                    if (repeat) {
+                        setLoopIteration(context, node.id(), iteration + 1);
+                        setVariable(context, String.valueOf(SoarGraph.parameters(node)
+                                .getOrDefault("iterationVariable", "iteration")), iteration);
+                        List<String> targets = transitionTargets(node, "success", context);
+                        store.resetNodes(execution.id(), loopBodyNodes(graph, node.id(), targets));
+                        replace(frontier, node.id(), targets);
+                        event(execution, "node.loop_iteration", node.id(), Map.of(
+                                "iteration", iteration, "targets", targets));
+                    } else {
+                        List<String> targets = transitionTargets(node, "complete", context);
+                        replace(frontier, node.id(), targets);
+                        event(execution, "node.loop_completed", node.id(), Map.of(
+                                "iterations", iteration, "maxIterationsReached", iteration >= maxIterations,
+                                "targets", targets));
+                    }
+                    store.saveProgress(execution.id(), owner, List.copyOf(frontier), first(frontier),
+                            context, nodesExecuted);
+                    continue;
+                }
                 if (!SoarExpression.matches(node.when(), context)) {
                     store.startNode(execution.id(), nodesExecuted, node, 1, Map.of());
                     store.finishNode(execution.id(), node.id(), "skipped", Map.of("reason", "guard_false"), null);
@@ -159,6 +201,64 @@ public class SoarEngine {
                     applyNodeResult(context, node, "succeeded", output, null, 1);
                     replace(frontier, node.id(), targets);
                     event(execution, "node.decision", node.id(), output);
+                    store.saveProgress(execution.id(), owner, List.copyOf(frontier), first(frontier),
+                            context, nodesExecuted);
+                    continue;
+                }
+                if ("subplaybook".equals(node.type())) {
+                    SoarStepExecution previous = completed.get(node.id());
+                    if (previous == null) {
+                        if (children == null) throw new IllegalStateException("子 Playbook launcher 未配置");
+                        Map<String, Object> input = SoarExpression.resolveMap(SoarGraph.parameters(node), context);
+                        SoarExecution child = children.launch(execution, node, input);
+                        store.startNode(execution.id(), nodesExecuted, node, 1, input);
+                        Map<String, Object> output = Map.of("childExecutionId", child.id(),
+                                "childPlaybookId", child.playbookId(), "status", child.status());
+                        store.waitForChild(execution.id(), node.id(), output);
+                        nodesExecuted++;
+                        event(execution, "node.child_started", node.id(), output);
+                        release(execution, owner, frontier, context, nodesExecuted,
+                                Instant.now().plusSeconds(1), null);
+                        return;
+                    }
+                    String childId = String.valueOf(previous.output().get("childExecutionId"));
+                    SoarExecution child = store.find(childId);
+                    if (child == null) throw new IllegalStateException("子 Playbook 执行丢失: " + childId);
+                    if (!Set.of("succeeded", "failed", "rejected", "cancelled").contains(child.status())) {
+                        release(execution, owner, frontier, context, nodesExecuted,
+                                Instant.now().plusSeconds(1), null);
+                        return;
+                    }
+                    boolean success = "succeeded".equals(child.status());
+                    Map<String, Object> output = Map.of("childExecutionId", child.id(),
+                            "childPlaybookId", child.playbookId(), "status", child.status());
+                    store.finishWaitingNode(execution.id(), node.id(), success ? "succeeded" : "failed",
+                            output, success ? null : child.error());
+                    applyNodeResult(context, node, success ? "succeeded" : "failed", output,
+                            success ? null : child.error(), 1);
+                    List<String> targets = transitionTargets(node, success ? "success" : "failure", context);
+                    if (!success && targets.isEmpty()) {
+                        fail(execution, owner, context, nodesExecuted,
+                                "子 Playbook 失败: " + child.status() + " " + child.error(), node.id());
+                        return;
+                    }
+                    replace(frontier, node.id(), targets);
+                    event(execution, "node.child_completed", node.id(), output);
+                    store.saveProgress(execution.id(), owner, List.copyOf(frontier), first(frontier),
+                            context, nodesExecuted);
+                    continue;
+                }
+                if ("map".equals(node.type())) {
+                    MapOutcome outcome = runMap(execution, owner, node, context, nodesExecuted);
+                    nodesExecuted = outcome.nodesExecuted();
+                    applyNodeResult(context, node, outcome.success() ? "succeeded" : "failed",
+                            outcome.output(), outcome.error(), 1);
+                    List<String> targets = transitionTargets(node, outcome.success() ? "success" : "failure", context);
+                    if (!outcome.success() && targets.isEmpty()) {
+                        fail(execution, owner, context, nodesExecuted, outcome.error(), node.id());
+                        return;
+                    }
+                    replace(frontier, node.id(), targets);
                     store.saveProgress(execution.id(), owner, List.copyOf(frontier), first(frontier),
                             context, nodesExecuted);
                     continue;
@@ -287,6 +387,71 @@ public class SoarEngine {
             return new BatchOutcome(nodesExecuted, null, fatalError, true);
         }
         return new BatchOutcome(nodesExecuted, nextRunAt, retryError, false);
+    }
+
+    @SuppressWarnings("unchecked")
+    private MapOutcome runMap(SoarExecution execution, String owner, SoarPlaybook.Node node,
+                              Map<String, Object> context, int nodesExecuted) throws Exception {
+        Map<String, Object> parameters = SoarGraph.parameters(node);
+        Object resolvedItems = SoarExpression.resolve(parameters.get("items"), context);
+        if (!(resolvedItems instanceof List<?> source)) throw new IllegalArgumentException("map.items 必须解析为数组");
+        int maxItems = integer(parameters.getOrDefault("maxItems", 100), 100);
+        if (source.size() > maxItems) throw new IllegalArgumentException("map.items 超过 maxItems=" + maxItems);
+        int concurrency = Math.min(maxParallel, integer(parameters.getOrDefault("concurrency", 4), 4));
+        String action = String.valueOf(parameters.get("action"));
+        String itemVariable = String.valueOf(parameters.getOrDefault("itemVariable", "item"));
+        boolean continueOnError = Boolean.TRUE.equals(parameters.get("continueOnError"));
+        Map<String, Object> argumentTemplate = parameters.get("arguments") instanceof Map<?, ?> map
+                ? (Map<String, Object>) map : Map.of();
+        Map<String, Object> input = new LinkedHashMap<>();
+        input.put("itemCount", source.size());
+        input.put("action", action);
+        input.put("concurrency", concurrency);
+        store.startNode(execution.id(), nodesExecuted, node, 1, input);
+        event(execution, "node.map_started", node.id(), input);
+        List<Map<String, Object>> results = new ArrayList<>();
+        int failures = 0;
+        for (int offset = 0; offset < source.size(); offset += concurrency) {
+            List<Future<Map<String, Object>>> futures = new ArrayList<>();
+            List<Integer> indexes = new ArrayList<>();
+            for (int index = offset; index < Math.min(source.size(), offset + concurrency); index++) {
+                Object item = source.get(index);
+                Map<String, Object> itemContext = new LinkedHashMap<>(context);
+                itemContext.put(itemVariable, item);
+                itemContext.put("mapIndex", index);
+                Map<String, Object> variables = context.get("variables") instanceof Map<?, ?> current
+                        ? new LinkedHashMap<>((Map<String, Object>) current) : new LinkedHashMap<>();
+                variables.put(itemVariable, item);
+                variables.put("mapIndex", index);
+                itemContext.put("variables", variables);
+                Map<String, Object> arguments = SoarExpression.resolveMap(argumentTemplate, itemContext);
+                futures.add(actionPool.submit(() -> actions.execute(action, arguments, execution, itemContext)));
+                indexes.add(index);
+            }
+            for (int position = 0; position < futures.size(); position++) {
+                int index = indexes.get(position);
+                try {
+                    Map<String, Object> output = awaitWithHeartbeat(futures.get(position),
+                            timeoutSeconds(execution.playbookSnapshot(), node), execution.id(), owner);
+                    results.add(Map.of("index", index, "status", "succeeded", "output", output));
+                } catch (Exception e) {
+                    futures.get(position).cancel(true);
+                    failures++;
+                    results.add(Map.of("index", index, "status", "failed", "error", safeError(e)));
+                }
+            }
+        }
+        Map<String, Object> output = new LinkedHashMap<>();
+        output.put("count", source.size());
+        output.put("succeeded", source.size() - failures);
+        output.put("failed", failures);
+        output.put("results", results);
+        boolean success = failures == 0 || continueOnError;
+        String error = success ? null : failures + " 个 map item 执行失败";
+        store.finishNode(execution.id(), node.id(), success ? "succeeded" : "failed", output, error);
+        event(execution, success ? "node.map_succeeded" : "node.map_failed", node.id(), Map.of(
+                "count", source.size(), "failed", failures));
+        return new MapOutcome(nodesExecuted + 1, success, output, error);
     }
 
     /** 长动作按租约的三分之一分片等待，避免合法执行被恢复器误判为宕机。 */
@@ -422,6 +587,52 @@ public class SoarEngine {
         return source == null ? new LinkedHashMap<>() : new LinkedHashMap<>(source);
     }
 
+    @SuppressWarnings("unchecked")
+    private static int loopIteration(Map<String, Object> context, String nodeId) {
+        Object loops = context.get("loops");
+        if (loops instanceof Map<?, ?> values && values.get(nodeId) instanceof Number number) {
+            return number.intValue();
+        }
+        return 0;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void setLoopIteration(Map<String, Object> context, String nodeId, int iteration) {
+        Map<String, Object> loops = context.get("loops") instanceof Map<?, ?> current
+                ? new LinkedHashMap<>((Map<String, Object>) current) : new LinkedHashMap<>();
+        loops.put(nodeId, iteration);
+        context.put("loops", loops);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void setVariable(Map<String, Object> context, String name, Object value) {
+        Map<String, Object> variables = context.get("variables") instanceof Map<?, ?> current
+                ? new LinkedHashMap<>((Map<String, Object>) current) : new LinkedHashMap<>();
+        variables.put(name, value);
+        context.put("variables", variables);
+    }
+
+    private static int integer(Object value, int fallback) {
+        if (value instanceof Number number) return number.intValue();
+        try {
+            return Integer.parseInt(String.valueOf(value));
+        } catch (Exception ignored) {
+            return fallback;
+        }
+    }
+
+    private static List<String> loopBodyNodes(SoarGraph graph, String loopId, List<String> targets) {
+        LinkedHashSet<String> body = new LinkedHashSet<>();
+        ArrayList<String> pending = new ArrayList<>(targets);
+        while (!pending.isEmpty() && body.size() < 100) {
+            String id = pending.remove(0);
+            if (loopId.equals(id) || !body.add(id)) continue;
+            SoarPlaybook.Node node = graph.node(id);
+            if (node != null) SoarGraph.transitions(node).forEach(edge -> pending.add(edge.target()));
+        }
+        return List.copyOf(body);
+    }
+
     private static String first(Set<String> values) {
         return values.isEmpty() ? null : values.iterator().next();
     }
@@ -444,5 +655,9 @@ public class SoarEngine {
     }
 
     private record BatchOutcome(int nodesExecuted, Instant nextRunAt, String error, boolean terminal) {
+    }
+
+    private record MapOutcome(int nodesExecuted, boolean success, Map<String, Object> output,
+                              String error) {
     }
 }
