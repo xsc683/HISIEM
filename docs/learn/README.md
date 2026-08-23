@@ -12,6 +12,7 @@
 第 4 步  04-elasticsearch.md          数据如何存储与检索(ES 概念)
 第 5 步  05-flink.md                  数据如何被检测(Flink 概念)
 第 6 步  06-logstash.md               数据如何被解析(Logstash 概念)
+第 7 步  ../architecture-deep-dive.md  从 YAML、Java 类和生成的 .conf 走读实现模式
 读完     → 回看 docs/product-contract.md 的模块与 API,再用控制台验证案件/权限/运维控制面
 ```
 
@@ -27,6 +28,7 @@
 | [04-elasticsearch.md](04-elasticsearch.md) | 索引/文档/mapping/字段类型/分片/检索聚合/ILM | ES 如何存储与检索事件与告警 |
 | [05-flink.md](05-flink.md) | DataStream/算子/分组/窗口/事件时间/watermark/状态/checkpoint | DetectionJob 各算子的作用与容错机制 |
 | [06-logstash.md](06-logstash.md) | input/filter/output pipeline、grok 原理、队列机制 | logstash.conf 各段的作用与解析原理 |
+| [architecture-deep-dive.md](../architecture-deep-dive.md) | parser template、Java 编译器、激活 Saga、raw 隔离和代码阅读路线 | 为什么配置这样生成，以及如何从一条日志追到告警 |
 
 ## 统一组织方式
 
