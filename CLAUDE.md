@@ -20,7 +20,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `flink/` — **Flink 检测 job**(独立 Maven 工程,主类 `com.siem.DetectionJob`)。规则引擎:单事件(`RuleRegistry`/`DetectionFunction`)+ 窗口(`WindowRule`/`WindowRuleFunction`)
 - `infra/` — 基础设施配置唯一来源:docker-compose、logstash、ES 模板、Kibana 脚本、simulator、deploy.sh
 - `src/` `pom.xml` — Spring Boot 控制面 API(认证、接入、告警、案件、通知、运维)
-- `web/` — React/Vite 控制台(路由表见 `web/src/routes.js`)
+- `web/` — Vue 3/Vite 控制台；真实路由见 `web/src/router/index.js`，统一请求见 `web/src/api/index.js`，页面按 `views/<module>/` 拆分
 - `docs/` — 架构/部署/决策/规则引擎文档
 
 ## 常用命令
@@ -33,6 +33,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ./mvnw -f flink/pom.xml test -Dtest=RuleEngineTest          # 单个测试类
 ./mvnw spring-boot:run                                     # 启动控制面(默认 8080)
 npm --prefix web run dev                                   # 启动前端(默认 5173)
+npm --prefix web run build                                 # Vue 3 生产构建
 
 # 部署(同步仓库 → WSL + 构建 + 拷 jar 进 jobmanager)
 MSYS_NO_PATHCONV=1 wsl bash /mnt/d/Project/SIEM/infra/deploy.sh
@@ -79,7 +80,7 @@ curl -s "http://localhost:9200/siem-alerts/_count"
 ## 测试
 
 ```bash
-./mvnw test                                                # 根项目全部 74 个测试
+./mvnw test                                                # 根项目测试（最新数量见 docs/current-status.md）
 ./mvnw -f flink/pom.xml test                              # Flink 模块全部 33 个测试
 ./mvnw -f flink/pom.xml test -Dtest=RuleEngineTest        # 单个测试类
 ./mvnw -f flink/pom.xml test "-Dtest=WindowRuleTest#bruteForceAlertHasCountAndRelatedEvents"  # 单个方法

@@ -41,7 +41,7 @@ SIEM/
 │   ├── simulator/          日志模拟器(含暴力破解测试脚本)
 │   └── deploy.sh           同步仓库 → 部署环境 + 构建 + 拷贝 jar
 ├── docs/                   当前状态、产品契约、部署、学习与专项技术参考
-├── web/                    React/Vite 控制台
+├── web/                    Vue 3/Vite 控制台（vue-router + Ant Design Vue + Vue Flow）
 └── CLAUDE.md               面向 AI 会话的项目速览
 ```
 
@@ -101,4 +101,5 @@ npm --prefix web run dev
 - ✅ Flink checkpointing(重启不重放历史)
 - ✅ Spring Boot 控制面:PostgreSQL/Flyway、登录会话、RBAC、审计、案件、通知、后台任务
 - ✅ 运维能力:六组件健康扫描、Actuator/Micrometer、数据源停用/删除回滚、ES 备份恢复演练
-- ✅ 测试:根项目 75 个测试、Flink 模块 33 个测试,前端生产构建通过
+- ✅ 前端：Vue 3 模块化路由、规则可视化 CRUD、结构化告警/案件详情和 Vue Flow SOAR 设计器
+- ✅ 测试：根项目、Flink 模块测试与前端生产构建均纳入交付验证（最新数量见 `docs/current-status.md`）

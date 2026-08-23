@@ -10,6 +10,7 @@
 | [ocsf-mapping.md](ocsf-mapping.md) | ECS 之外的最小 OCSF 辅助视图 | 明确区分已落地和设计值 |
 | [security-rbac.md](security-rbac.md) | ES/Kafka 生产安全加固参考 | 未执行的步骤不是当前能力 |
 | [threat-intel.md](threat-intel.md) | 本地 TI 字典富化实现和升级边界 | 以 `infra/ti` 与 Logstash 配置为准 |
+| [soar-playbook-mvp.md](soar-playbook-mvp.md) | SOAR 画布 Start/Action/Condition/End 与 Handle 连线基线 | 与 Vue Flow 编辑器和后端图校验同步 |
 
 ## 使用边界
 

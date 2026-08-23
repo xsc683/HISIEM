@@ -6,20 +6,21 @@
 
 ## 1. 控制台导航
 
-前端实际路由定义在 `web/src/routes.js`，菜单定义在 `web/src/App.jsx`：
+前端使用 Vue 3；实际路由定义在 `web/src/router/index.js`，菜单和全局壳位于 `web/src/layouts/MainLayout.vue`。列表、创建和详情均为可深链的独立路由：
 
 | 菜单 | 路由 | 当前职责 | 主要接口族 |
 | --- | --- | --- | --- |
-| 接入向导 | `/wizard` | 选择模板、样例测试、预览、创建和生效数据源 | `/api/parser-templates/*`、`/api/log-sources/*` |
-| 检测规则 | `/rules` | 查看规则、命中、MITRE 覆盖和启停/部署 | `/api/detection-rules/*` |
-| 告警台 | `/alerts` | 风险排序、筛选、状态、verdict、批量处置 | `/api/alerts/*` |
-| 调查台 | `/cases` | 自动/手动聚合案件、时间线、证据、协作者和结案 | `/api/cases/*` |
-| SOAR 自动化 | `/soar` | 查看条件图/自动规则/连接器，启动处置，审批、暂停/恢复/取消、重试并查看事件时间线 | `/api/soar/*` |
+| 数据源 | `/sources`、`/sources/new`、`/sources/:id` | 数据源列表、独立创建预览和生命周期详情 | `/api/log-sources/*` |
+| 解析规则库 | `/parser-templates` | 独立浏览模板、测试日志和查看 ECS/Grok 逻辑 | `/api/parser-templates/*` |
+| 检测规则 | `/rules`、`/rules/new`、`/rules/:id`、`/rules/:id/edit` | 逻辑摘要、完整 DSL、创建编辑和启停/部署 | `/api/detection-rules/*` |
+| 告警台 | `/alerts`、`/alerts/:id` | 风险排序、批量处置及结构化证据详情 | `/api/alerts/*` |
+| 调查台 | `/cases`、`/cases/new`、`/cases/:id` | 自动聚合、手动建案和完整调查工作区 | `/api/cases/*` |
+| SOAR 自动化 | `/soar`、`/soar/designer`、`/soar/executions/:id` | 运行台、Vue Flow 设计/治理和执行时间线 | `/api/soar/*` |
 | 数据健康 | `/health` | 数据源事件量、失败率、趋势和失败下钻 | `/api/data-health/*` |
 | 运行态扫描 | `/ops/health` | PostgreSQL/ES/Kafka/Logstash/Flink/Kibana 探针和任务 | `/api/ops/health-scan`、`/api/tasks/*` |
-| 资产关键度 | `/criticality` | IP/用户/主机风险权重维护和重算 | `/api/settings/criticality/*` |
+| 资产关键度 | `/criticality`、`/criticality/new`、`/criticality/:type/:key/edit` | IP/用户/主机风险权重维护和重算 | `/api/settings/criticality/*` |
 | 通知中心 | `/notifications` | 查看、已读和删除控制面通知 | `/api/notifications/*` |
-| 用户与权限 | `/rbac` | 用户、角色矩阵、审计和密码修改（按角色显示） | `/api/auth/*` |
+| 用户与权限 | `/rbac/users`、`/rbac/users/new`、`/rbac/users/:username`、`/rbac/roles`、`/rbac/audit` | 用户生命周期、角色矩阵和审计 | `/api/auth/*` |
 
 页面之间不通过页面状态互相猜测，统一使用下面的标识关联：
 
@@ -77,6 +78,8 @@ DELETE /api/log-sources/{id}
 ```text
 GET    /api/detection-rules
 GET    /api/detection-rules/{id}
+POST   /api/detection-rules
+PUT    /api/detection-rules/{id}
 GET    /api/detection-rules/{id}/hits
 POST   /api/detection-rules/{id}/toggle
 PATCH  /api/detection-rules/{id}
@@ -84,7 +87,7 @@ GET    /api/detection-rules/mitre
 POST   /api/detection-rules/deploy
 ```
 
-`infra/rules/*.yaml` 是规则声明和 `enabled` 的来源；控制台的启停/部署不能另造一份规则状态。当前检测基线为 6 条规则：单事件、窗口、CEP 和基线异常类型均可能出现在列表中。
+`infra/rules/*.yaml` 是规则声明和 `enabled` 的来源；控制台的启停/部署不能另造一份规则状态。POST/PUT 仅开放 Flink 已能结构化校验的 `single_event` 和 `window`，递归校验 FieldEquals/FieldIn/All/Any/Not DSL 后原子写 YAML并记录操作者，成功后标记“待部署”。CEP/基线规则保持只读并继续通过代码评审维护。当前检测基线为 6 条规则。
 
 ### 告警和案件
 
@@ -174,7 +177,7 @@ Git 中的 `infra/soar/playbooks/*.yaml` 只作为初始/导入源；运行时�
 
 ### 接入一类新日志
 
-1. 登录并打开 `/wizard`。
+1. 登录并打开 `/parser-templates` 测试模板；确认后进入 `/sources/new`。
 2. 从模板列表选择 `template.id`，用真实样例调用解析测试，确认 ECS 字段预览。
 3. 选择 `tcp`/`syslog`/`file`，填写端口或路径，执行 preview。
 4. 创建数据源并激活；轮询任务直到成功或失败。
@@ -183,7 +186,7 @@ Git 中的 `infra/soar/playbooks/*.yaml` 只作为初始/导入源；运行时�
 
 ### 从事件到案件
 
-1. 在 `/alerts` 以规则、实体、状态和时间筛选告警。
+1. 在 `/alerts` 以规则、实体、状态和时间筛选告警，并进入 `/alerts/:id` 查看结构化证据。
 2. 展开告警时同时查看 `@timestamp`（事件/窗口结束时间）与 `alert.created_at`（系统生成时间），原始 JSON 使用 UTC。
 3. 先设置 verdict，再按状态机进行 acknowledged/investigating/closed 等处置。
 4. 在 `/cases` 选择告警执行自动或手动聚合；确认实体、关联告警、时间线和证据。
@@ -191,16 +194,17 @@ Git 中的 `infra/soar/playbooks/*.yaml` 只作为初始/导入源；运行时�
 
 ### 规则、风险和通知
 
-1. 在 `/rules` 查看 `rule.id`、风险分、MITRE 标签、启用状态和近 7 天命中。
-2. 规则启停只改 YAML 的 `enabled`，确认部署任务完成后再期待 Flink 行为变化。
-3. 在 `/criticality` 修改资产权重并触发风险重算，观察实体风险结果。
-4. 在 `/notifications` 处理接入失败、健康异常和 FP 率通知；外部邮件/Webhook 当前不属于已实现能力。
+1. 在 `/rules` 直接查看条件摘要；进入详情查看条件树和只读 YAML/JSON。
+2. 管理员可在 `/rules/new` 创建单事件/窗口规则，或编辑已有同类规则；保存后仍需显式部署。
+3. 规则启停只改 YAML 的 `enabled`，确认部署任务完成后再期待 Flink 行为变化。
+4. 在 `/criticality` 修改资产权重并触发风险重算，观察实体风险结果。
+5. 在 `/notifications` 处理接入失败、健康异常和 FP 率通知；外部邮件/Webhook 当前不属于已实现能力。
 
 ### SOAR 辅助处置
 
 1. 在告警展开区或案件详情点击“运行 SOAR”，页面携带稳定资源 ID 进入 `/soar`。
 2. 选择与 `alert` 或 `case` 兼容的 Playbook；后端先校验 Playbook 级 `when` 条件再创建执行。
-3. 管理员在拖拽画布保存草稿，由另一位管理员完成四眼审批，再选择稳定/灰度比例发布；Git 导入也必须走这条链路。
+3. 管理员在 `/soar/designer` 从输出 Handle 拖到输入 Handle 连线，保存草稿后由另一位管理员完成四眼审批，再选择稳定/灰度比例发布；Git 导入也必须走这条链路。
 4. 展开 Playbook 确认条件边、并行分支、join、子流程、loop/map 和失败边；启动后先看到 `queued/running`，不能假设 HTTP 请求已同步完成。
 5. 查看 frontier、父子执行、map 汇总、节点状态/尝试/耗时和事件时间线；`waiting_approval` 必须由满足 `requiredRole` 的用户批准或拒绝。
 6. 验证暂停/恢复/取消；失败执行可以重试，已落库的成功节点在恢复路由时不能重复调用。
@@ -209,7 +213,9 @@ Git 中的 `infra/soar/playbooks/*.yaml` 只作为初始/导入源；运行时�
 
 ## 4. 当前验收清单
 
-- 页面路由与 `web/src/routes.js` 一致，不引用旧的 `/onboarding`、`/settings/*` 路径。
+- 页面路由与 `web/src/router/index.js` 一致；`/wizard` 仅作为兼容重定向，不再使用单个 activeKey 模拟导航。
+- `App.vue` 只承载根出口；业务数据按路由请求，列表、创建、详情不堆在同一页面。
+- 规则列表能在不展开 JSON 的情况下说明检测字段、条件、窗口、分组键和阈值；无效 DSL 不得覆盖原 YAML。
 - 接入失败不会悄悄显示为空数据；任务状态、错误和旧配置可见。
 - 事件、规则、告警和案件使用稳定 ID 关联，不用显示名称或数组下标关联。
 - 所有时间字段说明事件时间、告警生成时间和页面本地时区，避免把三者混为“平台时间”。

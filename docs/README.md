@@ -19,7 +19,8 @@
 | [设计决策](design-decisions.md) | 为什么采用 ECS、事件时间、Kafka/Flink checkpoint、YAML 规则和当前部署方式 |
 | [事件与告警 Schema](event-alert-schema.md) | 当前事件、告警、时间字段、处置字段和 ES mapping 约束 |
 | [规则引擎](rule-engine.md) | 如何理解和扩展单事件、窗口、CEP、基线检测 |
-| [SOAR 设计与实现](soar.md) | Playbook、执行状态机、审批、安全边界和后续连接器规划 |
+| [SOAR 设计与实现](soar.md) | Playbook、执行状态机、审批、安全边界和连接器治理 |
+| [SOAR 可视化编辑基线](design/soar-playbook-mvp.md) | Start/Action/Condition/End、Handle 连线和未闭合路径校验 |
 | [MITRE 覆盖矩阵](design/mitre-coverage.md) | 当前规则覆盖和 Blind 技术 |
 | [OCSF 映射](design/ocsf-mapping.md) | 已落地的最小 OCSF 辅助视图与未完成字段 |
 | [安全加固参考](design/security-rbac.md) | ES/Kafka 认证、TLS 和最小权限的生产门禁 |
@@ -33,7 +34,7 @@
 
 ## Story 迁移
 
-原 `docs/story/story-01` 至 `story-10` 及模板均已删除，因为它们重复 API/路由/状态并产生多份互相矛盾的契约。保留的迁移说明见 [`story/README.md`](story/README.md)，当前内容统一在[产品契约](product-contract.md)。新需求先改产品契约和测试，不再复制 Story 长模板。
+原 `docs/story/story-01` 至 `story-10` 及模板均已删除，因为它们重复 API/路由/状态并产生多份互相矛盾的契约。迁移说明和不复制 API 的新增验收记录见 [`story/README.md`](story/README.md)，当前接口统一在[产品契约](product-contract.md)。
 
 ## 审计与历史材料
 

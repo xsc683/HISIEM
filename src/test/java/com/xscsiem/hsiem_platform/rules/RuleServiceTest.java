@@ -7,6 +7,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -105,5 +106,95 @@ class RuleServiceTest {
     @Test
     void get_missingRule_throws404() throws Exception {
         assertThrows(NotFoundException.class, () -> svc().get("nope"));
+    }
+
+    @Test
+    void create_writesValidatedSingleEventRule() throws Exception {
+        Map<String, Object> payload = singleEvent("rule-ui-created");
+        payload.put("name", "  UI 创建规则  ");
+        payload.put("description", "  从可视化表单创建  ");
+        Map<String, Object> created = svc().create(payload, "admin");
+
+        assertEquals("rule-ui-created", created.get("id"));
+        assertEquals("UI 创建规则", created.get("name"));
+        assertEquals("从可视化表单创建", created.get("description"));
+        assertEquals("field_equals", ((Map<?, ?>) created.get("condition")).get("type"));
+        assertTrue(Files.readString(temp.resolve("rule-ui-created.yaml")).contains("event.action"));
+        assertEquals(created.get("name"), svc().get("rule-ui-created").get("name"));
+    }
+
+    @Test
+    void create_duplicateId_returnsConflict() throws Exception {
+        svc().create(singleEvent("rule-duplicate"), "admin");
+
+        assertThrows(com.xscsiem.hsiem_platform.onboarding.ConflictException.class,
+                () -> svc().create(singleEvent("rule-duplicate"), "admin"));
+    }
+
+    @Test
+    void update_windowRulePersistsWindowSemantics() throws Exception {
+        Map<String, Object> original = singleEvent("rule-window-ui");
+        svc().create(original, "admin");
+        Map<String, Object> changed = new LinkedHashMap<>(original);
+        changed.put("category", "window");
+        changed.put("keyField", "source.ip");
+        changed.put("windowMinutes", 5);
+        changed.put("threshold", 7);
+        changed.put("slidingMinutes", null);
+        changed.put("alertSuppressionMinutes", null);
+
+        Map<String, Object> updated = svc().update("rule-window-ui", changed, "admin");
+
+        assertEquals(5L, updated.get("windowMinutes"));
+        assertEquals(7, updated.get("threshold"));
+        assertFalse(updated.containsKey("slidingMinutes"));
+        assertFalse(updated.containsKey("alertSuppressionMinutes"));
+        assertFalse(Files.readString(temp.resolve("rule-window-ui.yaml")).contains("null"));
+        assertEquals("source.ip", svc().get("rule-window-ui").get("keyField"));
+    }
+
+    @Test
+    void update_invalidDsl_keepsPreviousYaml() throws Exception {
+        Map<String, Object> original = singleEvent("rule-safe-update");
+        svc().create(original, "admin");
+        Path path = temp.resolve("rule-safe-update.yaml");
+        String before = Files.readString(path);
+        Map<String, Object> invalid = new LinkedHashMap<>(original);
+        invalid.put("condition", Map.of("type", "field_in", "field", "user.name", "values", List.of()));
+
+        assertThrows(IllegalArgumentException.class,
+                () -> svc().update("rule-safe-update", invalid, "admin"));
+        assertEquals(before, Files.readString(path));
+    }
+
+    @Test
+    void create_rejectsPathTraversalAndUnsupportedCategory() {
+        Map<String, Object> traversal = singleEvent("rule-safe-id");
+        traversal.put("id", "../outside");
+        assertThrows(IllegalArgumentException.class, () -> svc().create(traversal, "admin"));
+
+        Map<String, Object> cep = singleEvent("rule-ui-cep");
+        cep.put("category", "cep");
+        assertThrows(IllegalArgumentException.class, () -> svc().create(cep, "admin"));
+    }
+
+    private static Map<String, Object> singleEvent(String id) {
+        Map<String, Object> rule = new LinkedHashMap<>();
+        rule.put("id", id);
+        rule.put("name", "UI 创建规则");
+        rule.put("category", "single_event");
+        rule.put("type", "ui_detection");
+        rule.put("enabled", true);
+        rule.put("severity", "high");
+        rule.put("description", "从可视化表单创建");
+        rule.put("riskScore", 70);
+        rule.put("tags", List.of("attack.t1110.001"));
+        rule.put("status", "experimental");
+        rule.put("version", "1.0");
+        rule.put("condition", Map.of(
+                "type", "field_equals",
+                "field", "event.action",
+                "value", "authentication_failure"));
+        return rule;
     }
 }

@@ -11,3 +11,5 @@
 - 面向回归测试的验收清单。
 
 需求变化时，先更新产品契约和代码测试；不要重新创建一份复制 API 的 Story 长文。需要记录阶段计划时更新 [`../roadmap.md`](../roadmap.md)，需要记录架构决策时更新 [`../design-decisions.md`](../design-decisions.md)。
+
+本目录允许保留不复制完整 API 的新增验收记录：[`story-11-vue-console-rule-authoring.md`](story-11-vue-console-rule-authoring.md) 记录 Vue 控制台重构和规则可视化编写的用户价值、设计原则与验收。

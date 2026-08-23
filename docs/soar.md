@@ -179,7 +179,7 @@ DNS 校验与实际连接之间仍存在解析时序边界，因此生产环境�
 
 ## 8. 可视化设计和发布治理
 
-[`PlaybookDesigner.jsx`](../web/src/components/soar/PlaybookDesigner.jsx) 提供拖拽画布、八类节点工具箱、节点检查器、条件边连接、布局保存和 revision 列表。画布不是只修改本地 YAML：它调用 [`SoarPlaybookCatalog.java`](../src/main/java/com/xscsiem/hsiem_platform/soar/SoarPlaybookCatalog.java) 的真实状态机。
+[`PlaybookFlowEditor.vue`](../web/src/components/soar/PlaybookFlowEditor.vue) 使用 Vue Flow 提供八类节点工具箱、真实输入/输出 Handle 连线、节点/边检查器、布局保存和未闭合路径校验；虚拟 START 连线唯一映射到 `entrypoint`，End 节点不允许再连接下游。[`SoarDesignerView.vue`](../web/src/views/soar/SoarDesignerView.vue) 再把画布接到 revision 目录。它不是只修改本地 YAML：保存、审批和发布都调用 [`SoarPlaybookCatalog.java`](../src/main/java/com/xscsiem/hsiem_platform/soar/SoarPlaybookCatalog.java) 的真实状态机。
 
 发布链路为 `draft → pending_approval → approved → published/retired`：
 
@@ -196,7 +196,7 @@ revision 行保存创建、审批、发布操作者和时间，关键迁移同�
 
 每次执行创建、节点开始/成功/重试/失败路由、审批、暂停、恢复和终止都会追加 `soar_execution_events`。步骤表保存节点类型、尝试次数、输入、输出、错误和耗时；执行表保存当前节点、frontier、租约和下次运行时间。
 
-控制台 `/soar` 展示：
+控制台把职责拆成 `/soar` 运行台、`/soar/designer` 设计治理和 `/soar/executions/:id` 执行详情，展示：
 
 - 拖拽编辑器、revision 状态、四眼审批和灰度比例；
 - V2/V3 节点、条件边、错误边、join、子执行和 map 汇总；

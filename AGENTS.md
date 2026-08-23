@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-The root `src/main/java/com/xscsiem/hsiem_platform/` tree contains the Spring Boot API, grouped by feature (`alert`, `auth`, `onboarding`, `rules`, and others). Mirror those packages under `src/test/java/`. `flink/` is an independent Maven module for the detection job; its entry point is `com.siem.DetectionJob`, with tests under `flink/src/test/java/`. The React/Vite console lives in `web/`, primarily `web/src/App.jsx` and `web/src/api.js`. Treat `infra/` as the source of truth for Docker Compose, Logstash pipelines, Elasticsearch templates, detection-rule YAML, and deployment scripts. Architecture and operational decisions belong in `docs/`. Do not commit generated `target/`, `web/dist/`, or `web/node_modules/` content.
+The root `src/main/java/com/xscsiem/hsiem_platform/` tree contains the Spring Boot API, grouped by feature (`alert`, `auth`, `onboarding`, `rules`, and others). Mirror those packages under `src/test/java/`. `flink/` is an independent Maven module for the detection job; its entry point is `com.siem.DetectionJob`, with tests under `flink/src/test/java/`. The Vue 3/Vite console lives in `web/`. Keep `web/src/App.vue` as a thin root, define real routes in `web/src/router/index.js`, centralize HTTP behavior in `web/src/api/index.js`, and split business pages under `web/src/views/<module>/`. Treat `infra/` as the source of truth for Docker Compose, Logstash pipelines, Elasticsearch templates, detection-rule YAML, and deployment scripts. Architecture and operational decisions belong in `docs/`. Do not commit generated `target/`, `web/dist/`, or `web/node_modules/` content.
 
 ## Build, Test, and Development Commands
 
@@ -21,7 +21,7 @@ On Windows, use `mvnw.cmd`. Use `wsl bash /mnt/d/Project/SIEM/infra/deploy.sh` o
 
 ## Coding Style & Naming Conventions
 
-Use four-space indentation for Java, same-line braces, lowercase packages, `PascalCase` types, and `camelCase` members. Keep controllers thin and place behavior in feature services/stores. Follow the existing frontend style: two-space indentation, single quotes, no semicolons, `PascalCase` components, and `camelCase` API functions. YAML uses two spaces and kebab-case identifiers such as `rule-ssh-brute-force-001`. No repository-wide formatter or linter is configured, so avoid unrelated reformatting.
+Use four-space indentation for Java, same-line braces, lowercase packages, `PascalCase` types, and `camelCase` members. Keep controllers thin and place behavior in feature services/stores. Follow the existing Vue frontend style: Composition API, two-space indentation, single quotes, no semicolons, `PascalCase` `.vue` components, and `camelCase` API/composable functions. List, form, and detail experiences should remain separate routes; do not move cross-page state into the root layout. YAML uses two spaces and kebab-case identifiers such as `rule-ssh-brute-force-001`. No repository-wide formatter or linter is configured, so avoid unrelated reformatting.
 
 ## Testing Guidelines
 

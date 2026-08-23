@@ -987,9 +987,9 @@ return socket;
 
 ### 11.1 所有请求通过一个协议边界
 
-实现位置：`web/src/api.js`、`src/main/java/com/xscsiem/hsiem_platform/onboarding/GlobalExceptionHandler.java`。
+实现位置：`web/src/api/index.js`、`src/main/java/com/xscsiem/hsiem_platform/onboarding/GlobalExceptionHandler.java`。
 
-web/src/api.js 的 request 直接处理超时、401、非 JSON 和 204：
+Vue 控制台的统一 request 直接处理超时、401、非 JSON 和 204，并保留状态码与错误代码：
 
 ~~~javascript
 const controller = new AbortController()
@@ -1020,33 +1020,17 @@ return r.status === 204 || !raw.trim() ? null : body
 
 后端 GlobalExceptionHandler 将 400/404/409/401/403/500 统一成 ApiError(timestamp,status,code,message,path)，前端不会把后端异常误显示成空数据。
 
-### 11.2 告警详情保留完整对象，页面字段只做索引视图
+### 11.2 告警详情先组织调查信息，再保留完整对象
 
-实现位置：`web/src/App.jsx` 告警表、展开详情和时间/数据源显示组件。
+实现位置：`web/src/views/alerts/AlertDetailView.vue`、`web/src/components/alerts/AlertDetails.vue`。
 
-告警表使用 _id 作为 row key，列只展示风险、规则、状态、实体、案件和时间；展开内容保留完整对象：
-
-~~~jsx
-expandedRowRender: (row) => (
-  <>
-    <Typography.Text>
-      事件时间用于检测窗口；告警生成时间表示写入时间。
-    </Typography.Text>
-    <pre style={{ maxHeight: 420, overflow: 'auto',
-                  whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-      {JSON.stringify(row, null, 2)}
-    </pre>
-  </>
-)
-~~~
-
-alertSource 先读 log.source_name/log.source_id，缺失时从 related_events 回退；时间组件将 ISO UTC 转成本地时区，并在 title 中保留原始 UTC。这样表格是索引视图，原始告警不会因为列设计被截断。
+告警列表使用 `_id` 作为 row key，只承担风险、规则、实体、案件和时间的索引职责。详情页先将风险、状态、事件/生成时间、规则、实体、用户和主机组成 Descriptions，再把 `related_events` 按事件折叠，保留每条 `event.original`。完整告警和每条关联事件的 JSON 位于次级入口，使用可滚动且 `overflow-wrap:anywhere` 的代码面板；长数组不再被表格展开区截断，也不会把 JSON dump 当成主要分析界面。
 
 ### 11.3 调查台和后台任务展示的是后端状态机
 
-实现位置：`web/src/App.jsx` 调查台、数据源任务轮询和通知区域；后端状态来自 `BackgroundTaskController` 与 `LogSourceController`。
+实现位置：`web/src/views/cases/`、`web/src/views/sources/`、`web/src/views/ops/`；后端状态来自 `BackgroundTaskController` 与 `OnboardingController`。
 
-自动聚合请求携带 windowMinutes/threshold/groupByRule，页面同时显示“当前条件”的可读文本；数据源、实体风险和规则部署返回 task ID 后，运行态页面每 10 秒刷新 healthScan 与 listTasks。初始化多个 API 中任意一个失败，会集中显示“部分数据加载失败”和具体模块，而不是渲染“暂无数据”。
+自动聚合请求携带 `windowMinutes/threshold/groupByRule`，数字输入与可读摘要同时显示实际值。数据源详情只在存在 `taskId` 时使用最长两分钟的退避轮询；运行态扫描由用户显式触发并同时刷新任务。每个路由拥有自己的 loading/error/empty，接口失败不会被改写成“暂无数据”，根布局也不再挂载时拉取全站接口。
 
 ## 12. 代码级实现与测试的对应关系
 
