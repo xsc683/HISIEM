@@ -15,4 +15,4 @@ REQUIRE_CONTROL_PLANE_SCHEMA=1 \
 bash infra/validate-deployment.sh
 ```
 
-验证脚本会拒绝 security off、Kafka 明文 listener、RF=1 或控制面低于 V12 的部署。证书、密码和 truststore 不进入 Git。
+验证脚本会拒绝 security off、Kafka 明文 listener、RF=1 或控制面低于 V15 的部署。证书、密码和 truststore 不进入 Git。

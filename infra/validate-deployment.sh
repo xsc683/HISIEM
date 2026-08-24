@@ -102,20 +102,20 @@ else
 fi
 if [ "$REQUIRE_CONTROL_PLANE_SCHEMA" = "1" ]; then
     control_tables="$(docker exec siem-postgres psql -U siem -d siem -tAc \
-        "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('roles','users','audit_logs','cases','case_alerts','notifications','background_tasks','case_mirror_outbox','soar_executions','soar_step_executions','soar_playbook','soar_execution','soar_node_run','soar_approval','soar_node_execution','soar_approval_task','soar_action_receipt')" \
+        "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('roles','users','audit_logs','cases','case_alerts','notifications','background_tasks','case_mirror_outbox','soar_executions','soar_step_executions','soar_playbook','soar_execution','soar_node_run','soar_approval','soar_node_execution','soar_approval_task','soar_action_receipt','soar_parallel_group','soar_parallel_branch','soar_loop_state')" \
         2>/dev/null | tr -d '[:space:]' || true)"
-    if [ "$control_tables" = "17" ]; then
-        echo "  [ok] PostgreSQL 控制面 17 张关键表已由 Flyway 创建"
+    if [ "$control_tables" = "20" ]; then
+        echo "  [ok] PostgreSQL 控制面 20 张关键表已由 Flyway 创建"
     else
-        fail "PostgreSQL 控制面表不完整(检测到 $control_tables/17),请先启动 Spring Boot 应用执行 Flyway"
+        fail "PostgreSQL 控制面表不完整(检测到 $control_tables/20),请先启动 Spring Boot 应用执行 Flyway"
     fi
     flyway_version="$(docker exec siem-postgres psql -U siem -d siem -tAc \
         "SELECT version FROM flyway_schema_history WHERE success = TRUE ORDER BY installed_rank DESC LIMIT 1" \
         2>/dev/null | tr -d '[:space:]' || true)"
-    if [ -n "$flyway_version" ] && [ "$flyway_version" -ge 12 ] 2>/dev/null; then
+    if [ -n "$flyway_version" ] && [ "$flyway_version" -ge 15 ] 2>/dev/null; then
         echo "  [ok] Flyway V${flyway_version} 控制面迁移已完成"
     else
-        fail "Flyway 当前版本为 ${flyway_version:-unknown},预期至少 V12(SOAR Handler 与 attempt runtime)"
+        fail "Flyway 当前版本为 ${flyway_version:-unknown},预期至少 V15(SOAR 持久并行、循环与手动触发 runtime)"
     fi
 fi
 if curl -fsS "$ES/_cluster/health?filter_path=status" | grep -qE 'green|yellow'; then

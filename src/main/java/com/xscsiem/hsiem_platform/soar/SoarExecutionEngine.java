@@ -58,6 +58,18 @@ public class SoarExecutionEngine {
                 .orElseThrow(() -> new IllegalStateException(
                         "执行快照缺少当前节点: " + execution.currentNodeId()));
         SoarNodeHandler handler = handlers.require(node.type());
+        SoarStore.ParallelBranch parallelBranch = store.parallelBranch(execution.id(), node.id());
+        if (parallelBranch != null) {
+            store.arriveParallel(execution, parallelBranch,
+                    router.next(execution.graphSnapshot(), node.id(), "next"));
+            return;
+        }
+        SoarStore.LoopState loopState = store.loopState(execution.id(), node.id());
+        if (loopState != null) {
+            store.advanceLoop(execution, loopState,
+                    router.next(execution.graphSnapshot(), node.id(), "next"));
+            return;
+        }
         SoarRetryPolicy retryPolicy = SoarRetryPolicy.resolve(node, handler);
         Map<String, Map<String, Object>> outputs = store.nodeOutputs(execution.id());
         Map<String, Object> variables = variables(outputs);
@@ -68,7 +80,7 @@ public class SoarExecutionEngine {
             Map<String, Object> resolvedConfig = templates.resolveMap(node.config(), context.templateVariables());
             if (nodeRun == null) {
                 SoarStore.StartAttempt started = store.startNode(execution, node,
-                        context.persistedInput(resolvedConfig), retryPolicy.maxAttempts());
+                        context.persistedInput(handler.auditSafeConfig(resolvedConfig)), retryPolicy.maxAttempts());
                 nodeRun = started.run();
                 if (started.exhausted()) {
                     terminalFailure(execution, node, nodeRun,
@@ -77,7 +89,8 @@ public class SoarExecutionEngine {
                 }
                 context = context(execution, node, nodeRun, outputs, variables);
                 resolvedConfig = templates.resolveMap(node.config(), context.templateVariables());
-                store.updateNodeInput(execution, nodeRun.id(), context.persistedInput(resolvedConfig));
+                store.updateNodeInput(execution, nodeRun.id(),
+                        context.persistedInput(handler.auditSafeConfig(resolvedConfig)));
             }
             SoarNodeResult result = handler.execute(context, resolvedConfig);
             commit(execution, node, nodeRun, handler, result);
@@ -129,6 +142,24 @@ public class SoarExecutionEngine {
                     throw new IllegalStateException("人工节点必须返回审批提示语");
                 }
                 store.createApproval(execution, node, nodeRun, result.approvalPrompt());
+            }
+            case FAN_OUT -> {
+                if (result.branches().size() < 2 || result.joinNode() == null || result.joinNode().isBlank()) {
+                    throw new IllegalStateException("并行节点必须返回至少两个分支和 join 节点");
+                }
+                java.util.List<SoarStore.BranchTarget> targets = result.branches().stream()
+                        .map(branch -> new SoarStore.BranchTarget(branch,
+                                router.next(execution.graphSnapshot(), node.id(), branch)))
+                        .toList();
+                store.fanOut(execution, nodeRun, result.output(), targets, result.joinNode());
+            }
+            case LOOP -> {
+                if (result.loopBodyStart() == null || result.loopBodyEnd() == null
+                        || result.loopItems().isEmpty() || result.loopMaxIterations() < result.loopItems().size()) {
+                    throw new IllegalStateException("循环节点返回了非法的持久化循环状态");
+                }
+                store.startLoop(execution, nodeRun, result.loopBodyStart(), result.loopBodyEnd(),
+                        result.loopItems(), result.loopMaxIterations());
             }
         }
     }

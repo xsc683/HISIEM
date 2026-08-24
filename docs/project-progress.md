@@ -2,7 +2,7 @@
 
 > 定位：面向项目交接、迭代决策和后续开发的管理视图。当前运行事实仍以 [`current-status.md`](current-status.md) 为准，功能/API 以 [`product-contract.md`](product-contract.md) 为准，阶段优先级以 [`roadmap.md`](roadmap.md) 为准；本文不建立第四份接口契约。
 >
-> 基线：2026-08-24，`add_frame` 分支，WSL2 + Docker Desktop；最近一次完整验证基线为 Spring Boot 99 个测试、Flink 38 个测试、前端 3 个单元测试、生产构建和 1 条 Playwright E2E。
+> 基线：2026-08-24，`add_frame` 分支，WSL2 + Docker Desktop；最近一次完整验证基线为 Spring Boot 114 个测试、Flink 38 个测试、前端 3 个单元测试、生产构建和 1 条 Playwright E2E。
 
 ## 1. 当前结论
 
@@ -36,8 +36,8 @@ flowchart LR
 | 事件检测 | 已完成开发闭环 | YAML 规则、单事件/滑动窗口/CEP/基线四类分支、事件时间/watermark、告警抑制、确定性 ID、安全 partial update | CEP/基线仍只读维护；尚未做生产规模基准和规则热升级治理 |
 | 数据质量 | 已完成基础保护 | Logstash 解析失败进入 `siem-events-raw-*`；Flink 坏 JSON/非法时间戳进入 `siem-events-dlq` | DLQ 没有管理页面、审批式重放和积压告警 |
 | 告警与调查 | 已完成主要旅程 | 告警筛选/详情/批量处置、自动聚合、案件状态/负责人/证据/时间线、告警与案件关联 | PostgreSQL、ES 与告警 marker 仍是补偿 + 最终一致性模型 |
-| 控制面与权限 | 已完成基础闭环 | Spring Security、Bearer 会话、RBAC、首次改密、审计、通知、Flyway V12、后台任务租约 | 数据面尚未形成完整 tenant 隔离；生产密钥与统一身份源未接入 |
-| SOAR | 已完成生命周期 MVP | alert/case lifecycle、六类 DAG 节点、字段/动作字典、显式上下文、逐 attempt I/O、Wait/Human、重试、幂等回执、续租与 fencing | 无外部 Connector、Cron/Webhook、并行、循环、子流程和事务 lifecycle outbox |
+| 控制面与权限 | 已完成基础闭环 | Spring Security、Bearer 会话、RBAC、首次改密、审计、通知、Flyway V15、后台任务租约 | 数据面尚未形成完整 tenant 隔离；生产密钥与统一身份源未接入 |
+| SOAR | 已完成持久编排扩展 | lifecycle/人工触发、11 类 Handler、持久并行/静态循环、Connector SPI/HTTP、验证器链、逐 attempt、幂等回执、续租与 fencing | 无 Cron/Webhook、子 Playbook、AI、凭据库、Connector 生产隔离和事务 lifecycle outbox |
 | Vue 控制台 | 已完成主要页面重构 | Vue 3 路由、模块拆分、统一请求错误、结构化详情、规则编辑、Vue Flow 设计器、离开保存保护 | 浏览器 E2E 目前只覆盖一个使用 mock API 的 Playbook 编辑旅程 |
 | 运维与交付 | 已完成开发环境基线 | 六组件健康扫描、Kafka/Flink 语义检查、ES 备份恢复、Compose 校验、部署脚本、GitHub Actions | Spring Boot/前端不在 Compose 内；缺少生产反向代理、统一证书和环境级发布回滚 |
 | 文档与学习材料 | 已完成当前整理 | 当前事实、产品契约、架构/数据流、实现剖面、SOAR、部署运维和学习地图已分层 | 归档只能用于历史追溯，不能重新作为开发契约 |
@@ -69,8 +69,8 @@ flowchart LR
 | TEST-01 | P1 | 部分完成 | CI 浏览器测试使用 mock API，缺少真实全栈和多实例故障注入 | 单元测试通过不代表部署链路与恢复语义成立 |
 | OBS-01 | P1 | 部分完成 | Logstash 宿主扫描常只能确认 TCP；outbox/DLQ/lease 缺少统一告警 | 故障可能被显示成降级或较晚发现 |
 | TENANT-01 | P2 | 部分完成 | SOAR 控制表含 tenant，但事件、告警、案件和 ES 索引未完整隔离 | 不能用于严格多租户场景 |
-| SOAR-01 | P2 | 未开始 | 缺少外部 Connector、凭据治理和隔离执行环境 | 只能编排平台内部白名单动作 |
-| SOAR-02 | P2 | 未开始 | 缺少 OR、并行、循环、批量 map、子 Playbook 和补偿栈 | 无法表达复杂自动化流程 |
+| SOAR-01 | P2 | 部分完成 | Connector SPI、通用 HTTP、幂等与脱敏已完成；凭据治理、mTLS/代理、限流/熔断和隔离未完成 | 只适合学习环境的受控无凭据 API |
+| SOAR-02 | P2 | 部分完成 | 持久并行和静态 item 循环已完成；缺少 OR、动态 map/while、子 Playbook 和补偿栈 | 能表达有限复杂流程，尚非通用 SOAR |
 | RULE-01 | P2 | 部分完成 | 页面只允许编辑 single_event/window，CEP/基线保持只读 | 高级规则仍依赖代码评审和部署 |
 | SCALE-01 | P2 | 待环境验证 | 未完成长期吞吐、索引保留、checkpoint、升级和 RTO/RPO 压测 | 容量上限和恢复时间未知 |
 | INT-01 | P2 | 未开始 | 外部邮件/Webhook 通知、完整 TI feed 和统一身份源未接入 | 产品仍以本地学习/演示生态为主 |
@@ -134,7 +134,7 @@ flowchart LR
 ### P2：能力扩展
 
 - `TENANT-01`：先统一 tenant 字段和权限模型，再设计索引/Topic/凭据隔离，禁止只在页面过滤。
-- `SOAR-01/02`：先实现 Connector 运行边界、凭据引用、限流/熔断/幂等，再增加并行、循环和子流程。
+- `SOAR-01/02`：持久并行、静态 item 循环、手动触发、Connector SPI/HTTP 基线和审计脱敏已落地；下一步补凭据引用、mTLS/出口代理、限流/熔断/隔离、子 Playbook 与规模测试。
 - `RULE-01`：为 CEP/基线建立可视化 DSL、模拟数据测试和发布门禁后，才能开放写操作。
 - `SCALE-01`：以目标 EPS、保存周期、查询延迟和 RTO/RPO 为输入完成容量模型与压力测试。
 - `INT-01/DATA-01`：外部通知、TI、身份源和 OCSF 合规应各自有数据契约与失败降级，不在主链路中直接堆叠同步调用。
@@ -155,7 +155,7 @@ flowchart LR
 | Case 镜像 DELETE 200 被判断为失败 | 任意 2xx/404 均视为幂等成功 |
 | keystore 被 Git 或 rsync 带入仓库/覆盖环境 | `.gitignore` 与 `deploy.sh` 双重排除 |
 
-旧 V8-V10 SOAR 原型中的 Vault、mTLS、灰度、复杂图和 Connector 类也不能被当成“已经实现但页面没开放”。当前运行时只以 V11/V12 和 [`soar.md`](soar.md) 为准。
+旧 V8–V10 SOAR 原型仍不是运行事实。当前以 V11–V15、[`soar.md`](soar.md) 和 [`SOAR 能力扩展架构`](design/soar-capability-runtime.md) 为准；已实现的是持久并行/循环与通用 HTTP Connector 基线，Vault、mTLS、灰度、AI 和厂商适配器仍未实现。
 
 ## 7. 建议迭代顺序
 
@@ -170,7 +170,7 @@ flowchart TD
     P1A --> TEST["真实全栈 E2E + 故障注入"]
     P1B --> TEST
     TEST --> SCALE["容量、RTO/RPO、多租户"]
-    SCALE --> EXT["Connector、复杂 SOAR、外部集成"]
+    SCALE --> EXT["Connector 生产边界、子流程、AI、外部集成"]
 ```
 
 建议下一轮先完成 SEC-01、HA-01 和 REL-01 的目标设计与最小生产拓扑，再并行处理 Case/lifecycle 一致性和真实全栈测试。若先扩展复杂 SOAR 或更多页面，会扩大尚未治理的安全、消息可靠性和租户边界。
@@ -178,7 +178,7 @@ flowchart TD
 ## 8. 下一发布候选的最低验收
 
 - 根项目、Flink、前端单元测试、生产构建和 Playwright 全部通过；
-- Compose、Flyway V12、ES templates、四个 Kafka topic 和 Flink Job 状态验证通过；
+- Compose、Flyway V15、ES templates、四个 Kafka topic 和 Flink Job 状态验证通过；
 - 至少一次真实日志到 SOAR 的完整链路成功，并保存关键 ID：event、alert、case、message、execution、node attempt；
 - Case outbox、事件 DLQ、Kafka lag 和 SOAR lease 没有未解释积压；
 - ES 备份恢复与 Flink savepoint 恢复演练通过；

@@ -21,7 +21,7 @@ const props = defineProps({ modelValue: { type: Object, default: null }, nodeTyp
 const emit = defineEmits(['update:modelValue'])
 const fallback = { maxAttempts: 0, initialDelaySeconds: 2, backoffMultiplier: 2, maxDelaySeconds: 60 }
 const policy = computed(() => ({ ...fallback, ...(props.modelValue || {}) }))
-const automaticAttempts = computed(() => props.nodeType === 'business' ? 3 : 1)
+const automaticAttempts = computed(() => ['business', 'connector'].includes(props.nodeType) ? 3 : 1)
 const attemptOptions = computed(() => [
   { value: 0, label: `自动（当前 ${automaticAttempts.value} 次）` },
   ...[1, 2, 3, 5, 10].map((value) => ({ value, label: `${value} 次` })),

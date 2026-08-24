@@ -2,11 +2,11 @@
   <div class="soar-editor">
     <aside class="node-palette">
       <h3>节点</h3><p>点击添加到画布</p>
-      <button v-for="item in palette" :key="item.type" type="button" :style="{ '--color': item.color }" @click="addNode(item.type)">
+      <button v-for="item in palette" :key="item.type" type="button" :data-node-type="item.type" :style="{ '--color': item.color }" @click="addNode(item.type)">
         <component :is="item.icon" /><span><strong>{{ item.label }}</strong><small>{{ item.hint }}</small></span>
       </button>
       <a-divider />
-      <a-alert type="info" show-icon message="连接规则" description="普通节点一条 next；条件节点 true/false；人工节点 approve/reject。" />
+      <a-alert type="info" show-icon message="连接规则" description="普通节点一条 next；条件 true/false；人工 approve/reject；并行使用配置的分支标签并在 JOIN 汇合。" />
     </aside>
 
     <section class="flow-canvas">
@@ -25,7 +25,7 @@
     </section>
 
     <aside class="node-inspector-panel">
-      <SoarNodeInspector :node="selectedNode" :fields="fields" :actions="actions" @update="updateNode" @delete="deleteNode" />
+      <SoarNodeInspector :node="selectedNode" :graph-nodes="localGraph.nodes" :fields="fields" :actions="actions" @update="updateNode" @delete="deleteNode" />
     </aside>
   </div>
 </template>
@@ -52,9 +52,14 @@ const palette = [
   { type: 'business', label: '业务动作', hint: '调用平台服务', color: '#217aa5', icon: markRaw(SendOutlined) },
   { type: 'human', label: '人工审批', hint: '批准 / 拒绝', color: '#bf771d', icon: markRaw(CheckCircleOutlined) },
   { type: 'wait', label: '等待', hint: '分钟 / 小时', color: '#258887', icon: markRaw(ClockCircleOutlined) },
+  { type: 'parallel', label: '并行分发', hint: '持久 fan-out', color: '#9a5a2c', icon: markRaw(ForkOutlined) },
+  { type: 'join', label: '并行汇合', hint: '等待分支到齐', color: '#9a5a2c', icon: markRaw(ForkOutlined) },
+  { type: 'loop', label: '有界循环', hint: '串行复用 body', color: '#4766ad', icon: markRaw(ClockCircleOutlined) },
+  { type: 'loop_end', label: '循环体结束', hint: '迭代边界', color: '#4766ad', icon: markRaw(ClockCircleOutlined) },
+  { type: 'connector', label: '设备连接器', hint: 'HTTP / 厂商适配', color: '#a13f67', icon: markRaw(SendOutlined) },
 ]
-const color = { start: '#278463', end: '#596b78', condition: '#7651a8', business: '#217aa5', human: '#bf771d', wait: '#258887' }
-const label = { start: 'START', end: 'END', condition: 'CONDITION', business: 'BUSINESS', human: 'HUMAN', wait: 'WAIT' }
+const color = { start: '#278463', end: '#596b78', condition: '#7651a8', business: '#217aa5', human: '#bf771d', wait: '#258887', parallel: '#9a5a2c', join: '#9a5a2c', loop: '#4766ad', loop_end: '#4766ad', connector: '#a13f67' }
+const label = { start: 'START', end: 'END', condition: 'CONDITION', business: 'BUSINESS', human: 'HUMAN', wait: 'WAIT', parallel: 'PARALLEL', join: 'JOIN', loop: 'LOOP', loop_end: 'LOOP END', connector: 'CONNECTOR' }
 const selectedNode = computed(() => localGraph.value.nodes?.find((node) => node.id === selectedNodeId.value) || null)
 const selectedEdge = computed(() => flowEdges.value.find((edge) => edge.id === selectedEdgeId.value))
 
@@ -98,7 +103,11 @@ function addNode(type) {
   const id = uniqueId(type)
   const config = type === 'condition' ? { mode: 'AND', conditions: [{ field: props.fields[0]?.path || '', operator: props.fields[0]?.operators?.[0]?.id || 'eq', value: '' }] }
     : type === 'business' ? { action: props.actions[0]?.id || '', parameters: {} }
-      : type === 'human' ? { prompt: `请复核 \${${props.fields[0]?.path || 'alert.id'}}` } : { amount: 5, unit: 'minutes' }
+      : type === 'human' ? { prompt: `请复核 \${${props.fields[0]?.path || 'alert.id'}}` }
+        : type === 'parallel' ? { branches: ['left', 'right'], joinNode: '' }
+          : type === 'loop' ? { bodyStart: '', bodyEnd: '', items: ['item-1'], maxIterations: 10 }
+            : type === 'connector' ? { runtimeKey: 'http', action: 'GET', parameters: { url: '', body: '' }, timeoutMs: 10000 }
+              : ['join', 'loop_end'].includes(type) ? {} : { amount: 5, unit: 'minutes' }
   const count = graph.nodes.length
   const policy = { maxAttempts: 0, initialDelaySeconds: 2, backoffMultiplier: 2, maxDelaySeconds: 60 }
   const node = { id, name: palette.find((item) => item.type === type).label, type, config, x: 260 + (count % 3) * 220, y: 80 + Math.floor(count / 3) * 140, policy }
@@ -115,9 +124,10 @@ function connectNodes(connection) {
   let branch = 'next'
   if (source.type === 'condition') branch = ['true', 'false'].find((value) => !outgoing.some((edge) => edge.branch === value))
   else if (source.type === 'human') branch = ['approve', 'reject'].find((value) => !outgoing.some((edge) => edge.branch === value))
-  if (!branch) return message.warning('该节点的两个分支已经连接')
+  else if (source.type === 'parallel') branch = (source.config.branches || []).find((value) => !outgoing.some((edge) => edge.branch === value))
+    if (!branch) return message.warning('该节点的分支已经全部连接')
   if (outgoing.some((edge) => edge.branch === branch && edge.target === target.id)) return
-  const replaced = source.type !== 'condition' && source.type !== 'human' && outgoing.length > 0
+  const replaced = !['condition', 'human', 'parallel'].includes(source.type) && outgoing.length > 0
   const edge = { id: uniqueId('edge'), source: source.id, target: target.id, branch }
   change(appendEdge(graph, edge, replaced))
   if (replaced) message.info('已用新的 next 连线替换原连线')

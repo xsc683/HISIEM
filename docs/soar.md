@@ -1,14 +1,14 @@
 # SOAR 生命周期编排：当前设计与实现
 
-> 状态：2026-08-23 从旧 SOAR 域模型重新实现，并升级到 V12 Handler 执行内核。本文只描述 V11/V12 生命周期 Kafka、持久化 attempt 和 Vue 3 画布的当前代码；V8-V10 表仅为不可修改的历史迁移，新运行时不读取它们。
+> 状态：2026-08-24 已升级到 V15。V11/V12 提供生命周期、租约、fencing、逐 attempt 和幂等回执；V13–V15 增加持久并行、串行循环与手动触发。V8–V10 表仍是不可修改的历史迁移，新运行时不读取它们。
 
-后端组件关系、消息时序、显式 ExecutionContext、NodeHandler SPI、Worker 单节点推进、执行状态机、参数流、人工/等待恢复和 V12 持久化关系图见 [`design/soar-runtime-architecture.md`](design/soar-runtime-architecture.md)。
+基础执行内核见 [`design/soar-runtime-architecture.md`](design/soar-runtime-architecture.md)；并行、循环、Connector、手动触发和验证器链见 [`design/soar-capability-runtime.md`](design/soar-capability-runtime.md)。
 
 ## 1. 能力边界
 
-当前 SOAR 是告警/案件处置编排器，不是通用自动化平台。它只接受 `alert.created`、`alert.updated`、`case.created`、`case.updated` 四类事实，通过已有 `AlertService` 和 `CaseService` 执行业务动作。
+当前 SOAR 是告警/案件处置编排器，不是任意代码执行平台。自动入口接受 `alert.created`、`alert.updated`、`case.created`、`case.updated` 四类事实；admin/analyst 也可对已发布且启用的 Playbook 手动创建执行。
 
-当前节点固定为六类：Start、End、Condition、Business、Human、Wait。没有外部设备 Connector、任意 HTTP/Shell、子 Playbook、循环、批量 map、并行网关、Webhook/Cron 或手工启动。这些不是“隐藏功能”，而是本次重做主动收窄的边界：先保证消息、参数、状态和恢复语义一致，再扩展节点集合。
+当前节点为 Start、End、Condition、Business、Human、Wait、Parallel、Join、Loop、Loop End、Connector。Parallel/Loop 通过持久子 execution 扩展原内核，不使用内存 BFS。Connector 当前只有受限通用 HTTP 基线；仍没有 Shell、子 Playbook、Webhook/Cron、动态 while/map 或 AI Agent。
 
 ## 2. 运行链路
 
@@ -74,14 +74,14 @@ SOAR 从不订阅 `siem-events`。Flink 的 `AlertElasticsearchIndexer` 用异�
 
 每个节点还保存执行策略：最大执行次数、初始退避、指数倍率和最大退避。`maxAttempts=0` 表示使用 Handler 默认值，Business 默认 3 次，其他节点默认 1 次；设计器可显式覆盖，发布门禁限制最大 10 次、退避不超过 1 小时。
 
-草稿允许暂时存在孤立节点或未闭合路径，便于自动保存。发布时 `SoarPlaybookValidator` 完整检查：
+草稿允许暂时存在孤立节点或未闭合路径，便于自动保存。发布时 `SoarPlaybookValidator` 的兼容门禁与可插拔规则链共同检查：
 
-- 节点只能为六种类型，总数 2–50，ID 唯一；
+- 节点类型必须存在已注册 Handler，总数 2–50，ID 唯一；
 - 必须且只能有一个 Start 和 End；Start 无入线且一条出线，End 有入线且无出线；
-- Condition 必须恰有 `true/false`，Human 必须恰有 `approve/reject`；其余可推进节点恰有一条 `next`；
-- 所有节点从 Start 可达，并且每个分支都能到 End；有向图不允许循环；
+- Condition 必须恰有 `true/false`，Human 必须恰有 `approve/reject`，Parallel 的配置标签必须与多条出线一致；其余可推进节点恰有一条 `next`；
+- 所有节点从 Start 可达，并且每个分支都能到 End；普通有向图不允许循环；Parallel 的所有路径必须汇入指定 Join，Loop 的所有 body 路径必须汇入 Loop End；
 - Condition 只有 AND，包含 1–10 条条件，字段和操作符必须来自对象类型对应的字典；
-- Business 动作必须与入口对象类型一致，必填参数不能空；Human 提示不能为空；Wait 只支持正整数分钟/小时且不超过 30 天。
+- Business 动作必须与入口对象类型一致，Connector runtimeKey/action 必须已注册；模板节点引用必须存在；Loop 禁止嵌套且为 1–1000 次；Human 提示不能为空；Wait 只支持正整数分钟/小时且不超过 30 天。
 
 数据库 `revision` 用作乐观锁。过期编辑页保存或发布返回 409，不会覆盖另一位操作者的改动。状态只有 `draft/published/disabled`；发布即启用，停用不删除定义，再启用恢复为 published。
 
@@ -109,6 +109,11 @@ GET /api/soar/action-dictionary?objectType=alert|case
 | Business | 解析动作和参数，通过稳定幂等键调用现有服务，响应和 action receipt 成为节点输出 |
 | Human | 创建 `soar_approval_task`，节点/执行进入 `waiting_human` 并释放租约；决定后沿 approve/reject 恢复 |
 | Wait | 第一次运行写 `next_run_at` 并进入 `waiting`；到期再次领取时完成原节点并推进，不会重复延长等待 |
+| Parallel | 原子创建 Join group 和每分支一个 INTERNAL 子 execution，父实例等待计数到齐 |
+| Join | 子分支到达时递增持久计数器；最后一个分支按标签聚合输出并释放父实例 |
+| Loop | 创建单个 INTERNAL 子 execution，按 item 串行复用 body 节点并持久保存 index |
+| Loop End | 作为每次迭代边界；继续下一 item 或从其 `next` 释放父实例 |
+| Connector | 从 Connector Registry 选择实现，使用稳定幂等键执行并自动发送 `Idempotency-Key`，输入/输出/回执递归脱敏 |
 | End | 节点成功，执行进入 `success` 并写 finished_at |
 
 Business 白名单与现有服务一一对应：
@@ -120,7 +125,7 @@ SOAR 没有复制一套告警/案件写逻辑。例如 `alert.create_case` 调�
 
 ## 7. 持久执行和并发
 
-V11/V12 当前表：
+V11–V15 当前表：
 
 | 表 | 作用 |
 | --- | --- |
@@ -129,12 +134,14 @@ V11/V12 当前表：
 | `soar_node_execution` | 每次节点访问/尝试的序号、attempt、幂等键、输入、输出、错误和时间 |
 | `soar_approval_task` | 绑定精确 node run 的待审批事实、提示、决定、操作者和备注 |
 | `soar_action_receipt` | 内部 Business 动作按逻辑 visit 保存的幂等结果 |
+| `soar_parallel_group` / `soar_parallel_branch` | 持久分支 token、Join 计数器、到达和聚合结果 |
+| `soar_loop_state` | Loop body 边界、items、当前 index、安全上限与父子 execution |
 
 执行状态固定为 `pending/running/success/failed/cancelled/waiting/waiting_human`。Playbook 的 disabled 和执行的 cancelled 是不同概念：停用只阻止新消息匹配；取消只终止一个活动实例。
 
 消费者组 `siem-soar-runtime` 读取两个 lifecycle topic。唯一约束 `(tenant_id, playbook_id, trigger_message_id)` 保证同一消息对同一 Playbook 只建一个实例，不影响同一消息匹配多个 Playbook。
 
-Worker 每次只领取并立即执行一个持久节点，避免批量领取后排队导致后续租约尚未开始执行就过期。每次 claim 都递增 `soar_execution.version` 作为 fencing token；Engine 的推进、成功、失败、等待、重试和审批提交都必须同时匹配 lease owner、token、未取消状态和未过期时间。长节点执行期间独立心跳按租约约三分之一周期续租；续租失败后，旧 Worker 即使稍后返回结果也会被状态 SQL 拒绝，不能覆盖新 owner。Engine 从 Registry 选择 Handler，Handler 只返回统一结果，不能直接操作流程状态。每次失败重试都生成新的 attempt 并保留历史，同一逻辑 visit 共享幂等键。内部控制面动作与 `soar_action_receipt` 处于同一 PostgreSQL 事务；未来外部 Connector 仍需接收该键或提供补偿协议。
+Worker 每次只领取并立即执行一个持久节点，避免批量领取后排队导致后续租约尚未开始执行就过期。每次 claim 都递增 `soar_execution.version` 作为 fencing token；Engine 的推进、成功、失败、等待、重试和审批提交都必须同时匹配 lease owner、token、未取消状态和未过期时间。长节点执行期间独立心跳按租约约三分之一周期续租；续租失败后，旧 Worker 即使稍后返回结果也会被状态 SQL 拒绝，不能覆盖新 owner。Engine 从 Registry 选择 Handler，Handler 只返回统一结果，不能直接操作流程状态。每次失败重试都生成新的 attempt 并保留历史，同一逻辑 visit 共享幂等键。内部控制面动作与 `soar_action_receipt` 处于同一 PostgreSQL 事务；外部 HTTP Connector 自动发送该键，但远端仍需实现去重或提供动作查询/补偿协议。分支或循环体最终失败会事务化传播到父实例并取消仍活动的兄弟子树，避免父实例永久 waiting。
 
 ## 8. API 和页面
 
@@ -153,6 +160,7 @@ GET/PUT/DELETE      /api/soar/playbooks/{id}
 POST                /api/soar/playbooks/{id}/publish
 PATCH               /api/soar/playbooks/{id}/enabled
 GET                 /api/soar/executions
+POST                /api/soar/executions
 GET                 /api/soar/executions/{id}
 POST                /api/soar/executions/{id}/cancel
 GET                 /api/soar/approvals
@@ -161,7 +169,7 @@ GET                 /api/soar/field-dictionary
 GET                 /api/soar/action-dictionary
 ```
 
-不存在 `POST /executions`：生命周期 Kafka 是唯一触发入口。Playbook 写操作仅 admin；执行读取允许已认证运营角色；取消和审批允许 admin/analyst；审计角色只读。
+`POST /executions` 由 admin/analyst 手动触发，要求 Playbook 已发布且启用；可选 `requestId` 用于客户端超时重试去重。Playbook 写操作仅 admin；执行读取允许已认证运营角色；取消和审批允许 admin/analyst；审计角色只读。
 
 ## 9. 可观测性与当前限制
 
@@ -172,8 +180,9 @@ Actuator 的 `soarKafka` health 检查消费者线程、两个 topic、消费组
 - Compose 是单 broker/RF=1，生产必须启用 TLS/SASL、高可用和更高副本；
 - 控制面 lifecycle publish 还不是事务 outbox；
 - tenant 隔离覆盖 SOAR 控制表，但告警/案件数据面尚未全面 tenant 化；
-- 条件只支持 AND，图是无环单路径分支模型，没有并行、循环、子流程和补偿栈；
+- 条件仍只支持 AND；已有持久并行和静态 item 串行循环，但没有子 Playbook、动态 while/map 或补偿栈；
 - 没有 DLQ 管理界面；格式非法消息会记录并提交，暂态数据库失败会 seek 后重试；
-- 没有外部 Connector 或第三方代码运行环境，因而也不宣传 Vault/mTLS/出口代理/Connector 配额属于当前 SOAR 能力。
+- 通用 HTTP Connector 默认拒绝本机/内网目的并脱敏审计，但 Vault/mTLS/出口代理、限流/熔断/配额和隔离沙箱仍未实现；
+- AI Agent、Function Calling Tool Registry 与 SSE 尚未实现。
 
 这些边界会在路线图中单独演进，不能通过恢复旧 V8-V10 类或 YAML 目录绕过当前契约。

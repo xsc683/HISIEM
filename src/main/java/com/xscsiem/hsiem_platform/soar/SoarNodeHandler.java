@@ -16,6 +16,16 @@ public interface SoarNodeHandler {
         return Set.of("next");
     }
 
+    /** Parallel nodes declare their branch labels in configuration. */
+    default boolean variableOutgoingBranches() {
+        return false;
+    }
+
+    /** Allows a handler to remove credentials before its resolved config is persisted. */
+    default Map<String, Object> auditSafeConfig(Map<String, Object> resolvedConfig) {
+        return resolvedConfig;
+    }
+
     default boolean acceptsIncoming() {
         return true;
     }

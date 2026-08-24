@@ -9,7 +9,7 @@
         <a-card class="surface-card">
           <a-descriptions bordered :column="3">
             <a-descriptions-item label="执行 ID"><code>{{ execution.id }}</code></a-descriptions-item><a-descriptions-item label="状态"><StatusTag :value="execution.status" /></a-descriptions-item><a-descriptions-item label="当前节点"><code>{{ execution.currentNodeId || '—' }}</code></a-descriptions-item>
-            <a-descriptions-item label="Playbook"><code>{{ execution.playbookId }} @ {{ execution.playbookRevision }}</code></a-descriptions-item><a-descriptions-item label="入口事件">{{ execution.eventType }}</a-descriptions-item><a-descriptions-item label="消息 ID"><code>{{ execution.triggerMessageId }}</code></a-descriptions-item>
+      <a-descriptions-item label="Playbook"><code>{{ execution.playbookId }} @ {{ execution.playbookRevision }}</code></a-descriptions-item><a-descriptions-item label="入口事件"><a-tag>{{ execution.triggerType }}</a-tag>{{ execution.eventType }}</a-descriptions-item><a-descriptions-item label="消息 ID"><code>{{ execution.triggerMessageId }}</code></a-descriptions-item>
             <a-descriptions-item label="对象">{{ execution.objectType }}: <code>{{ execution.objectId }}</code></a-descriptions-item><a-descriptions-item label="Kafka 位置"><code>{{ triggerPosition }}</code></a-descriptions-item><a-descriptions-item label="创建时间"><TimeText :value="execution.createdAt" /></a-descriptions-item>
             <a-descriptions-item label="完成时间"><TimeText :value="execution.finishedAt" /></a-descriptions-item>
           </a-descriptions>

@@ -73,7 +73,7 @@ test('新建草稿后可进入设计器，离开保存最新画布且保存失�
 
   rejectSave = true
   await page.goto('/soar/playbooks/pb-e2e/edit')
-  await page.locator('.node-palette button').filter({ hasText: '等待' }).click()
+  await page.locator('.node-palette button[data-node-type="wait"]').click()
   await page.getByRole('button', { name: '返回列表' }).click()
   await expect(page).toHaveURL(/\/soar\/playbooks\/pb-e2e\/edit$/)
   await expect(page.getByText('保存失败', { exact: true })).toBeVisible()

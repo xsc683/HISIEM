@@ -1,6 +1,6 @@
 # SOAR 模块架构设计与后端执行数据流
 
-> 状态：已实现，基于 V11 lifecycle runtime 与 V12 handler runtime。本文解释当前后端如何接收事实、构造显式执行上下文、通过 NodeHandler 推进节点并恢复挂起流程；功能契约和页面/API 清单见 [`../soar.md`](../soar.md)，画布交互见 [`soar-playbook-mvp.md`](soar-playbook-mvp.md)。
+> 状态：已实现。本文重点解释 V11/V12 基础持久执行内核；V13–V15 的并行、循环、Connector、手动触发和验证器链见 [`soar-capability-runtime.md`](soar-capability-runtime.md)。功能契约见 [`../soar.md`](../soar.md)。
 
 ## 1. 设计目标与运行边界
 
@@ -9,9 +9,9 @@ SOAR 后端不是另一套检测引擎。Flink 负责把事件检测成告警，
 当前运行边界固定为：
 
 - 入口对象只有 `alert` 和 `case`，入口事件只有 `alert.created/updated`、`case.created/updated`；
-- Kafka lifecycle Topic 是唯一自动触发入口，不提供手工创建 execution 的 HTTP 接口；
-- 流程图是单向无环图，节点只有 Start、End、Condition、Business、Human、Wait；
-- Business 节点只能调用 `AlertService`、`CaseService` 已有白名单能力，不执行任意 HTTP、Shell 或第三方代码；
+- Kafka lifecycle Topic 是自动入口，`POST /api/soar/executions` 是受 RBAC 和 requestId 幂等保护的手动入口；
+- 基础图保持无普通有向环；显式 Parallel/Join 和 Loop/Loop End 由数据库子状态机实现；
+- Business 节点只调用 `AlertService`、`CaseService` 白名单；Connector 节点可调用已注册连接器，当前内置受限通用 HTTP，不执行 Shell；
 - PostgreSQL 保存 Playbook、触发信封、执行快照、当前节点、每次节点 attempt 的 I/O、等待时间、租约、审批和业务动作幂等回执，进程内只保存可重建的 `SoarExecutionContext`。
 
 这种分工避免 SOAR 直接读取原始事件流，也避免为自动化动作复制一套告警/案件状态机。
@@ -48,9 +48,9 @@ flowchart LR
         ENGINE["SoarExecutionEngine"]
         CONTEXT["SoarExecutionContext"]
         REGISTRY["SoarNodeHandlerRegistry"]
-        HANDLERS["6 个 NodeHandler"]
+        HANDLERS["11 个 NodeHandler"]
         ACTIONS["SoarBusinessActionInvocation\n+ BusinessActionExecutor"]
-        PG_SOAR[("PostgreSQL\nsoar_* V11/V12")]
+        PG_SOAR[("PostgreSQL\nsoar_* V11–V15")]
     end
 
     IDX -->|"完整 upsert / 安全部分更新"| ES_ALERT
@@ -83,11 +83,11 @@ flowchart LR
 架构中有两类写入：
 
 1. **事实写入**：告警或案件先进入其事实存储；
-2. **编排写入**：Kafka 消息只负责通知 SOAR 创建执行，执行自身全部写入 V11/V12 `soar_*` 表。
+2. **编排写入**：Kafka 或人工 API 只负责创建根执行，执行与内部并行/循环状态全部写入 V11–V15 `soar_*` 表。
 
 因此 Kafka 消息不是告警/案件事实源。SOAR 即使重放消息，也使用 `alert.id` 或 `case.id` 调用原业务服务，而不是用 payload 覆盖事实存储。
 
-## 3. 生命周期消息是执行入口
+## 3. 生命周期消息是自动执行入口
 
 ### 3.1 新告警链路
 
@@ -233,7 +233,7 @@ stateDiagram-v2
 
 Playbook 的 `disabled` 和 execution 的 `cancelled` 没有继承关系。停用 Playbook 只阻止新消息匹配，已创建的 execution 仍使用快照跑完；中止则只改变指定 execution，并同步取消活动 node run 和 pending approval。
 
-## 7. 六类节点的后端语义
+## 7. 基础六类节点的后端语义
 
 | 节点 | 入口数据 | 后端执行 | 输出与下一步 |
 | --- | --- | --- | --- |
@@ -415,7 +415,7 @@ erDiagram
 
 - `soar_execution(tenant_id, playbook_id, trigger_message_id)` 唯一，负责消息幂等；
 - `soar_node_execution(execution_id, sequence_no)` 唯一，每个 attempt 都保留，不再覆盖历史；
-- `soar_node_execution(execution_id, node_id, visit_no, attempt)` 唯一，为循环、重试和未来 token 化并行提供身份基础；
+- `soar_node_execution(execution_id, node_id, visit_no, attempt)` 唯一，使循环复用节点时每次 visit 和 retry 都有独立身份；并行 token 由 V13 `soar_parallel_branch` 持久化；
 - 同一逻辑 visit 的 retry 共享 `idempotency_key`，不同 visit 使用不同键；
 - `soar_approval_task(node_run_id)` 唯一，审批绑定精确 attempt，而不是笼统绑定节点 ID；
 - `soar_action_receipt(idempotency_key)` 唯一，缓存已提交的内部业务动作结果；
@@ -476,12 +476,12 @@ erDiagram
 | 到期扫描、续租与 fencing | `SoarWorker`、`SoarStore.claimDue/renewLease/requireLease`、`SoarLeaseLostException` |
 | 执行内核和统一状态提交 | `SoarExecutionEngine`、`SoarNodeResult`、`SoarGraphRouter` |
 | 显式上下文 | `SoarExecutionContext` |
-| 节点 SPI 与注册 | `SoarNodeHandler`、`SoarNodeHandlerRegistry`、六类 `*NodeHandler` |
+| 节点 SPI 与注册 | `SoarNodeHandler`、`SoarNodeHandlerRegistry`、11 类 `*NodeHandler` |
 | 条件与模板 | `SoarConditionEvaluator`、`SoarTemplateResolver` |
 | 业务动作适配与幂等 | `SoarBusinessActionInvocation`、`SoarBusinessActionExecutor` |
 | Playbook 发布门禁 | `SoarPlaybookValidator` |
 | 审批、取消、执行查询 | `SoarService`、`SoarStore`、`SoarController` |
-| 数据库结构 | `V11__soar_lifecycle_runtime.sql`、`V12__soar_handler_runtime.sql` |
+| 数据库结构 | `V11__soar_lifecycle_runtime.sql` 至 `V15__soar_trigger_type.sql` |
 
 ## 15. 设计取舍的外部依据
 

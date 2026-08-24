@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/soar")
@@ -90,6 +91,14 @@ public class SoarController {
         return service.getExecution(id);
     }
 
+    @PostMapping("/executions")
+    @PreAuthorize("hasAnyRole('ADMIN','ANALYST')")
+    public ResponseEntity<SoarExecution> triggerExecution(@RequestBody ManualExecutionRequest request) {
+        SoarExecution execution = service.triggerExecution(request.playbookId(), request.requestId(),
+                request.objectType(), request.objectId(), request.eventType(), request.payload(), actor());
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body(execution);
+    }
+
     @PostMapping("/executions/{id}/cancel")
     @PreAuthorize("hasAnyRole('ADMIN','ANALYST')")
     public ResponseEntity<Void> cancelExecution(@PathVariable String id) {
@@ -140,6 +149,10 @@ public class SoarController {
                                         List<String> eventTypes, PlaybookGraph graph, long revision) { }
 
     public record RevisionRequest(long revision) { }
+
+    public record ManualExecutionRequest(String playbookId, String requestId, String objectType,
+                                         String objectId, String eventType,
+                                         Map<String, Object> payload) { }
 
     public record EnabledRequest(boolean enabled) { }
 

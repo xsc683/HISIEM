@@ -4,6 +4,7 @@ import com.xscsiem.hsiem_platform.control.ControlPlaneStore;
 import com.xscsiem.hsiem_platform.tenant.TenantContext;
 import org.springframework.stereotype.Service;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -86,6 +87,65 @@ public class SoarService {
 
     public SoarExecution getExecution(String id) {
         return store.getExecution(TenantContext.id(), id);
+    }
+
+    /** Starts one published playbook from the control plane. */
+    public SoarExecution triggerExecution(String playbookId, String requestId,
+                                          String objectType, String objectId,
+                                          String eventType, Map<String, Object> payload,
+                                          String actor) {
+        SoarPlaybook playbook = store.getPlaybook(TenantContext.id(), playbookId);
+        if (!"published".equals(playbook.status()) || !playbook.enabled()) {
+            throw new com.xscsiem.hsiem_platform.onboarding.ConflictException(
+                    "只有已发布且启用的 Playbook 才能手动触发");
+        }
+        String normalizedObjectType = objectType == null || objectType.isBlank()
+                ? playbook.entryType() : objectType.trim().toLowerCase();
+        if (!playbook.entryType().equals(normalizedObjectType)) {
+            throw new IllegalArgumentException("手动触发对象类型必须与 Playbook 入口一致");
+        }
+        String normalizedEvent = eventType == null || eventType.isBlank()
+                ? normalizedObjectType + ".created" : eventType.trim().toLowerCase();
+        if (!playbook.eventTypes().contains(normalizedEvent)) {
+            throw new IllegalArgumentException("手动触发事件不在 Playbook 订阅范围内");
+        }
+        if (objectId == null || objectId.isBlank()) {
+            throw new IllegalArgumentException("手动触发 objectId 不能为空");
+        }
+        if (objectId.trim().length() > 256) {
+            throw new IllegalArgumentException("手动触发 objectId 不能超过 256 个字符");
+        }
+        Map<String, Object> normalizedPayload = normalizeManualPayload(
+                normalizedObjectType, objectId.trim(), payload);
+        SoarTriggerEnvelope trigger = SoarTriggerEnvelope.manual(requestId, normalizedEvent,
+                TenantContext.id(), normalizedObjectType, objectId.trim(), normalizedPayload, actor);
+        store.createExecution(playbook, trigger, "manual:" + actor, "MANUAL");
+        audit(actor, "soar.execution.manual", playbookId + ":" + trigger.messageId());
+        return store.findExecutionByTrigger(TenantContext.id(), playbookId, trigger.messageId());
+    }
+
+    private Map<String, Object> normalizeManualPayload(String objectType, String objectId,
+                                                       Map<String, Object> payload) {
+        Map<String, Object> source = payload == null ? Map.of() : payload;
+        Map<String, Object> result = new LinkedHashMap<>();
+        Map<String, Object> object = new LinkedHashMap<>();
+        Object nested = source.get(objectType);
+        if (nested != null) {
+            if (!(nested instanceof Map<?, ?> values)) {
+                throw new IllegalArgumentException("手动触发 payload." + objectType + " 必须是对象");
+            }
+            source.forEach(result::put);
+            values.forEach((key, value) -> object.put(String.valueOf(key), value));
+        } else {
+            object.putAll(source);
+        }
+        Object suppliedId = object.get("id");
+        if (suppliedId != null && !objectId.equals(String.valueOf(suppliedId))) {
+            throw new IllegalArgumentException("手动触发 payload 中的对象 ID 与 objectId 不一致");
+        }
+        object.put("id", objectId);
+        result.put(objectType, object);
+        return result;
     }
 
     public void cancelExecution(String id, String actor) {

@@ -57,7 +57,7 @@ java -jar target/hsiem-platform-0.0.1-SNAPSHOT.jar
 # WSL: export SIEM_BOOTSTRAP_PASSWORD='<至少12位临时口令>'
 ```
 
-Flyway 首次启动会创建控制面表并导入旧版本 `infra/auth/users.yaml` 用户；当前迁移为 V12。V11 建立 lifecycle SOAR 的 Playbook/execution 基线，V12 增加 trigger envelope、逐 attempt `soar_node_execution`、`soar_approval_task` 和 `soar_action_receipt`。V8-V10 旧 SOAR 表以及 V11 被替代的 node/approval 表作为历史迁移保留；之后 PostgreSQL 是用户、角色、审计和 SOAR 控制面记录的唯一来源。
+Flyway 首次启动会创建控制面表并导入旧版本 `infra/auth/users.yaml` 用户；当前迁移为 V15。V11 建立 lifecycle SOAR 的 Playbook/execution 基线，V12 增加 trigger envelope、逐 attempt `soar_node_execution`、`soar_approval_task` 和 `soar_action_receipt`，V13/V14 增加持久并行与循环状态，V15 增加触发类型。V8-V10 旧 SOAR 表以及 V11 被替代的 node/approval 表作为历史迁移保留；之后 PostgreSQL 是用户、角色、审计和 SOAR 控制面记录的唯一来源。
 登录 Token 只在响应中返回一次，数据库保存 SHA-256 后的会话值；默认会话 8 小时，连续 5 次失败后锁定 15 分钟。控制面 API 需要 `Authorization: Bearer <token>`。首次登录或管理员新建用户必须先调用密码轮换接口，业务 API 在轮换完成前返回 428。
 
 Logstash 的 healthcheck 同时检查 5000/5001/5002/5004/5005/5006 和 9600,
@@ -118,7 +118,7 @@ bash /mnt/d/Project/SIEM/infra/validate-deployment.sh
 
 脚本以非 0 退出表示失败,检查 Compose 配置、7 个容器状态、健康检查、6 个 Logstash 输入端口、PostgreSQL/ES/Kibana/Flink API、三个 Kafka topic 及检测作业 RUNNING。
 只启动数据面而未提交 Flink 作业时可用 `REQUIRE_DETECTION_JOB=0`。
-Spring Boot 启动并完成 Flyway 后，可追加 `REQUIRE_CONTROL_PLANE_SCHEMA=1` 检查 PostgreSQL 基础控制面表；SOAR V12 Handler/attempt 表由 Flyway/Testcontainers 迁移测试单独校验。
+Spring Boot 启动并完成 Flyway 后，可追加 `REQUIRE_CONTROL_PLANE_SCHEMA=1` 检查 PostgreSQL 基础控制面表；SOAR V15 Handler/attempt、并行、循环和触发类型由 Flyway/Testcontainers 迁移测试单独校验。
 
 应用接口自验证示例:
 
@@ -151,7 +151,7 @@ export SIEM_ALERT_LIFECYCLE_TOPIC=siem-alert-lifecycle
 export SIEM_CASE_LIFECYCLE_TOPIC=siem-case-lifecycle
 ```
 
-SASL/SSL 使用 `SIEM_KAFKA_SECURITY_PROTOCOL`、`SIEM_KAFKA_SASL_*`、`SIEM_KAFKA_SSL_TRUSTSTORE_*`。SOAR API 使用 `X-Tenant-ID` 选择租户并校验 `tenant_memberships`。当前没有外部 Connector/Vault/mTLS Runner，不需要也不应配置旧 `SIEM_SOAR_PROXY_*` 或 `SIEM_VAULT_*`。
+SASL/SSL 使用 `SIEM_KAFKA_SECURITY_PROTOCOL`、`SIEM_KAFKA_SASL_*`、`SIEM_KAFKA_SSL_TRUSTSTORE_*`。SOAR API 使用 `X-Tenant-ID` 选择租户并校验 `tenant_memberships`。当前仅有不读取旧环境变量的通用 HTTP Connector，没有 Vault/mTLS Runner 或统一出口代理；不应配置旧 `SIEM_SOAR_PROXY_*` 或 `SIEM_VAULT_*`。
 
 运行态扫描会检查 PostgreSQL、Elasticsearch、Kafka、Logstash、Flink 和 Kibana；Flink/Kibana 校验响应语义，Logstash 优先检查 pipeline API，API 不可用时才返回明确标记为 degraded 的 TCP 结果（当前镜像默认把 9600 绑定在容器回环地址，宿主机看到该提示属于预期降级，不代表 pipeline 停止）。备份恢复演练只操作临时索引：
 
@@ -211,7 +211,7 @@ MVN="D:/application/IntelliJ IDEA 2026.2.0.1/plugins/maven-plugin/lib/maven3/bin
 "$MVN" -f flink/pom.xml clean package          # 测试数量以 Maven 输出为准
 "$MVN" -f flink/pom.xml clean package -DskipTests   # 部署时加快
 
-# Spring Boot 控制面（根 pom；Flyway 当前 V12，测试数量以 Maven 输出为准）
+# Spring Boot 控制面（根 pom；Flyway 当前 V15，测试数量以 Maven 输出为准）
 "$MVN" -f pom.xml clean package
 ```
 

@@ -149,6 +149,7 @@ DELETE /api/soar/playbooks/{id}
 POST   /api/soar/playbooks/{id}/publish
 PATCH  /api/soar/playbooks/{id}/enabled
 GET    /api/soar/executions
+POST   /api/soar/executions
 GET    /api/soar/executions/{id}
 POST   /api/soar/executions/{id}/cancel
 GET    /api/soar/approvals
@@ -162,7 +163,7 @@ POST   /api/tenants
 PUT    /api/tenants/{tenantId}/members/{username}
 ```
 
-Playbook 和执行均以 V11/V12 PostgreSQL 表为准，不再从 `infra/soar/*.yaml` 加载。唯一触发入口是 Kafka 的 `siem-alert-lifecycle` 与 `siem-case-lifecycle`，不存在手工创建执行接口。发布且启用的 Playbook 按对象类型和 created/updated 事件匹配；同一 message 对同一 Playbook 由数据库唯一键去重。节点只支持 Start/End/Condition/Business/Human/Wait，由独立 NodeHandler 执行并返回统一结果；每次 retry 保留独立 attempt，同一逻辑 visit 共享幂等键。审批拒绝沿显式 reject 分支继续，Wait 通过 `next_run_at` 跨重启恢复。完整实现见 [`soar.md`](soar.md)。
+Playbook 和执行以 V11–V15 PostgreSQL 表为准，不从 `infra/soar/*.yaml` 加载。Kafka lifecycle 与 `POST /api/soar/executions` 分别提供自动和人工入口，使用 message/request ID 去重并进入同一个持久内核。节点由 Spring 自动收集的 Handler 执行；除基础六类外，Parallel/Join 使用持久分支 execution 与计数器，Loop/Loop End 使用持久串行 frame，Connector 通过注册表、幂等回执和审计脱敏执行。完整实现见 [`soar.md`](soar.md) 与 [`design/soar-capability-runtime.md`](design/soar-capability-runtime.md)。
 
 ## 3. 端到端主旅程
 
@@ -194,9 +195,9 @@ Playbook 和执行均以 V11/V12 PostgreSQL 表为准，不再从 `infra/soar/*.
 ### SOAR 辅助处置
 
 1. 管理员在 `/soar/playbooks/new` 选择告警或案件入口以及 created/updated 生命周期事件；创建后后端自动生成唯一 Start/End。
-2. 在 `/soar/playbooks/:id/edit` 添加 Condition、Business、Human、Wait，从输出 Handle 连接下游；条件字段和业务动作只从字典下拉框选择。
-3. 草稿自动保存；从编辑路由离开时会等待最新 revision 保存成功，失败则留在当前页，刷新/关闭浏览器时对未保存内容给出确认。发布时确认所有路径可达且收敛到 End，Condition 有 true/false，Human 有 approve/reject。发布成功即启用。
-4. 触发一次真实告警或案件变更；Flink/控制面在事实存储成功后将生命周期消息写入 Kafka，消费者自动创建执行，不从页面手工启动。
+2. 在 `/soar/playbooks/:id/edit` 添加基础节点，或配置 Parallel/Join、Loop/Loop End、Connector；条件字段和业务动作只从字典选择，Parallel/Loop 显式填写汇合/边界节点。
+3. 草稿自动保存；离开路由前等待最新 revision。发布时确认全图可达、端口合法、模板引用存在、并行分支全部汇合、循环体全部到达 Loop End 且无嵌套。发布成功即启用。
+4. 触发一次真实告警/案件变更，或在 `/soar/executions` 手动运行已启用 Playbook；人工触发超时重试应复用 requestId。
 5. 在 `/soar/executions` 找到对应 event type 和对象 ID，进入详情核对 payload 快照、图快照以及每个节点解析后的输入/输出。
 6. Human 节点进入 `waiting_human` 后到 `/soar/approvals` 批准或拒绝，确认原执行沿对应分支恢复；Wait 节点到期前不应忙轮询执行动作。
 7. 重发同一 `message_id`，确认同一 Playbook 不产生第二个执行；再让另一匹配 Playbook 启用，确认同一消息可各创建一个实例。
@@ -218,9 +219,9 @@ Playbook 和执行均以 V11/V12 PostgreSQL 表为准，不再从 `infra/soar/*.
 - Playbook 编辑页离开前保存最新图；保存失败阻止路由跳转，未保存状态触发浏览器关闭确认。
 - `X-Tenant-ID` 必须通过成员关系校验；Playbook、执行、审批和 message 去重不能跨租户读取。
 - SOAR 不订阅 `siem-events`；Flink 只有在告警 ES 更新成功后才发布 `alert.created`。
-- 页面和 API 不出现 Connector、外部设备、子 Playbook、loop/map、并行网关、灰度或四眼发布等未实现语义。
+- 页面和 API 已提供通用 HTTP Connector、Parallel/Join、静态 item Loop 与手动触发；不得把子 Playbook、AI、Vault/mTLS、动态 map、灰度或四眼发布写成已实现。
 - 变更后执行根项目测试、Flink 测试、前端单元测试、生产构建和 Playwright E2E；涉及 `infra/` 时再执行健康扫描和端到端冒烟。GitHub Actions 对这三类工程门禁并行执行。
 
 ## 5. 不在当前契约中的内容
 
-ES/Kafka 生产 TLS/高可用、外部通知投递、完整 OCSF 合规，以及全 SIEM 数据面多租户、SOAR 事务 outbox、DLQ 管理、完整触发器、外部 Connector/凭据、并行/循环/子流程和跨地域恢复仍是路线图事项。旧 V8-V10 代码曾尝试的 Vault、mTLS、灰度和复杂图语义已退出当前运行时，不得继续写成已实现功能。
+ES/Kafka 生产 TLS/高可用、外部通知投递、完整 OCSF 合规，以及全 SIEM 数据面多租户、SOAR 事务 outbox、DLQ 管理、Cron/Webhook、具体厂商 Connector 与凭据库、mTLS/出口代理/隔离执行、子 Playbook、动态 map/while、AI Agent 和跨地域恢复仍是路线图事项。V8–V10 历史代码不是当前运行事实。

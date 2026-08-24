@@ -111,7 +111,7 @@ async function saveMetadata() {
 }
 async function saveCollaborators() { saving.value = true; try { await updateCaseCollaborators(caseData.value['case.id'], metadata.collaborators); message.success('协作者已保存'); await load() } catch (cause) { message.error(cause.message) } finally { saving.value = false } }
 async function removeAlert(id) { try { await removeCaseAlert(caseData.value['case.id'], id); message.success('告警已移出案件'); await load() } catch (cause) { message.error(cause.message) } }
-function runSoar() { router.push({ path: '/soar', query: { resourceType: 'case', resourceId: caseData.value['case.id'] } }) }
+function runSoar() { router.push({ path: '/soar/executions', query: { resourceType: 'case', resourceId: caseData.value['case.id'], manual: '1' } }) }
 onMounted(load)
 </script>
 

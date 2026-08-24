@@ -12,6 +12,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 /** Serializable trigger facts. Kafka transport coordinates are audit data, not the deduplication key. */
 public record SoarTriggerEnvelope(
@@ -33,6 +34,28 @@ public record SoarTriggerEnvelope(
     public static SoarTriggerEnvelope direct(LifecycleEvent event) {
         event.validate();
         return from(event, null);
+    }
+
+    /**
+     * Builds a transport-independent envelope for an operator initiated run.
+     * The request id is the durable de-duplication key; callers should reuse it
+     * when retrying a timed-out HTTP request.
+     */
+    public static SoarTriggerEnvelope manual(String requestId, String eventType,
+                                              String tenantId, String objectType,
+                                              String objectId, Map<String, Object> payload,
+                                              String actor) {
+        String messageId = requestId == null || requestId.isBlank()
+                ? "manual-" + UUID.randomUUID() : requestId.trim();
+        if (messageId.length() > 128) {
+            throw new IllegalArgumentException("手动触发 requestId 不能超过 128 个字符");
+        }
+        if (eventType == null || eventType.isBlank()) {
+            throw new IllegalArgumentException("手动触发 eventType 不能为空");
+        }
+        return new SoarTriggerEnvelope(messageId, eventType.trim(), Instant.now(),
+                "manual:" + (actor == null || actor.isBlank() ? "unknown" : actor),
+                tenantId, objectType, objectId, payload, null);
     }
 
     public static SoarTriggerEnvelope kafka(LifecycleEvent event, ConsumerRecord<?, ?> record) {

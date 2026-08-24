@@ -1,5 +1,8 @@
 package com.xscsiem.hsiem_platform.soar;
 
+import com.xscsiem.hsiem_platform.soar.playbook.validation.SoarPlaybookValidationRule;
+import com.xscsiem.hsiem_platform.soar.playbook.validation.SoarValidationContext;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayDeque;
@@ -16,9 +19,18 @@ public class SoarPlaybookValidator {
     private static final int MAX_NODES = 50;
 
     private final SoarNodeHandlerRegistry handlers;
+    private final List<SoarPlaybookValidationRule> validationRules;
 
     public SoarPlaybookValidator(SoarNodeHandlerRegistry handlers) {
+        this(handlers, List.of());
+    }
+
+    @Autowired
+    public SoarPlaybookValidator(SoarNodeHandlerRegistry handlers,
+                                 List<SoarPlaybookValidationRule> validationRules) {
         this.handlers = handlers;
+        this.validationRules = validationRules.stream()
+                .sorted(java.util.Comparator.comparingInt(SoarPlaybookValidationRule::order)).toList();
     }
 
     /** Drafts may be incomplete, but they cannot contain unknown node types or broken references. */
@@ -57,6 +69,8 @@ public class SoarPlaybookValidator {
         validateHeader(entryType, eventTypes);
         validateDraft(entryType, eventTypes, graph);
         validateCompleteGraph(entryType, graph);
+        SoarValidationContext context = new SoarValidationContext(entryType, eventTypes, graph, handlers);
+        validationRules.forEach(rule -> rule.validate(context));
     }
 
     private void validateHeader(String entryType, List<String> eventTypes) {
@@ -83,6 +97,18 @@ public class SoarPlaybookValidator {
             }
             SoarRetryPolicy.resolve(node, handler);
             handler.validate(entryType, node);
+        }
+        for (PlaybookGraph.Node node : graph.nodes()) {
+            if ("loop".equals(node.type())) {
+                PlaybookGraph.Node bodyStart = nodes.get(text(node.config().get("bodyStart")));
+                PlaybookGraph.Node bodyEnd = nodes.get(text(node.config().get("bodyEnd")));
+                if (bodyStart == null || bodyEnd == null || !"loop_end".equals(bodyEnd.type())) {
+                    throw new IllegalArgumentException("循环 bodyStart/bodyEnd 引用无效，bodyEnd 必须是 loop_end");
+                }
+                if (bodyStart.id().equals(bodyEnd.id())) {
+                    throw new IllegalArgumentException("循环 bodyStart 与 bodyEnd 不能相同");
+                }
+            }
         }
 
         List<PlaybookGraph.Node> starts = graph.nodes().stream().filter(node -> "start".equals(node.type())).toList();
@@ -123,7 +149,39 @@ public class SoarPlaybookValidator {
             } else if (handler.requiresIncoming() && ins.isEmpty()) {
                 throw new IllegalArgumentException(node.name() + "必须有入线");
             }
-            requireBranches(outs, handler.outgoingBranches(), node.name());
+            requireBranches(outs, handler, node.name());
+            if ("parallel".equals(node.type())) {
+                String joinNodeId = text(node.config().get("joinNode"));
+                PlaybookGraph.Node joinNode = nodes.get(joinNodeId);
+                if (joinNode == null || !"join".equals(joinNode.type())) {
+                    throw new IllegalArgumentException("并行节点 joinNode 必须引用 join 类型节点");
+                }
+                Set<String> configured = list(node.config().get("branches"));
+                if (!configured.equals(actualBranches(outs))) {
+                    throw new IllegalArgumentException("并行节点配置的 branches 必须与连线分支一致");
+                }
+                for (PlaybookGraph.Edge edge : outs) {
+                    if (!allPathsLeadTo(edge.target(), joinNodeId, outgoing,
+                            new HashMap<>(), new HashSet<>())) {
+                        throw new IllegalArgumentException("并行分支 " + edge.branch() + " 存在绕过 joinNode 的路径");
+                    }
+                }
+            }
+            if ("loop".equals(node.type())) {
+                String bodyStart = text(node.config().get("bodyStart"));
+                String bodyEnd = text(node.config().get("bodyEnd"));
+                if (outs.size() != 1 || !outs.getFirst().target().equals(bodyStart)) {
+                    throw new IllegalArgumentException("循环节点 next 连线必须指向 bodyStart");
+                }
+                if (!allPathsLeadTo(bodyStart, bodyEnd, outgoing, new HashMap<>(), new HashSet<>())) {
+                    throw new IllegalArgumentException("循环体存在绕过 bodyEnd 的路径");
+                }
+                Set<String> bodyNodes = walkUntil(bodyStart, bodyEnd, outgoing);
+                if (bodyNodes.stream().map(nodes::get).filter(java.util.Objects::nonNull)
+                        .anyMatch(candidate -> "loop".equals(candidate.type()))) {
+                    throw new IllegalArgumentException("循环体不允许嵌套 loop 节点");
+                }
+            }
         }
 
         Set<String> reachable = walk(starts.getFirst().id(), outgoing, true);
@@ -137,9 +195,16 @@ public class SoarPlaybookValidator {
         assertAcyclic(starts.getFirst().id(), outgoing, nodes.size());
     }
 
-    private void requireBranches(List<PlaybookGraph.Edge> edges, Set<String> expected, String label) {
+    private void requireBranches(List<PlaybookGraph.Edge> edges, SoarNodeHandler handler, String label) {
         Set<String> actual = new HashSet<>();
         for (PlaybookGraph.Edge edge : edges) actual.add(normalize(edge.branch()));
+        if (handler.variableOutgoingBranches()) {
+            if (actual.size() < 2 || actual.size() != edges.size()) {
+                throw new IllegalArgumentException(label + "必须至少包含两个不同分支");
+            }
+            return;
+        }
+        Set<String> expected = handler.outgoingBranches();
         if (!actual.equals(expected) || edges.size() != expected.size()) {
             throw new IllegalArgumentException(label + "必须且只能包含分支 " + expected);
         }
@@ -147,6 +212,56 @@ public class SoarPlaybookValidator {
 
     private void requireSize(List<?> values, int size, String message) {
         if (values.size() != size) throw new IllegalArgumentException(message);
+    }
+
+    private Set<String> actualBranches(List<PlaybookGraph.Edge> edges) {
+        Set<String> result = new HashSet<>();
+        edges.forEach(edge -> result.add(normalize(edge.branch())));
+        return result;
+    }
+
+    private Set<String> list(Object value) {
+        if (!(value instanceof List<?> values)) return Set.of();
+        Set<String> result = new HashSet<>();
+        values.forEach(item -> result.add(normalize(String.valueOf(item))));
+        return result;
+    }
+
+    private boolean allPathsLeadTo(String current, String target,
+                                   Map<String, List<PlaybookGraph.Edge>> outgoing,
+                                   Map<String, Boolean> memo, Set<String> visiting) {
+        if (current.equals(target)) return true;
+        Boolean known = memo.get(current);
+        if (known != null) return known;
+        if (!visiting.add(current)) return false;
+        List<PlaybookGraph.Edge> edges = outgoing.getOrDefault(current, List.of());
+        boolean result = !edges.isEmpty();
+        for (PlaybookGraph.Edge edge : edges) {
+            if (!allPathsLeadTo(edge.target(), target, outgoing, memo, visiting)) {
+                result = false;
+                break;
+            }
+        }
+        visiting.remove(current);
+        memo.put(current, result);
+        return result;
+    }
+
+    private Set<String> walkUntil(String start, String stop,
+                                  Map<String, List<PlaybookGraph.Edge>> outgoing) {
+        Set<String> result = new HashSet<>();
+        ArrayDeque<String> queue = new ArrayDeque<>();
+        queue.add(start);
+        while (!queue.isEmpty()) {
+            String current = queue.removeFirst();
+            if (!result.add(current) || current.equals(stop)) continue;
+            outgoing.getOrDefault(current, List.of()).forEach(edge -> queue.add(edge.target()));
+        }
+        return result;
+    }
+
+    private String text(Object value) {
+        return value == null ? "" : String.valueOf(value).trim();
     }
 
     private Set<String> walk(String origin, Map<String, List<PlaybookGraph.Edge>> adjacency, boolean forward) {

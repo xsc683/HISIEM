@@ -22,7 +22,8 @@
 | [规则引擎](rule-engine.md) | 如何理解和扩展单事件、窗口、CEP、基线检测 |
 | [SOAR 设计与实现](soar.md) | 生命周期契约、Playbook 门禁、执行状态机、参数传递和持久审批/等待 |
 | [SOAR 后端架构与数据流](design/soar-runtime-architecture.md) | 从事实落库、Kafka 消费到租约 Worker、节点推进、挂起恢复和一致性保护的完整执行链 |
-| [SOAR 可视化编辑基线](design/soar-playbook-mvp.md) | 六类节点、分支 Handle、字段/动作表单和发布校验 |
+| [SOAR 能力扩展架构](design/soar-capability-runtime.md) | 持久并行/循环、手动触发、Connector 与验证器链的数据流和边界 |
+| [SOAR 可视化编辑基线](design/soar-playbook-mvp.md) | 节点、分支 Handle、类型化表单和发布校验 |
 | [MITRE 覆盖矩阵](design/mitre-coverage.md) | 当前规则覆盖和 Blind 技术 |
 | [OCSF 映射](design/ocsf-mapping.md) | 已落地的最小 OCSF 辅助视图与未完成字段 |
 | [安全加固参考](design/security-rbac.md) | ES/Kafka 认证、TLS 和最小权限的生产门禁 |

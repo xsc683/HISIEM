@@ -9,6 +9,9 @@
     <BusinessNodeForm v-else-if="node.type === 'business'" :model-value="node.config" :actions="actions" @update:model-value="patchConfig" />
     <HumanNodeForm v-else-if="node.type === 'human'" :model-value="node.config" @update:model-value="patchConfig" />
     <WaitNodeForm v-else-if="node.type === 'wait'" :model-value="node.config" @update:model-value="patchConfig" />
+    <ParallelNodeForm v-else-if="node.type === 'parallel'" :model-value="node.config" :nodes="graphNodes" @update:model-value="patchConfig" />
+    <LoopNodeForm v-else-if="node.type === 'loop'" :model-value="node.config" :nodes="graphNodes" @update:model-value="patchConfig" />
+    <ConnectorNodeForm v-else-if="node.type === 'connector'" :model-value="node.config" @update:model-value="patchConfig" />
     <a-alert v-else type="info" show-icon :message="locked ? '开始/结束节点由系统维护，不能删除或配置。' : '选择节点配置。'" />
     <NodeRuntimePolicyForm v-if="!locked" :model-value="node.policy" :node-type="node.type" @update:model-value="patchPolicy" />
   </div>
@@ -18,15 +21,18 @@
 <script setup>
 import { computed } from 'vue'
 import BusinessNodeForm from './BusinessNodeForm.vue'
+import ConnectorNodeForm from './ConnectorNodeForm.vue'
 import ConditionNodeForm from './ConditionNodeForm.vue'
 import HumanNodeForm from './HumanNodeForm.vue'
+import LoopNodeForm from './LoopNodeForm.vue'
 import NodeRuntimePolicyForm from './NodeRuntimePolicyForm.vue'
 import WaitNodeForm from './WaitNodeForm.vue'
+import ParallelNodeForm from './ParallelNodeForm.vue'
 
-const props = defineProps({ node: { type: Object, default: null }, fields: { type: Array, default: () => [] }, actions: { type: Array, default: () => [] } })
+const props = defineProps({ node: { type: Object, default: null }, graphNodes: { type: Array, default: () => [] }, fields: { type: Array, default: () => [] }, actions: { type: Array, default: () => [] } })
 const emit = defineEmits(['update', 'delete'])
 const locked = computed(() => ['start', 'end'].includes(props.node?.type))
-const typeLabel = { start: '开始', end: '结束', condition: '条件判断', business: '业务动作', human: '人工审批', wait: '等待' }
+const typeLabel = { start: '开始', end: '结束', condition: '条件判断', business: '业务动作', human: '人工审批', wait: '等待', parallel: '并行', join: '并行汇合', loop: '循环', loop_end: '循环体结束', connector: '设备连接器' }
 function patchName(name) { emit('update', { ...props.node, name }) }
 function patchConfig(config) { emit('update', { ...props.node, config }) }
 function patchPolicy(policy) { emit('update', { ...props.node, policy }) }

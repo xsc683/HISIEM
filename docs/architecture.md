@@ -101,7 +101,7 @@ raw 与 DLQ 是两个不同失败边界：`siem-events-raw-*` 隔离 Logstash �
    - CEP 序列和基线异常分别处理攻击链、统计异常，并统一写入告警字段
 6. Flink 先写入 ES `siem-alerts`：新文档使用完整 upsert，重放或抑制更新只提交不含分析师处置字段的 partial doc；ES 确认成功后才将最小 `alert.created` 契约写入 Kafka `siem-alert-lifecycle`。
 7. 告警/案件控制面变更成功后分别发布 `alert.updated`、`case.created/updated` 到两个 lifecycle topic。SOAR 消费组只读取这两个 topic，匹配已发布且启用的 Playbook，执行 Start/End/Condition/Business/Human/Wait。
-8. 控制台写操作通过 Spring Security 鉴权；案件处置状态、SOAR Playbook/执行快照/逐 attempt I/O/审批/动作回执、用户会话、通知、审计和后台任务写入 PostgreSQL，Flyway 负责当前 V1-V12 迁移。
+8. 控制台写操作通过 Spring Security 鉴权；案件处置状态、SOAR Playbook/执行快照/逐 attempt I/O/审批/动作回执、用户会话、通知、审计和后台任务写入 PostgreSQL，Flyway 负责当前 V1-V15 迁移。
 
 ### 3.2 案件写入与最终一致性
 
@@ -129,7 +129,7 @@ flowchart TD
 | 认证与 RBAC | Spring Security、Bearer 会话、登录失败限制、首次改密 | `/api/auth/**`、`users`/`auth_sessions` |
 | 数据源接入 | 模板预览、创建、生效、停用、删除与失败回滚 | `/api/log-sources/**`、`infra/log-sources/*.yaml` |
 | 告警与案件 | 告警状态/verdict、案件聚合、负责人/证据、时间线 | `/api/alerts/**`、`/api/cases/**`、案件关系表 + ES 镜像 |
-| SOAR | 生命周期 Kafka 触发、显式执行上下文、六类 NodeHandler、字段/动作字典、重试退避、持久等待/人工审批、续租 Worker、fencing token 和逐 attempt I/O | `/api/soar/**`、V11/V12 `soar_*` 表、两个 lifecycle topic |
+| SOAR | Kafka/人工触发、11 类可插拔 Handler、持久并行/循环、Connector 注册表、重试退避、人工审批、续租 Worker、fencing 和逐 attempt I/O | `/api/soar/**`、V11–V15 `soar_*` 表、两个 lifecycle topic |
 | 运维治理 | 六组件健康扫描、后台任务租约/恢复、指标、备份恢复演练 | `/api/ops/health-scan`、`/api/tasks/**`、Actuator |
 
 控制面默认连接 `localhost:5432/siem`；真实部署时先确认 PostgreSQL、ES、Kafka、Logstash、Flink、Kibana 均通过健康检查，再启动 Spring Boot。

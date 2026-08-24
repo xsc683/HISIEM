@@ -37,6 +37,6 @@ const verdictOptions = ['true_positive', 'false_positive', 'duplicate'].map((val
 async function load() { loading.value = true; error.value = ''; try { alert.value = await getAlert(route.params.id) } catch (cause) { error.value = cause.message } finally { loading.value = false } }
 async function changeStatus(status) { saving.value = true; try { await updateAlertStatus(alert.value._id, status); await load(); message.success('告警状态已更新') } catch (cause) { message.error(cause.message) } finally { saving.value = false } }
 async function changeVerdict(verdict) { if (!verdict) return; saving.value = true; try { await updateAlertVerdict(alert.value._id, verdict); await load(); message.success('分析结论已更新') } catch (cause) { message.error(cause.message) } finally { saving.value = false } }
-function runSoar() { router.push({ path: '/soar', query: { resourceType: 'alert', resourceId: alert.value._id } }) }
+function runSoar() { router.push({ path: '/soar/executions', query: { resourceType: 'alert', resourceId: alert.value._id, manual: '1' } }) }
 onMounted(load)
 </script>

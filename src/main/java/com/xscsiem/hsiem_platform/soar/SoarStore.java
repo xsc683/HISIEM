@@ -17,20 +17,24 @@ import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.LinkedHashMap;
 
 @Repository
 public class SoarStore {
 
     private static final TypeReference<List<String>> STRING_LIST = new TypeReference<>() { };
+    private static final TypeReference<List<Object>> OBJECT_LIST = new TypeReference<>() { };
     private static final TypeReference<Map<String, Object>> OBJECT_MAP = new TypeReference<>() { };
     private static final String PLAYBOOK_COLUMNS = "id, tenant_id, name, description, status, enabled, "
             + "entry_type, event_types_json, graph_json, revision, created_by, updated_by, "
             + "created_at, updated_at, published_at";
     private static final String EXECUTION_COLUMNS = "id, tenant_id, playbook_id, playbook_name, "
-            + "playbook_revision, graph_snapshot, object_type, object_id, event_type, trigger_message_id, "
+            + "playbook_revision, graph_snapshot, object_type, object_id, event_type, trigger_type, trigger_message_id, "
             + "trigger_envelope, payload_snapshot, status, current_node_id, next_run_at, error, actor, cancel_requested, "
             + "lease_owner, lease_expires_at, version, "
             + "created_at, updated_at, started_at, finished_at";
@@ -137,33 +141,262 @@ public class SoarStore {
 
     @Transactional
     public boolean createExecution(SoarPlaybook playbook, SoarTriggerEnvelope trigger) {
+        return createExecution(playbook, trigger, "kafka:" + trigger.messageId(), "KAFKA");
+    }
+
+    @Transactional
+    public boolean createExecution(SoarPlaybook playbook, SoarTriggerEnvelope trigger, String actor) {
+        return createExecution(playbook, trigger, actor, "KAFKA");
+    }
+
+    @Transactional
+    public boolean createExecution(SoarPlaybook playbook, SoarTriggerEnvelope trigger,
+                                   String actor, String triggerType) {
         String id = "exec-" + UUID.randomUUID();
         String startNode = playbook.graph().nodes().stream()
                 .filter(node -> "start".equals(node.type())).findFirst().orElseThrow().id();
         try {
             jdbc.update("INSERT INTO soar_execution (id, tenant_id, playbook_id, playbook_name, "
                             + "playbook_revision, graph_snapshot, object_type, object_id, event_type, "
-                            + "trigger_message_id, trigger_envelope, payload_snapshot, status, current_node_id, actor) "
-                            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)",
+                            + "trigger_type, trigger_message_id, trigger_envelope, payload_snapshot, status, current_node_id, actor) "
+                            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)",
                     id, playbook.tenantId(), playbook.id(), playbook.name(), playbook.revision(),
                     json(playbook.graph()), playbook.entryType(), trigger.objectId(), trigger.eventType(),
-                    trigger.messageId(), json(trigger), json(trigger.payload()), startNode,
-                    "kafka:" + trigger.messageId());
+                    triggerType, trigger.messageId(), json(trigger), json(trigger.payload()), startNode,
+                    actor == null || actor.isBlank() ? "system" : actor);
             return true;
         } catch (DuplicateKeyException ignored) {
             return false;
         }
     }
 
+    /** Materialises each fan-out branch as a durable child execution. */
+    @Transactional
+    public void fanOut(SoarExecution parent, SoarExecution.NodeRun parentRun,
+                       Map<String, Object> output, List<BranchTarget> targets,
+                       String joinNodeId) {
+        requireLeaseForUpdate(parent);
+        if (targets == null || targets.size() < 2) throw new IllegalArgumentException("并行分支不能为空");
+        String groupId = "join-" + UUID.randomUUID();
+        finishNode(parentRun.id(), "success", output, null);
+        jdbc.update("INSERT INTO soar_parallel_group (id, tenant_id, parent_execution_id, parent_node_run_id, "
+                        + "join_node_id, expected_count) VALUES (?, ?, ?, ?, ?, ?)",
+                groupId, parent.tenantId(), parent.id(), parentRun.id(), joinNodeId, targets.size());
+        int index = 0;
+        for (BranchTarget target : targets) {
+            String branchId = "branch-" + UUID.randomUUID();
+            String childId = "exec-" + UUID.randomUUID();
+            String messageId = parent.triggerMessageId() + ":" + groupId + ":" + index++;
+            SoarTriggerEnvelope trigger = new SoarTriggerEnvelope(messageId, parent.eventType(),
+                    parent.triggerEnvelope().occurredAt(), "parallel:" + parent.id(), parent.tenantId(),
+                    parent.objectType(), parent.objectId(), parent.payloadSnapshot(), null);
+            jdbc.update("INSERT INTO soar_execution (id, tenant_id, playbook_id, playbook_name, "
+                            + "playbook_revision, graph_snapshot, object_type, object_id, event_type, "
+                            + "trigger_type, trigger_message_id, trigger_envelope, payload_snapshot, status, current_node_id, "
+                            + "actor, parallel_parent_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'INTERNAL', ?, ?, ?, 'pending', ?, ?, ?)",
+                    childId, parent.tenantId(), parent.playbookId(), parent.playbookName(), parent.playbookRevision(),
+                    json(parent.graphSnapshot()), parent.objectType(), parent.objectId(), parent.eventType(),
+                    messageId, json(trigger), json(parent.payloadSnapshot()), target.nodeId(),
+                    "parallel:" + parent.id(), parent.id());
+            jdbc.update("INSERT INTO soar_parallel_branch (id, group_id, execution_id, branch_label, target_node_id) "
+                            + "VALUES (?, ?, ?, ?, ?)", branchId, groupId, childId, target.branch(), target.nodeId());
+        }
+        int moved = jdbc.update("UPDATE soar_execution SET status = 'waiting', current_node_id = NULL, "
+                        + "next_run_at = ?, lease_owner = NULL, lease_expires_at = NULL, "
+                        + "updated_at = CURRENT_TIMESTAMP, version = version + 1 WHERE id = ? "
+                        + "AND status = 'running' AND lease_owner = ? AND version = ?",
+                Timestamp.from(Instant.now().plus(Duration.ofDays(365))), parent.id(),
+                parent.leaseOwner(), parent.fencingToken());
+        requireTransition(moved, parent);
+    }
+
+    public ParallelBranch parallelBranch(String executionId, String nodeId) {
+        List<ParallelBranch> rows = jdbc.query("SELECT b.id, b.group_id, g.parent_execution_id, "
+                        + "g.join_node_id, b.branch_label, b.target_node_id FROM soar_parallel_branch b "
+                        + "JOIN soar_parallel_group g ON g.id = b.group_id WHERE b.execution_id = ? "
+                        + "AND b.status IN ('pending','running') AND g.status = 'waiting' AND g.join_node_id = ?",
+                (rs, rowNum) -> new ParallelBranch(rs.getString("id"), rs.getString("group_id"),
+                        rs.getString("parent_execution_id"), rs.getString("join_node_id"),
+                        rs.getString("branch_label"), rs.getString("target_node_id")), executionId, nodeId);
+        return rows.isEmpty() ? null : rows.getFirst();
+    }
+
+    /** Marks a branch arrived and releases the parent only on the final arrival. */
+    @Transactional
+    public void arriveParallel(SoarExecution child, ParallelBranch branch, String nextNodeId) {
+        requireLeaseForUpdate(child);
+        int branchUpdated = jdbc.update("UPDATE soar_parallel_branch SET status = 'arrived', "
+                        + "arrived_at = CURRENT_TIMESTAMP WHERE id = ? AND status IN ('pending','running')",
+                branch.id());
+        if (branchUpdated != 1) return;
+        int childMoved = jdbc.update("UPDATE soar_execution SET status = 'success', lease_owner = NULL, lease_expires_at = NULL, "
+                        + "finished_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP, version = version + 1 "
+                        + "WHERE id = ? AND status = 'running' AND lease_owner = ? AND version = ?",
+                child.id(), child.leaseOwner(), child.fencingToken());
+        requireTransition(childMoved, child);
+        int arrived = jdbc.queryForObject("SELECT arrived_count FROM soar_parallel_group WHERE id = ? FOR UPDATE",
+                Integer.class, branch.groupId());
+        int nextCount = arrived + 1;
+        jdbc.update("UPDATE soar_parallel_group SET arrived_count = ? WHERE id = ? AND status = 'waiting'",
+                nextCount, branch.groupId());
+        if (nextCount < jdbc.queryForObject("SELECT expected_count FROM soar_parallel_group WHERE id = ?",
+                Integer.class, branch.groupId())) return;
+
+        Map<String, Object> aggregate = new LinkedHashMap<>();
+        List<BranchExecution> branchExecutions = jdbc.query(
+                "SELECT branch_label, execution_id FROM soar_parallel_branch WHERE group_id = ? ORDER BY branch_label",
+                (rs, rowNum) -> new BranchExecution(rs.getString("branch_label"), rs.getString("execution_id")),
+                branch.groupId());
+        for (BranchExecution item : branchExecutions) {
+            aggregate.put(item.branchLabel(), nodeOutputs(item.executionId()));
+        }
+        String parentId = branch.parentExecutionId();
+        List<String> parentRows = jdbc.queryForList("SELECT id FROM soar_execution WHERE id = ? "
+                        + "AND status = 'waiting' AND cancel_requested = FALSE", String.class, parentId);
+        if (parentRows.isEmpty()) return;
+        String parentRunId = jdbc.queryForObject("SELECT parent_node_run_id FROM soar_parallel_group WHERE id = ?",
+                String.class, branch.groupId());
+        jdbc.update("UPDATE soar_node_execution SET output_json = ?, status = 'success', "
+                        + "finished_at = CURRENT_TIMESTAMP WHERE id = ?", json(aggregate), parentRunId);
+        jdbc.update("UPDATE soar_parallel_group SET status = 'released', output_json = ?, released_at = CURRENT_TIMESTAMP "
+                        + "WHERE id = ? AND status = 'waiting'", json(aggregate), branch.groupId());
+        jdbc.update("UPDATE soar_execution SET status = 'pending', current_node_id = ?, next_run_at = CURRENT_TIMESTAMP, "
+                        + "updated_at = CURRENT_TIMESTAMP, version = version + 1 WHERE id = ? AND status = 'waiting'",
+                nextNodeId, parentId);
+    }
+
+    public record BranchTarget(String branch, String nodeId) { }
+
+    public record ParallelBranch(String id, String groupId, String parentExecutionId,
+                                 String joinNodeId, String branchLabel, String targetNodeId) { }
+
+    private record BranchExecution(String branchLabel, String executionId) { }
+
+    @Transactional
+    public void startLoop(SoarExecution parent, SoarExecution.NodeRun parentRun,
+                          String bodyStartNodeId, String bodyEndNodeId, List<Object> items,
+                          int maxIterations) {
+        requireLeaseForUpdate(parent);
+        if (items == null || items.isEmpty()) throw new IllegalArgumentException("循环 items 不能为空");
+        if (items.size() > maxIterations || maxIterations > 1000) {
+            throw new IllegalArgumentException("循环迭代次数超过安全上限");
+        }
+        String loopId = "loop-" + UUID.randomUUID();
+        String childId = "exec-" + UUID.randomUUID();
+        SoarTriggerEnvelope trigger = new SoarTriggerEnvelope(
+                parent.triggerMessageId() + ":" + loopId, parent.eventType(), parent.triggerEnvelope().occurredAt(),
+                "loop:" + parent.id(), parent.tenantId(), parent.objectType(), parent.objectId(),
+                loopPayload(parent.payloadSnapshot(), 0, items.getFirst()), null);
+        jdbc.update("INSERT INTO soar_execution (id, tenant_id, playbook_id, playbook_name, playbook_revision, "
+                        + "graph_snapshot, object_type, object_id, event_type, trigger_type, trigger_message_id, trigger_envelope, "
+                        + "payload_snapshot, status, current_node_id, actor) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'INTERNAL', ?, ?, ?, "
+                        + "'pending', ?, ?)", childId, parent.tenantId(), parent.playbookId(), parent.playbookName(),
+                parent.playbookRevision(), json(parent.graphSnapshot()), parent.objectType(), parent.objectId(),
+                parent.eventType(), trigger.messageId(), json(trigger), json(trigger.payload()), bodyStartNodeId,
+                "loop:" + parent.id());
+        finishNode(parentRun.id(), "success", Map.of("iterations", items.size(), "maxIterations", maxIterations), null);
+        jdbc.update("INSERT INTO soar_loop_state (id, tenant_id, parent_execution_id, parent_node_run_id, "
+                        + "child_execution_id, body_start_node_id, body_end_node_id, items_json, max_iterations) "
+                        + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", loopId, parent.tenantId(), parent.id(), parentRun.id(),
+                childId, bodyStartNodeId, bodyEndNodeId, json(items), maxIterations);
+        int moved = jdbc.update("UPDATE soar_execution SET status = 'waiting', current_node_id = NULL, next_run_at = ?, "
+                        + "lease_owner = NULL, lease_expires_at = NULL, updated_at = CURRENT_TIMESTAMP, version = version + 1 "
+                        + "WHERE id = ? AND status = 'running' AND lease_owner = ? AND version = ?",
+                Timestamp.from(Instant.now().plus(Duration.ofDays(365))), parent.id(), parent.leaseOwner(), parent.fencingToken());
+        requireTransition(moved, parent);
+    }
+
+    public LoopState loopState(String childExecutionId, String nodeId) {
+        List<LoopState> rows = jdbc.query("SELECT id, parent_execution_id, parent_node_run_id, child_execution_id, "
+                        + "body_start_node_id, body_end_node_id, items_json, iteration_index, max_iterations, status "
+                        + "FROM soar_loop_state WHERE child_execution_id = ? AND body_end_node_id = ? AND status = 'running'",
+                (rs, rowNum) -> new LoopState(rs.getString("id"), rs.getString("parent_execution_id"),
+                        rs.getString("parent_node_run_id"), rs.getString("child_execution_id"),
+                        rs.getString("body_start_node_id"), rs.getString("body_end_node_id"),
+                        read(rs.getString("items_json"), OBJECT_LIST), rs.getInt("iteration_index"),
+                        rs.getInt("max_iterations"), rs.getString("status")), childExecutionId, nodeId);
+        return rows.isEmpty() ? null : rows.getFirst();
+    }
+
+    @Transactional
+    public void advanceLoop(SoarExecution child, LoopState loop, String nextNodeId) {
+        requireLeaseForUpdate(child);
+        int nextIndex = loop.iterationIndex() + 1;
+        if (nextIndex >= loop.items().size()) {
+            int childMoved = jdbc.update("UPDATE soar_execution SET status = 'success', lease_owner = NULL, lease_expires_at = NULL, "
+                            + "finished_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP, version = version + 1 "
+                            + "WHERE id = ? AND status = 'running' AND lease_owner = ? AND version = ?",
+                    child.id(), child.leaseOwner(), child.fencingToken());
+            requireTransition(childMoved, child);
+            jdbc.update("UPDATE soar_loop_state SET iteration_index = ?, status = 'success', "
+                            + "output_json = ?, finished_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'running'",
+                    nextIndex, json(Map.of("iterations", loop.items().size())), loop.id());
+            jdbc.update("UPDATE soar_node_execution SET output_json = ?, status = 'success', finished_at = CURRENT_TIMESTAMP "
+                            + "WHERE id = ?", json(Map.of("iterations", loop.items().size())), loop.parentNodeRunId());
+            jdbc.update("UPDATE soar_execution SET status = 'pending', current_node_id = ?, next_run_at = CURRENT_TIMESTAMP, "
+                            + "updated_at = CURRENT_TIMESTAMP, version = version + 1 WHERE id = ? AND status = 'waiting'",
+                    nextNodeId, loop.parentExecutionId());
+            return;
+        }
+        if (nextIndex >= loop.maxIterations()) {
+            failLoop(child, loop, "循环超过 maxIterations 安全上限");
+            return;
+        }
+        jdbc.update("UPDATE soar_loop_state SET iteration_index = ? WHERE id = ? AND status = 'running'",
+                nextIndex, loop.id());
+        Map<String, Object> payload = loopPayload(child.payloadSnapshot(), nextIndex, loop.items().get(nextIndex));
+        int childMoved = jdbc.update("UPDATE soar_execution SET status = 'pending', current_node_id = ?, payload_snapshot = ?, "
+                        + "next_run_at = CURRENT_TIMESTAMP, lease_owner = NULL, lease_expires_at = NULL, "
+                        + "updated_at = CURRENT_TIMESTAMP, version = version + 1 WHERE id = ? AND status = 'running' "
+                        + "AND lease_owner = ? AND version = ?", loop.bodyStartNodeId(), json(payload), child.id(),
+                child.leaseOwner(), child.fencingToken());
+        requireTransition(childMoved, child);
+    }
+
+    private void failLoop(SoarExecution child, LoopState loop, String message) {
+        jdbc.update("UPDATE soar_execution SET status = 'failed', error = ?, lease_owner = NULL, lease_expires_at = NULL, "
+                        + "finished_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP, version = version + 1 "
+                        + "WHERE id = ?", message, child.id());
+        jdbc.update("UPDATE soar_loop_state SET status = 'failed', output_json = ?, finished_at = CURRENT_TIMESTAMP "
+                        + "WHERE id = ?", json(Map.of("error", message)), loop.id());
+        jdbc.update("UPDATE soar_execution SET status = 'failed', error = ?, lease_owner = NULL, lease_expires_at = NULL, "
+                        + "finished_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP, version = version + 1 "
+                        + "WHERE id = ? AND status = 'waiting'", message, loop.parentExecutionId());
+    }
+
+    private Map<String, Object> loopPayload(Map<String, Object> base, int index, Object item) {
+        Map<String, Object> payload = new LinkedHashMap<>(base == null ? Map.of() : base);
+        payload.put("loop", Map.of("index", index, "item", item));
+        return payload;
+    }
+
+    public record LoopState(String id, String parentExecutionId, String parentNodeRunId,
+                            String childExecutionId, String bodyStartNodeId, String bodyEndNodeId,
+                            List<Object> items, int iterationIndex, int maxIterations, String status) { }
+
+    /** Returns the execution for a playbook/request pair, including node history. */
+    public SoarExecution findExecutionByTrigger(String tenantId, String playbookId, String messageId) {
+        List<SoarExecution> rows = jdbc.query("SELECT " + EXECUTION_COLUMNS + " FROM soar_execution "
+                        + "WHERE tenant_id = ? AND playbook_id = ? AND trigger_message_id = ?",
+                executionMapper, tenantId, playbookId, messageId);
+        if (rows.isEmpty()) throw new NotFoundException("SOAR 执行不存在: " + messageId);
+        SoarExecution execution = rows.getFirst();
+        return withNodeRuns(execution, listNodeRuns(execution.id()));
+    }
+
     public List<SoarExecution> listExecutions(String tenantId, String status, int size) {
         int limit = Math.max(1, Math.min(size, 200));
         if (status == null || status.isBlank()) {
             return jdbc.query("SELECT " + EXECUTION_COLUMNS + " FROM soar_execution "
-                            + "WHERE tenant_id = ? ORDER BY updated_at DESC FETCH FIRST ? ROWS ONLY",
+                            + "WHERE tenant_id = ? AND parallel_parent_id IS NULL AND NOT EXISTS "
+                            + "(SELECT 1 FROM soar_loop_state l WHERE l.child_execution_id = soar_execution.id) "
+                            + "ORDER BY updated_at DESC FETCH FIRST ? ROWS ONLY",
                     executionMapper, tenantId, limit);
         }
         return jdbc.query("SELECT " + EXECUTION_COLUMNS + " FROM soar_execution "
-                        + "WHERE tenant_id = ? AND status = ? ORDER BY updated_at DESC FETCH FIRST ? ROWS ONLY",
+                        + "WHERE tenant_id = ? AND status = ? AND parallel_parent_id IS NULL AND NOT EXISTS "
+                        + "(SELECT 1 FROM soar_loop_state l WHERE l.child_execution_id = soar_execution.id) "
+                        + "ORDER BY updated_at DESC FETCH FIRST ? ROWS ONLY",
                 executionMapper, tenantId, status, limit);
     }
 
@@ -314,6 +547,7 @@ public class SoarStore {
                 error, execution.id(), execution.leaseOwner(), execution.fencingToken());
         requireTransition(moved, execution);
         if (nodeRunId != null) finishNode(nodeRunId, "failed", Map.of(), error);
+        propagateInternalFailure(execution.id(), error);
     }
 
     @Transactional
@@ -413,15 +647,111 @@ public class SoarStore {
         if (List.of("success", "failed", "cancelled").contains(current.status())) {
             throw new ConflictException("终态执行不能取消");
         }
-        jdbc.update("UPDATE soar_execution SET cancel_requested = TRUE, status = 'cancelled', "
-                        + "lease_owner = NULL, lease_expires_at = NULL, updated_at = CURRENT_TIMESTAMP, "
-                        + "finished_at = CURRENT_TIMESTAMP, version = version + 1 WHERE tenant_id = ? AND id = ?",
-                tenantId, id);
-        jdbc.update("UPDATE soar_node_execution SET status = 'cancelled', finished_at = CURRENT_TIMESTAMP "
-                        + "WHERE execution_id = ? AND status IN ('running','waiting','waiting_human','retrying')", id);
-        jdbc.update("UPDATE soar_approval_task SET status = 'cancelled', decided_at = CURRENT_TIMESTAMP "
-                        + "WHERE execution_id = ? AND status = 'pending'", id);
+        if ("INTERNAL".equals(current.triggerType())) {
+            throw new ConflictException("内部并行/循环执行不能单独取消，请取消根执行实例");
+        }
+        cancelExecutionTree(id);
     }
+
+    /** Cancels an internal subtree without touching a shared parent/join target. */
+    private void cancelExecutionTree(String rootId) {
+        Set<String> tree = new LinkedHashSet<>();
+        List<String> frontier = List.of(rootId);
+        while (!frontier.isEmpty()) {
+            List<String> next = new ArrayList<>();
+            for (String parent : frontier) {
+                List<String> children = jdbc.queryForList("SELECT id FROM soar_execution "
+                                + "WHERE (parallel_parent_id = ? OR id IN "
+                                + "(SELECT child_execution_id FROM soar_loop_state WHERE parent_execution_id = ?)) "
+                                + "AND status NOT IN ('success','failed','cancelled')", String.class, parent, parent);
+                for (String child : children) {
+                    if (tree.add(child)) next.add(child);
+                }
+            }
+            frontier = next;
+        }
+        tree.add(rootId);
+        for (String executionId : tree) {
+            jdbc.update("UPDATE soar_execution SET cancel_requested = TRUE, status = 'cancelled', "
+                            + "lease_owner = NULL, lease_expires_at = NULL, finished_at = CURRENT_TIMESTAMP, "
+                            + "updated_at = CURRENT_TIMESTAMP, version = version + 1 WHERE id = ? "
+                            + "AND status NOT IN ('success','failed','cancelled')", executionId);
+            jdbc.update("UPDATE soar_node_execution SET status = 'cancelled', finished_at = CURRENT_TIMESTAMP "
+                            + "WHERE execution_id = ? AND status IN ('running','waiting','waiting_human','retrying')", executionId);
+            jdbc.update("UPDATE soar_approval_task SET status = 'cancelled', decided_at = CURRENT_TIMESTAMP "
+                            + "WHERE execution_id = ? AND status = 'pending'", executionId);
+            jdbc.update("UPDATE soar_parallel_branch SET status = 'cancelled' WHERE status IN ('pending','running') "
+                            + "AND (execution_id = ? OR group_id IN "
+                            + "(SELECT id FROM soar_parallel_group WHERE parent_execution_id = ?))",
+                    executionId, executionId);
+            jdbc.update("UPDATE soar_parallel_group SET status = 'cancelled' "
+                    + "WHERE parent_execution_id = ? AND status = 'waiting'", executionId);
+            jdbc.update("UPDATE soar_loop_state SET status = 'cancelled', finished_at = CURRENT_TIMESTAMP "
+                            + "WHERE parent_execution_id = ? AND status = 'running'", executionId);
+        }
+    }
+
+    /** A failed internal branch/body must never leave its durable parent waiting forever. */
+    private void propagateInternalFailure(String childExecutionId, String cause) {
+        String parentId = failParallelParent(childExecutionId, cause);
+        if (parentId == null) parentId = failLoopParent(childExecutionId, cause);
+        if (parentId != null) propagateInternalFailure(parentId, cause);
+    }
+
+    private String failParallelParent(String childExecutionId, String cause) {
+        List<ParallelFailureParent> rows = jdbc.query("SELECT g.id, g.parent_execution_id, "
+                        + "g.parent_node_run_id, b.branch_label FROM soar_parallel_branch b "
+                        + "JOIN soar_parallel_group g ON g.id = b.group_id "
+                        + "WHERE b.execution_id = ? AND g.status = 'waiting' FOR UPDATE",
+                (rs, rowNum) -> new ParallelFailureParent(rs.getString("id"),
+                        rs.getString("parent_execution_id"), rs.getString("parent_node_run_id"),
+                        rs.getString("branch_label")), childExecutionId);
+        if (rows.isEmpty()) return null;
+        ParallelFailureParent parent = rows.getFirst();
+        String error = "并行分支 " + parent.branchLabel() + " 失败: " + cause;
+        List<String> siblings = jdbc.queryForList("SELECT execution_id FROM soar_parallel_branch "
+                        + "WHERE group_id = ? AND execution_id <> ?", String.class,
+                parent.groupId(), childExecutionId);
+        siblings.forEach(this::cancelExecutionTree);
+        jdbc.update("UPDATE soar_parallel_branch SET status = 'cancelled' "
+                + "WHERE group_id = ? AND status IN ('pending','running')", parent.groupId());
+        jdbc.update("UPDATE soar_parallel_group SET status = 'cancelled' "
+                + "WHERE id = ? AND status = 'waiting'", parent.groupId());
+        jdbc.update("UPDATE soar_node_execution SET status = 'failed', error = ?, finished_at = CURRENT_TIMESTAMP "
+                + "WHERE id = ?", error, parent.parentNodeRunId());
+        int moved = jdbc.update("UPDATE soar_execution SET status = 'failed', error = ?, "
+                        + "lease_owner = NULL, lease_expires_at = NULL, finished_at = CURRENT_TIMESTAMP, "
+                        + "updated_at = CURRENT_TIMESTAMP, version = version + 1 "
+                        + "WHERE id = ? AND status = 'waiting'", error, parent.parentExecutionId());
+        return moved == 1 ? parent.parentExecutionId() : null;
+    }
+
+    private String failLoopParent(String childExecutionId, String cause) {
+        List<LoopFailureParent> rows = jdbc.query("SELECT id, parent_execution_id, parent_node_run_id "
+                        + "FROM soar_loop_state WHERE child_execution_id = ? AND status = 'running' FOR UPDATE",
+                (rs, rowNum) -> new LoopFailureParent(rs.getString("id"),
+                        rs.getString("parent_execution_id"), rs.getString("parent_node_run_id")),
+                childExecutionId);
+        if (rows.isEmpty()) return null;
+        LoopFailureParent parent = rows.getFirst();
+        String error = "循环体失败: " + cause;
+        jdbc.update("UPDATE soar_loop_state SET status = 'failed', output_json = ?, "
+                        + "finished_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'running'",
+                json(Map.of("error", error)), parent.loopId());
+        jdbc.update("UPDATE soar_node_execution SET status = 'failed', error = ?, finished_at = CURRENT_TIMESTAMP "
+                + "WHERE id = ?", error, parent.parentNodeRunId());
+        int moved = jdbc.update("UPDATE soar_execution SET status = 'failed', error = ?, "
+                        + "lease_owner = NULL, lease_expires_at = NULL, finished_at = CURRENT_TIMESTAMP, "
+                        + "updated_at = CURRENT_TIMESTAMP, version = version + 1 "
+                        + "WHERE id = ? AND status = 'waiting'", error, parent.parentExecutionId());
+        return moved == 1 ? parent.parentExecutionId() : null;
+    }
+
+    private record ParallelFailureParent(String groupId, String parentExecutionId,
+                                         String parentNodeRunId, String branchLabel) { }
+
+    private record LoopFailureParent(String loopId, String parentExecutionId,
+                                     String parentNodeRunId) { }
 
     private void finishNode(String nodeRunId, String status,
                             Map<String, Object> output, String error) {
@@ -457,7 +787,7 @@ public class SoarStore {
 
     private SoarExecution withNodeRuns(SoarExecution value, List<SoarExecution.NodeRun> runs) {
         return new SoarExecution(value.id(), value.tenantId(), value.playbookId(), value.playbookName(),
-                value.playbookRevision(), value.graphSnapshot(), value.objectType(), value.objectId(), value.eventType(),
+                value.playbookRevision(), value.graphSnapshot(), value.objectType(), value.objectId(), value.eventType(), value.triggerType(),
                 value.triggerMessageId(), value.triggerEnvelope(), value.payloadSnapshot(), value.status(),
                 value.currentNodeId(), value.nextRunAt(), value.error(), value.actor(), value.cancelRequested(),
                 value.leaseOwner(), value.leaseExpiresAt(), value.fencingToken(),
@@ -479,7 +809,7 @@ public class SoarStore {
         return new SoarExecution(rs.getString("id"), rs.getString("tenant_id"), rs.getString("playbook_id"),
                 rs.getString("playbook_name"), rs.getLong("playbook_revision"),
                 read(rs.getString("graph_snapshot"), PlaybookGraph.class), rs.getString("object_type"),
-                rs.getString("object_id"), rs.getString("event_type"), rs.getString("trigger_message_id"),
+                rs.getString("object_id"), rs.getString("event_type"), rs.getString("trigger_type"), rs.getString("trigger_message_id"),
                 trigger, payload, rs.getString("status"), rs.getString("current_node_id"), instant(rs, "next_run_at"),
                 rs.getString("error"), rs.getString("actor"),
                 rs.getBoolean("cancel_requested"), rs.getString("lease_owner"), instant(rs, "lease_expires_at"),
@@ -529,6 +859,14 @@ public class SoarStore {
     }
 
     private <T> T read(String value, Class<T> type) {
+        try {
+            return objectMapper.readValue(value, type);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("数据库中的 SOAR 数据格式错误", e);
+        }
+    }
+
+    private <T> T read(String value, TypeReference<T> type) {
         try {
             return objectMapper.readValue(value, type);
         } catch (JsonProcessingException e) {

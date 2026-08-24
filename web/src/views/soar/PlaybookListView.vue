@@ -3,7 +3,7 @@
     <PageHeader title="SOAR Playbook" description="由告警/案件生命周期消息触发；发布且启用的 Playbook 才会创建执行实例。">
       <SoarSectionNav /><a-button @click="load"><ReloadOutlined /> 刷新</a-button><a-button v-if="isAdmin" type="primary" @click="router.push('/soar/playbooks/new')"><PlusOutlined /> 新建 Playbook</a-button>
     </PageHeader>
-    <a-alert type="info" show-icon message="触发边界" description="SOAR 不读取原始 siem-events，也不提供手工启动入口。每条生命周期消息对每个匹配 Playbook 最多创建一个执行实例。" />
+    <a-alert type="info" show-icon message="触发边界" description="SOAR 支持生命周期消息和人工启动；两种入口都使用 request/message ID 去重，并进入相同的持久执行内核。" />
     <a-card class="surface-card">
       <LoadState :loading="loading" :error="error" :empty="!playbooks.length" @retry="load">
         <a-table row-key="id" :data-source="playbooks" :columns="columns" :pagination="{ pageSize: 15 }">

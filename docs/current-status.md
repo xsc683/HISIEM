@@ -16,8 +16,8 @@ HISIEM 已完成检测链路、控制面、接入向导、告警处置、调查�
 | 控制面 | Spring Boot + PostgreSQL/Flyway，认证、RBAC、案件、审计、通知和后台任务可用 | [部署](deployment.md)、[路线图](roadmap.md) |
 | 前端 | Vue 3/Vite + vue-router + Ant Design Vue 控制台；规则 CRUD、深链详情与 Vue Flow SOAR 画布可构建 | `web/`、[当前产品契约](product-contract.md) |
 | 运行态 | PostgreSQL、Elasticsearch、Kafka、Logstash、Flink、Kibana 均有健康扫描 | [运维手册](operations.md) |
-| SOAR | 两个 lifecycle topic、六类 DAG 节点、字段/动作字典、持久 Wait/Human、节点 I/O、消息去重、租约续期/fencing 和 Vue Flow 编辑器可用 | [SOAR 设计](soar.md)、`src/main/java/**/soar/` |
-| 自动化验证 | 根项目 99 个测试、Flink 38 个测试、前端 3 个单元测试、生产构建和 1 条 Playwright E2E 通过；包含真实 PostgreSQL V12、fencing/续租、Flink DLQ 与离开保存 | [路线图](roadmap.md) |
+| SOAR | lifecycle + 手动入口、11 类节点、持久 Parallel/Join 与 Loop、Connector SPI/HTTP、验证器链、节点 I/O、消息去重、租约续期/fencing 和 Vue Flow 编辑器可用 | [SOAR 设计](soar.md)、`src/main/java/**/soar/` |
+| 自动化验证 | 根项目 114 个测试、Flink 38 个测试、前端 3 个单元测试、生产构建和 1 条 Playwright E2E 通过；包含真实 PostgreSQL V15、fencing/续租、并行/循环/手动触发、失败传播、Flink DLQ 与离开保存 | [路线图](roadmap.md) |
 | 备份恢复 | ES 临时索引备份恢复演练通过 | `infra/elasticsearch/backup-restore-rehearsal.sh` |
 
 ## 当前部署基线
@@ -51,7 +51,7 @@ HISIEM 已完成检测链路、控制面、接入向导、告警处置、调查�
 3. 后台任务已有租约和启动恢复，但具体 handler 的自动重放、幂等键和跨实例协调仍需补齐。
 4. SOAR 控制面按 tenant 隔离 Playbook/执行/审批；告警、案件和 ES 数据面仍缺少完整 tenant 字段、索引隔离和文档级权限。
 5. 真实生产负载下的容量、保留策略、升级回滚和灾备 RTO/RPO 还需要环境级压测与演练。
-6. SOAR 控制面发布 lifecycle 消息还不是事务 outbox；事件解析已有 Flink DLQ topic，但 lifecycle 消息仍缺少可运营的 DLQ/重放流程，并需长时间吞吐、重启故障注入和跨地域恢复演练。外部 Connector、复杂图和凭据治理不属于当前实现。
+6. SOAR 控制面发布 lifecycle 消息还不是事务 outbox；事件解析已有 Flink DLQ topic，但 lifecycle 消息仍缺少可运营的 DLQ/重放。持久并行/静态循环、手动触发和通用 HTTP Connector 基线已实现；生产仍缺凭据治理、mTLS/出口代理、限流/熔断/隔离、子流程、AI、长时间压测与跨地域恢复演练。
 
 ## 文档使用规则
 

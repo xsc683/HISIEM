@@ -16,6 +16,7 @@ public record SoarExecution(
         String objectType,
         String objectId,
         String eventType,
+        String triggerType,
         String triggerMessageId,
         SoarTriggerEnvelope triggerEnvelope,
         Map<String, Object> payloadSnapshot,

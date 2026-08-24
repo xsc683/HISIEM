@@ -206,6 +206,7 @@ export function listSoarExecutions(status, size = 100) {
   if (status) query.set('status', status)
   return request(`/soar/executions?${query}`)
 }
+export const triggerSoarExecution = (payload) => request('/soar/executions', json('POST', payload))
 export const getSoarExecution = (id) => request(`/soar/executions/${segment(id)}`)
 export const cancelSoarExecution = (id) => request(`/soar/executions/${segment(id)}/cancel`, { method: 'POST' })
 export const listSoarApprovals = (status, size = 100) => {
