@@ -99,6 +99,14 @@ onMounted(load)
 
 <style scoped>
 .template-grid { display: grid; grid-template-columns: minmax(360px, .8fr) minmax(580px, 1.2fr); gap: 16px; }
-.template-item { cursor: pointer; border-radius: 8px; padding: 12px !important; }
+.template-item { cursor: pointer; border: 1px solid transparent; border-radius: 8px; padding: 12px !important; transition: background .16s, border-color .16s; }
 .template-item:hover, .template-item.selected { background: #edf6fa; }
+.template-item.selected { border-color: #b9d8e7; }
+@media (max-width: 1120px) {
+  .template-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 600px) {
+  .template-grid { gap: 12px; }
+  .template-item { padding: 10px !important; }
+}
 </style>

@@ -81,4 +81,9 @@ onMounted(async () => {
 <style scoped>
 .source-grid { display: grid; grid-template-columns: minmax(380px, .8fr) minmax(560px, 1.2fr); gap: 16px; }
 .code-panel { max-height: 230px; }
+@media (max-width: 1120px) { .source-grid { grid-template-columns: 1fr; } }
+@media (max-width: 560px) {
+  .source-grid { gap: 12px; }
+  .source-grid :deep(.ant-space) { display: flex; align-items: flex-start; flex-direction: column; }
+}
 </style>

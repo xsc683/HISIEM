@@ -24,8 +24,8 @@ flowchart LR
     end
 
     subgraph ControlPlane["控制面"]
-        WEB["Vue 3 / Vite 控制台"]
-        API["Spring Boot API<br/>认证 / 配置 / 处置 / 运维"]
+        WEB["Vue 3 / Vite 控制台<br/>日志检索 / 运营大屏 / 处置"]
+        API["Spring Boot API<br/>认证 / 结构化检索 / 配置 / 处置 / 运维"]
         PG[("PostgreSQL + Flyway<br/>控制面事实与执行状态")]
         MIRROR["CaseMirrorDispatcher<br/>outbox 重试"]
         RISK["CriticalityRecalcCoordinator<br/>entity-risk.py --write"]
@@ -120,6 +120,27 @@ flowchart TD
 
 当前案件链路是“PostgreSQL 事实源 + ES 兼容镜像 + 同步业务保护 + 异步收敛”的混合实现，而不是纯 outbox：创建先写 PostgreSQL/outbox，再同步写案件镜像并标记告警；更新先用 ES `_seq_no/_primary_term` 做乐观锁，再以 PostgreSQL `version` 更新事实并排入 outbox；删除先删 PostgreSQL并排入 delete outbox，再尽力同步删除 ES。同步步骤失败会进行补偿，但跨系统仍不具备原子性，outbox 与 reconcile 用于让镜像最终收敛。
 
+### 3.3 日志检索与运营大屏读链路
+
+```mermaid
+flowchart LR
+    UI["日志检索条件器<br/>字段 + 关系 + AND/OR"] --> API["LogSearchController"]
+    API --> CATALOG["归一化字段白名单<br/>字段类型 + 可用关系"]
+    API --> VALIDATE{"字段 / 操作符 / 时间 / 分页<br/>是否受控?"}
+    VALIDATE -->|"否"| BAD["HTTP 400"]
+    VALIDATE -->|"是"| DSL["类型化构造 ES bool DSL<br/>不接受自由 Query DSL"]
+    DSL --> EVENTS[("siem-events-*<br/>显式排除 raw")]
+    EVENTS --> RESULT["分页事件 + total + tookMs"]
+    RESULT --> UI
+    RESULT --> WALL["运营大屏事件流"]
+    ALERTS["告警 summary<br/>ES 全量 filter 聚合 + 最新 7 条"] --> WALL
+    CASES["案件 summary<br/>PG 全量 GROUP BY + 最新 7 条"] --> WALL
+    WALL -->|"10 秒，隐藏页暂停"| WALL
+    WEB["侧栏 Kibana 入口"] --> KIBANA["Kibana Discover"] --> EVENTS
+```
+
+日志检索属于控制面的受控读路径，不改变 `Logstash → Kafka/Flink` 实时检测链。字段、操作符、索引目标和 DSL 形状由后端决定：前端只能组合条件，不能透传脚本或 Query DSL；前端以请求序列只接纳最后一次响应。运营大屏复用同一事件检索接口，并并行读取告警、案件 summary API；状态计数来自全量聚合，最新队列按业务时间排序，不再把风险列表前 200 条当作总体。任一数据源失败时保留其他区域和最近一次成功结果。
+
 ## 4. 控制面边界与接口
 
 控制面不参与实时日志消费，也不把事件/告警正文复制到 PostgreSQL。它通过 Elasticsearch Java API Client 检索事件、告警和实体风险，并在 PostgreSQL 中维护需要事务一致性的状态。
@@ -129,6 +150,7 @@ flowchart TD
 | 认证与 RBAC | Spring Security、Bearer 会话、登录失败限制、首次改密 | `/api/auth/**`、`users`/`auth_sessions` |
 | 数据源接入 | 模板预览、创建、生效、停用、删除与失败回滚 | `/api/log-sources/**`、`infra/log-sources/*.yaml` |
 | 告警与案件 | 告警状态/verdict、案件聚合、负责人/证据、时间线 | `/api/alerts/**`、`/api/cases/**`、案件关系表 + ES 镜像 |
+| 日志检索与大屏 | 归一化字段目录、受控 ES 条件查询、事件流与告警/案件全量状态汇总 | `/api/log-search/**`、`/api/alerts/summary`、`/api/cases/summary`、`siem-events-*` |
 | SOAR | Kafka/人工触发、11 类可插拔 Handler、持久并行/循环、Connector 注册表、重试退避、人工审批、续租 Worker、fencing 和逐 attempt I/O | `/api/soar/**`、V11–V15 `soar_*` 表、两个 lifecycle topic |
 | 运维治理 | 六组件健康扫描、后台任务租约/恢复、指标、备份恢复演练 | `/api/ops/health-scan`、`/api/tasks/**`、Actuator |
 

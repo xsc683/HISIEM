@@ -138,9 +138,14 @@ export const deployRules = () => request('/detection-rules/deploy', { method: 'P
 export const ruleMitre = () => request('/detection-rules/mitre')
 
 // 告警
-export function listAlerts(status) {
-  const query = status ? `?${new URLSearchParams({ status })}` : ''
-  return request(`/alerts${query}`)
+export function listAlerts(status, size = 100) {
+  const query = new URLSearchParams({ size })
+  if (status) query.set('status', status)
+  return request(`/alerts?${query}`)
+}
+
+export function getAlertSummary() {
+  return request('/alerts/summary')
 }
 export const getAlert = (id) => request(`/alerts/${segment(id)}`)
 export const updateAlertStatus = (id, status) => request(`/alerts/${segment(id)}/status`, json('POST', { status }))
@@ -150,11 +155,15 @@ export const batchAlertVerdict = (ids, verdict) => request('/alerts/batch-verdic
 export const fpRate = () => request('/alerts/fp-rate')
 
 // 案件
-export function listCases(status, entity) {
-  const query = new URLSearchParams()
+export function listCases(status, entity, size = 100) {
+  const query = new URLSearchParams({ size })
   if (status) query.set('status', status)
   if (entity) query.set('entity', entity)
-  return request(`/cases${query.size ? `?${query}` : ''}`)
+  return request(`/cases?${query}`)
+}
+
+export function getCaseSummary() {
+  return request('/cases/summary')
 }
 export const getCase = (id) => request(`/cases/${segment(id)}`)
 export const createCase = (alertIds, title) => request('/cases', json('POST', { alertIds, title }))

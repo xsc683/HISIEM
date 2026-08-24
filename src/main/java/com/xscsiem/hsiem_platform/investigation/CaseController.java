@@ -38,6 +38,13 @@ public class CaseController {
         return service.list(status, entity, size);
     }
 
+    /** 大屏案件全量状态聚合与最新队列。 */
+    @GetMapping("/summary")
+    @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST', 'AUDIT')")
+    public Map<String, Object> summary() {
+        return service.summary();
+    }
+
     /** 案件详情(含 alert_ids/entities/状态)。 */
     @GetMapping("/{id}")
     @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST', 'AUDIT')")

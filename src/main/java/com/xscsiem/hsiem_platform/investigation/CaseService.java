@@ -103,6 +103,43 @@ public class CaseService {
         return esList(status, entity, size);
     }
 
+    /** 大屏案件口径：数据库全量计数并附带按更新时间倒序的最近 7 条。 */
+    public Map<String, Object> summary() {
+        List<Map<String, Object>> recent = list(null, null, 7);
+        Map<String, Long> statuses = control != null ? control.caseStatusCounts() : legacyCaseStatusCounts();
+        long total = statuses.values().stream().mapToLong(Long::longValue).sum();
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("total", total);
+        result.put("statuses", statuses);
+        result.put("recent", recent);
+        return result;
+    }
+
+    private Map<String, Long> legacyCaseStatusCounts() {
+        String body = """
+                {"size":0,"track_total_hits":true,
+                 "aggs":{"statuses":{"filters":{"filters":{
+                   "open":{"term":{"case.status":"open"}},
+                   "investigating":{"term":{"case.status":"investigating"}},
+                   "resolved":{"term":{"case.status":"resolved"}}
+                 }}}}}
+                """;
+        Map<String, Object> response = esCallLenient("POST", "/siem-cases/_search", body);
+        Map<String, Long> statuses = new LinkedHashMap<>();
+        Object aggregationsObject = response.get("aggregations");
+        if (aggregationsObject instanceof Map<?, ?> aggregations
+                && aggregations.get("statuses") instanceof Map<?, ?> statusAggregation
+                && statusAggregation.get("buckets") instanceof Map<?, ?> buckets) {
+            for (Map.Entry<?, ?> bucket : buckets.entrySet()) {
+                if (bucket.getValue() instanceof Map<?, ?> values
+                        && values.get("doc_count") instanceof Number count) {
+                    statuses.put(String.valueOf(bucket.getKey()), count.longValue());
+                }
+            }
+        }
+        return statuses;
+    }
+
     private List<Map<String, Object>> esList(String status, String entity, int size) {
         StringBuilder q = new StringBuilder();
         List<String> must = new ArrayList<>();

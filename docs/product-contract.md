@@ -8,8 +8,12 @@
 
 前端使用 Vue 3；实际路由定义在 `web/src/router/index.js`，菜单和全局壳位于 `web/src/layouts/MainLayout.vue`。列表、创建和详情均为可深链的独立路由：
 
+全局壳不再为租户、时钟和用户操作单独占用顶部栏：这些信息集中在侧栏底部的账户卡片中，点击后可切换租户、修改密码或退出登录；侧栏折叠时保留头像入口。页面标题、操作区、筛选区、卡片、表格和状态展示统一使用公共视觉规范，业务页从可视区顶部直接开始。宽度不超过 900px 时侧栏变为遮罩抽屉，主页面不再保留固定最小宽度；筛选表单、统计区和普通编辑表单重排为单列，数据表格只在自身容器内横向滚动。SOAR 画布在窄屏上按“节点面板—画布—配置面板”纵向排列，仍保留画布平移和缩放能力。
+
 | 菜单 | 路由 | 当前职责 | 主要接口族 |
 | --- | --- | --- | --- |
+| 安全运营大屏 | `/overview` | 10 秒轮询事件、告警、案件，以全量聚合展示处置库存、关联率和闭环率；支持浏览器全屏 | `/api/log-search`、`/api/alerts/summary`、`/api/cases/summary` |
+| 日志检索 | `/logs` | 以归一化字段、8 类关系和 AND/OR 条件检索正常事件索引，完整 JSON 下钻 | `/api/log-search/*` |
 | 数据源 | `/sources`、`/sources/new`、`/sources/:id` | 数据源列表、独立创建预览和生命周期详情 | `/api/log-sources/*` |
 | 解析规则库 | `/parser-templates` | 独立浏览模板、测试日志和查看 ECS/Grok 逻辑 | `/api/parser-templates/*` |
 | 检测规则 | `/rules`、`/rules/new`、`/rules/:id`、`/rules/:id/edit` | 逻辑摘要、完整 DSL、创建编辑和启停/部署 | `/api/detection-rules/*` |
@@ -18,11 +22,14 @@
 | SOAR 自动化 | `/soar/playbooks`、`/soar/playbooks/new`、`/soar/playbooks/:id/edit`、`/soar/executions`、`/soar/executions/:id`、`/soar/approvals` | 生命周期驱动的 Playbook、执行 I/O 和人工审批 | `/api/soar/*` |
 | 数据健康 | `/health` | 数据源事件量、失败率、趋势和失败下钻 | `/api/data-health/*` |
 | 运行态扫描 | `/ops/health` | PostgreSQL/ES/Kafka/Logstash/Flink/Kibana 探针和任务 | `/api/ops/health-scan`、`/api/tasks/*` |
+| Kibana 分析 | 侧栏外部入口 | 在新标签打开 Kibana Discover；默认使用当前浏览器主机的 `5601`，地址可用 `VITE_KIBANA_URL` 覆盖 | Kibana `5601` |
 | 资产关键度 | `/criticality`、`/criticality/new`、`/criticality/:type/:key/edit` | IP/用户/主机风险权重维护和重算 | `/api/settings/criticality/*` |
 | 通知中心 | `/notifications` | 查看、已读和删除控制面通知 | `/api/notifications/*` |
 | 用户与权限 | `/rbac/users`、`/rbac/users/new`、`/rbac/users/:username`、`/rbac/roles`、`/rbac/audit` | 用户生命周期、角色矩阵和审计 | `/api/auth/*` |
 
 页面之间不通过页面状态互相猜测，统一使用下面的标识关联：
+
+`ADMIN/ANALYST/AUDIT` 登录后默认进入 `/overview`，可访问大屏、日志、告警与案件只读链路；`OPS` 默认进入 `/health`，侧栏不展示其无权访问的大屏、日志、告警和案件入口，越权深链会回到该角色的默认页。
 
 | 对象 | 稳定标识 | 下游关联 |
 | --- | --- | --- |
@@ -93,6 +100,7 @@ POST   /api/detection-rules/deploy
 
 ```text
 GET    /api/alerts
+GET    /api/alerts/summary
 GET    /api/alerts/{id}
 POST   /api/alerts/{id}/status
 POST   /api/alerts/{id}/verdict
@@ -101,6 +109,7 @@ POST   /api/alerts/batch-verdict
 GET    /api/alerts/fp-rate
 
 GET    /api/cases
+GET    /api/cases/summary
 GET    /api/cases/{id}
 POST   /api/cases
 POST   /api/cases/{id}/alerts
@@ -113,7 +122,16 @@ DELETE /api/cases/{id}
 POST   /api/cases/aggregate
 ```
 
-告警状态和 verdict 必须分别校验；批量关闭前必须完成 verdict。案件聚合默认使用事件时间、实体分组、30 分钟窗口和至少 2 条告警，页面必须把当前窗口、阈值和分组方式显示出来。
+告警状态和 verdict 必须分别校验；批量关闭前必须完成 verdict。两个 `summary` 接口为大屏返回全量状态计数和最新 7 条时间序列，不能用风险排序或最多 200 条的工作列表估算总体。案件聚合默认使用事件时间、实体分组、30 分钟窗口和至少 2 条告警，页面必须把当前窗口、阈值和分组方式显示出来。
+
+### 日志检索
+
+```text
+GET    /api/log-search/fields
+POST   /api/log-search
+```
+
+字段目录由后端维护为 Logstash 已归一化的可信 ECS/平台字段，不接受前端传入任意字段或 Elasticsearch Query DSL。关系固定为 `is`、`contain`、`exist`、`is_one_of` 及对应四种 `not_*`；每个字段只展示后端目录声明的可用关系，多个条件使用单一 `AND` 或 `OR` 组合。查询只访问 `siem-events-*,-siem-events-raw-*`，默认最近 24 小时，单次跨度不超过 90 天、最多 20 个条件、每页最多 200 条且结果窗口不超过 10000。页面只接纳最后一次查询响应，避免慢请求覆盖新条件结果；`ADMIN/ANALYST/AUDIT` 可只读访问。
 
 ### 数据健康、任务、设置和通知
 
@@ -178,11 +196,12 @@ Playbook 和执行以 V11–V15 PostgreSQL 表为准，不从 `infra/soar/*.yaml
 
 ### 从事件到案件
 
-1. 在 `/alerts` 以规则、实体、状态和时间筛选告警，并进入 `/alerts/:id` 查看结构化证据。
-2. 展开告警时同时查看 `@timestamp`（事件/窗口结束时间）与 `alert.created_at`（系统生成时间），原始 JSON 使用 UTC。
-3. 先设置 verdict，再按状态机进行 acknowledged/investigating/closed 等处置。
-4. 在 `/cases` 选择告警执行自动或手动聚合；确认实体、关联告警、时间线和证据。
-5. 结案时提供 verdict；案件不能在仍有关联告警时删除。
+1. 在 `/logs` 选择归一化字段和关系，以 AND/OR 组合检索 Elasticsearch 正常事件；展开完整 JSON 核对 `@timestamp`、原始消息和实体字段。
+2. 在 `/alerts` 以规则、实体、状态和时间筛选告警，并进入 `/alerts/:id` 查看结构化证据。
+3. 展开告警时同时查看 `@timestamp`（事件/窗口结束时间）与 `alert.created_at`（系统生成时间），原始 JSON 使用 UTC。
+4. 先设置 verdict，再按状态机进行 acknowledged/investigating/closed 等处置。
+5. 在 `/cases` 选择告警执行自动或手动聚合；确认实体、关联告警、时间线和证据。
+6. 结案时提供 verdict；案件不能在仍有关联告警时删除。
 
 ### 规则、风险和通知
 
@@ -206,6 +225,9 @@ Playbook 和执行以 V11–V15 PostgreSQL 表为准，不从 `infra/soar/*.yaml
 ## 4. 当前验收清单
 
 - 页面路由与 `web/src/router/index.js` 一致；`/wizard` 仅作为兼容重定向，不再使用单个 activeKey 模拟导航。
+- `/overview` 同时展示事件、告警、案件及处理/闭环指标，局部 API 失败保留其他模块数据；隐藏标签页不继续轮询。
+- 日志检索不接收自由 DSL；未知字段、字段不支持的关系、超限时间/分页/条件在访问 Elasticsearch 前返回 400，raw 解析失败索引不得混入结果。
+- Kibana 入口在新标签打开且不接管 HISIEM 会话；生产反向代理部署必须显式设置 `VITE_KIBANA_URL`。
 - `App.vue` 只承载根出口；业务数据按路由请求，列表、创建、详情不堆在同一页面。
 - 规则列表能在不展开 JSON 的情况下说明检测字段、条件、窗口、分组键和阈值；无效 DSL 不得覆盖原 YAML。
 - 接入失败不会悄悄显示为空数据；任务状态、错误和旧配置可见。

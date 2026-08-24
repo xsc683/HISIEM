@@ -1,18 +1,21 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { hasSession } from '../api/index.js'
 import { useAuth } from '../composables/useAuth.js'
+import { canAccessRoles, landingRoute } from '../utils/navigation.js'
 
 const MainLayout = () => import('../layouts/MainLayout.vue')
 
 const routes = [
   { path: '/login', name: 'login', component: () => import('../views/login/LoginView.vue'), meta: { public: true, title: '登录' } },
   {
-    path: '/', component: MainLayout, redirect: '/alerts', children: [
-      { path: 'alerts', component: () => import('../views/alerts/AlertListView.vue'), meta: { title: '告警台', menu: '/alerts' } },
-      { path: 'alerts/:id', component: () => import('../views/alerts/AlertDetailView.vue'), meta: { title: '告警详情', menu: '/alerts' } },
-      { path: 'cases', component: () => import('../views/cases/CaseListView.vue'), meta: { title: '调查案件', menu: '/cases' } },
-      { path: 'cases/new', component: () => import('../views/cases/CaseCreateView.vue'), meta: { title: '手动建案', menu: '/cases' } },
-      { path: 'cases/:id', component: () => import('../views/cases/CaseDetailView.vue'), meta: { title: '案件详情', menu: '/cases' } },
+    path: '/', component: MainLayout, redirect: '/overview', children: [
+      { path: 'overview', component: () => import('../views/overview/SecurityOverviewView.vue'), meta: { title: '安全运营大屏', menu: '/overview', roles: ['admin', 'analyst', 'audit'] } },
+      { path: 'logs', component: () => import('../views/logs/LogSearchView.vue'), meta: { title: '日志检索', menu: '/logs', roles: ['admin', 'analyst', 'audit'] } },
+      { path: 'alerts', component: () => import('../views/alerts/AlertListView.vue'), meta: { title: '告警台', menu: '/alerts', roles: ['admin', 'analyst', 'audit'] } },
+      { path: 'alerts/:id', component: () => import('../views/alerts/AlertDetailView.vue'), meta: { title: '告警详情', menu: '/alerts', roles: ['admin', 'analyst', 'audit'] } },
+      { path: 'cases', component: () => import('../views/cases/CaseListView.vue'), meta: { title: '调查案件', menu: '/cases', roles: ['admin', 'analyst', 'audit'] } },
+      { path: 'cases/new', component: () => import('../views/cases/CaseCreateView.vue'), meta: { title: '手动建案', menu: '/cases', roles: ['admin', 'analyst'] } },
+      { path: 'cases/:id', component: () => import('../views/cases/CaseDetailView.vue'), meta: { title: '案件详情', menu: '/cases', roles: ['admin', 'analyst', 'audit'] } },
       { path: 'rules', component: () => import('../views/rules/RuleListView.vue'), meta: { title: '检测规则', menu: '/rules' } },
       { path: 'rules/new', component: () => import('../views/rules/RuleFormView.vue'), meta: { title: '新建规则', menu: '/rules', roles: ['admin'] } },
       { path: 'rules/:id/edit', component: () => import('../views/rules/RuleFormView.vue'), meta: { title: '编辑规则', menu: '/rules', roles: ['admin'] } },
@@ -44,7 +47,7 @@ const routes = [
       { path: 'wizard', redirect: '/sources/new' },
     ],
   },
-  { path: '/:pathMatch(.*)*', redirect: '/alerts' },
+  { path: '/:pathMatch(.*)*', redirect: '/overview' },
 ]
 
 const router = createRouter({ history: createWebHistory(), routes, scrollBehavior: () => ({ top: 0 }) })
@@ -53,14 +56,14 @@ const auth = useAuth()
 router.beforeEach(async (to) => {
   if (to.meta.public) {
     if (to.path === '/login' && hasSession()) {
-      try { await auth.ensure(); return '/alerts' } catch { return true }
+      try { const user = await auth.ensure(); return landingRoute(user?.role) } catch { return true }
     }
     return true
   }
   if (!hasSession()) return { path: '/login', query: { redirect: to.fullPath } }
   try {
     const user = await auth.ensure()
-    if (to.meta.roles && !to.meta.roles.includes(user.role)) return '/alerts'
+    if (!canAccessRoles(user.role, to.meta.roles)) return landingRoute(user.role)
     return true
   } catch {
     return { path: '/login', query: { redirect: to.fullPath } }

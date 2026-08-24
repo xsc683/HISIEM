@@ -89,6 +89,7 @@ public class ElasticsearchGateway {
         response.hits().hits().forEach(hit -> {
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("_id", hit.id());
+            row.put("_index", hit.index());
             row.put("_source", hit.source());
             if (hit.seqNo() != null) row.put("_seq_no", hit.seqNo());
             if (hit.primaryTerm() != null) row.put("_primary_term", hit.primaryTerm());

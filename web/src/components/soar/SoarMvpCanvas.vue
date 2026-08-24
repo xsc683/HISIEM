@@ -10,7 +10,8 @@
     </aside>
 
     <section class="flow-canvas">
-      <VueFlow v-model:nodes="flowNodes" v-model:edges="flowEdges" :fit-view-on-init="true" :min-zoom="0.35" :max-zoom="1.8"
+      <VueFlow :nodes="flowNodes" :edges="flowEdges" :fit-view-on-init="true" :min-zoom="0.35" :max-zoom="1.8"
+        :nodes-deletable="false" :edges-updatable="false"
         @connect="connectNodes" @node-click="selectNode" @edge-click="selectEdge" @node-drag-stop="moveNode" @pane-click="clearSelection">
         <template #node-soar="{ data, selected }">
           <div class="soar-node" :class="[`node-${data.node.type}`, { selected }]" :style="{ '--color': color[data.node.type] }">
@@ -61,7 +62,7 @@ const palette = [
 const color = { start: '#278463', end: '#596b78', condition: '#7651a8', business: '#217aa5', human: '#bf771d', wait: '#258887', parallel: '#9a5a2c', join: '#9a5a2c', loop: '#4766ad', loop_end: '#4766ad', connector: '#a13f67' }
 const label = { start: 'START', end: 'END', condition: 'CONDITION', business: 'BUSINESS', human: 'HUMAN', wait: 'WAIT', parallel: 'PARALLEL', join: 'JOIN', loop: 'LOOP', loop_end: 'LOOP END', connector: 'CONNECTOR' }
 const selectedNode = computed(() => localGraph.value.nodes?.find((node) => node.id === selectedNodeId.value) || null)
-const selectedEdge = computed(() => flowEdges.value.find((edge) => edge.id === selectedEdgeId.value))
+const selectedEdge = computed(() => localGraph.value.edges?.find((edge) => edge.id === selectedEdgeId.value) || null)
 
 watch(() => props.modelValue, (graph) => {
   const nextSignature = graphSignature(graph)
@@ -76,6 +77,8 @@ rebuild()
 function rebuild() {
   flowNodes.value = (localGraph.value.nodes || []).map((node) => ({ id: node.id, type: 'soar', position: { x: node.x, y: node.y }, data: { node } }))
   flowEdges.value = (localGraph.value.edges || []).map(edgeView)
+  if (selectedNodeId.value && !localGraph.value.nodes.some((node) => node.id === selectedNodeId.value)) selectedNodeId.value = ''
+  if (selectedEdgeId.value && !localGraph.value.edges.some((edge) => edge.id === selectedEdgeId.value)) selectedEdgeId.value = ''
 }
 
 function edgeView(edge) {
@@ -137,6 +140,7 @@ function selectNode({ node }) { selectedNodeId.value = node.id; selectedEdgeId.v
 function selectEdge({ edge }) { selectedEdgeId.value = edge.id; selectedNodeId.value = '' }
 function clearSelection() { selectedNodeId.value = ''; selectedEdgeId.value = '' }
 function moveNode({ node }) {
+  if (!localGraph.value.nodes.some((item) => item.id === node.id)) return
   change(moveGraphNode(localGraph.value, node.id, node.position))
 }
 function updateNode(node) {
@@ -160,7 +164,8 @@ function deleteEdge() {
 .node-palette, .node-inspector-panel { padding:14px; overflow:auto; background:#f7fafb; }
 .node-palette { border-right:1px solid #d8e3ea; }.node-inspector-panel { border-left:1px solid #d8e3ea; }
 .node-palette h3 { margin:0; color:#19364a; }.node-palette > p { margin:3px 0 12px; color:#738694; font-size:12px; }
-.node-palette > button { width:100%; display:flex; align-items:center; gap:9px; margin:8px 0; padding:10px; color:var(--color); border:1px solid #d8e3ea; border-left:3px solid var(--color); border-radius:7px; background:white; text-align:left; cursor:pointer; }
+.node-palette > button { width:100%; display:flex; align-items:center; gap:9px; margin:8px 0; padding:10px; color:var(--color); border:1px solid #d8e3ea; border-left:3px solid var(--color); border-radius:7px; background:white; text-align:left; cursor:pointer; transition: border-color .16s, background .16s, transform .16s; }
+.node-palette > button:hover { border-color: color-mix(in srgb, var(--color) 48%, #d8e3ea); background:#fbfdfe; transform:translateY(-1px); }
 .node-palette > button span, .node-palette > button strong, .node-palette > button small { display:block; }.node-palette > button small { margin-top:2px; color:#758795; }
 .flow-canvas { position:relative; background-color:#f4f8fa; background-image:radial-gradient(#bacad4 1px, transparent 1px); background-size:20px 20px; }
 .flow-canvas :deep(.vue-flow) { height:100%; }.canvas-tip { position:absolute; left:12px; bottom:10px; z-index:5; padding:6px 9px; color:#617787; background:rgb(255 255 255 / 90%); border-radius:6px; font-size:11px; }
@@ -169,4 +174,27 @@ function deleteEdge() {
 .soar-node.selected { box-shadow:0 0 0 3px color-mix(in srgb, var(--color) 24%, transparent); }.soar-node span, .soar-node strong, .soar-node code { display:block; }.soar-node span { color:var(--color); font-size:10px; font-weight:800; letter-spacing:.08em; }.soar-node strong { margin:5px 0; color:#173347; }.soar-node code { overflow:hidden; color:#718491; font-size:10px; text-overflow:ellipsis; }
 .node-start, .node-end { width:120px; min-height:58px; border-radius:30px; text-align:center; }.node-start { background:#eaf7f2; }.node-end { background:#f1f4f6; }
 .soar-node :deep(.vue-flow__handle) { width:11px; height:11px; border:2px solid white; background:var(--color); }
+@media (max-width: 1350px) {
+  .soar-editor { grid-template-columns: 170px minmax(520px, 1fr) 300px; }
+}
+@media (max-width: 1250px) {
+  .soar-editor { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 600px auto; height: auto; overflow: visible; }
+  .node-palette { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: 8px; overflow: visible; border-right: 0; border-bottom: 1px solid #d8e3ea; }
+  .node-palette h3, .node-palette > p, .node-palette > .ant-divider, .node-palette > .ant-alert { grid-column: 1 / -1; }
+  .node-palette > p { margin-bottom: 3px; }
+  .node-palette > button { min-height: 54px; margin: 0; }
+  .node-palette > .ant-divider { margin-block: 6px; }
+  .flow-canvas { min-height: 600px; }
+  .node-inspector-panel { max-height: 660px; border-top: 1px solid #d8e3ea; border-left: 0; }
+}
+@media (max-width: 600px) {
+  .soar-editor { grid-template-rows: auto 520px auto; border-radius: 8px; }
+  .node-palette { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 10px; }
+  .node-palette > button { align-items: flex-start; padding: 8px; }
+  .node-palette > button small { font-size: 10px; }
+  .flow-canvas { min-height: 520px; }
+  .canvas-tip { right: 8px; bottom: 8px; left: 8px; max-width: 235px; }
+  .edge-delete { right: 8px; bottom: 45px; }
+  .node-inspector-panel { padding: 11px; }
+}
 </style>

@@ -289,6 +289,19 @@ public class JdbcControlPlaneStore implements ControlPlaneStore {
     }
 
     @Override
+    public Map<String, Long> caseStatusCounts() {
+        Map<String, Long> counts = new LinkedHashMap<>();
+        for (Map<String, Object> row : jdbc.queryForList(
+                "SELECT status, COUNT(*) AS total FROM cases GROUP BY status")) {
+            Object total = row.get("total");
+            if (row.get("status") != null && total instanceof Number number) {
+                counts.put(String.valueOf(row.get("status")), number.longValue());
+            }
+        }
+        return counts;
+    }
+
+    @Override
     public Map<String, Object> findCase(String id) {
         List<Map<String, Object>> rows = jdbc.query("""
                         SELECT id, title, status, aggregation, operator, owner, verdict,

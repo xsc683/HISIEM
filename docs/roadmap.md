@@ -32,7 +32,7 @@ npm.cmd --prefix web run build
 npm.cmd --prefix web run test:e2e
 ```
 
-当前基线为根项目 114 个测试、Flink 38 个测试、前端 3 个单元测试、生产构建和 1 条 Playwright 浏览器 E2E 全部通过；测试数量随新增回归用例变化，最终以 Maven/Node/Playwright 输出为准。涉及基础设施时还要执行 Docker Compose、健康扫描、Kafka/Flink/lifecycle 链路和 ES 备份恢复验证。结果与环境说明集中记录在[当前状态](current-status.md)和[运维手册](operations.md)。
+当前基线为根项目 124 个测试、Flink 38 个测试、前端 9 个单元测试、生产构建和 3 条 Playwright 浏览器 E2E 全部通过；测试数量随新增回归用例变化，最终以 Maven/Node/Playwright 输出为准。涉及基础设施时还要执行 Docker Compose、健康扫描、Kafka/Flink/lifecycle 链路和 ES 备份恢复验证。结果与环境说明集中记录在[当前状态](current-status.md)和[运维手册](operations.md)。
 
 ## 下一阶段优先级
 

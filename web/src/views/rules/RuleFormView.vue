@@ -184,4 +184,13 @@ onMounted(load)
 .condition-list { display: grid; gap: 10px; }
 .condition-row { display: flex; align-items: center; gap: 10px; padding: 12px; border: 1px solid #dfe7ed; border-radius: 8px; background: #f8fafb; }
 .condition-index { display: grid; place-items: center; width: 25px; height: 25px; border-radius: 50%; background: #dcecf5; color: #1d6fa5; font-size: 12px; font-weight: 700; }
+@media (max-width: 1120px) { .form-grid { grid-template-columns: 1fr; } }
+@media (max-width: 680px) {
+  .two-columns { grid-template-columns: 1fr; gap: 0; }
+  .condition-row { display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; gap: 8px; }
+  .condition-index { grid-column: 1; grid-row: 1; }
+  .condition-row > :deep(.ant-select), .condition-row > :deep(.ant-select-auto-complete),
+  .condition-row > :deep(.ant-input) { grid-column: 2; width: 100% !important; }
+  .condition-row > :deep(.ant-btn) { grid-column: 3; grid-row: 1; }
+}
 </style>

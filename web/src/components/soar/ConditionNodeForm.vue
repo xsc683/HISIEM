@@ -40,6 +40,10 @@ function remove(index) { update(conditions.value.filter((_, position) => positio
 
 <style scoped>
 .condition-form { display: flex; flex-direction: column; gap: 10px; }
-.condition-row { display: grid; grid-template-columns: 1.5fr 90px 1fr auto; gap: 7px; align-items: center; }
+.condition-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; align-items: center; padding: 9px; border: 1px solid #e1e8ec; border-radius: 8px; background: #fbfcfd; }
+.condition-row > .ant-select:first-child { grid-column: 1 / -1; }
+.condition-row > .ant-select:nth-child(2), .condition-row > .ant-input,
+.condition-row > .ant-input-number, .condition-row > .no-value { grid-column: 1; }
+.condition-row > .ant-btn { grid-column: 2; grid-row: 2 / span 2; align-self: start; }
 .no-value { padding-left: 8px; }
 </style>

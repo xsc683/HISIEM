@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "test": "node --test src/components/soar/soarGraph.test.js",
+    "test": "node --test src/components/soar/soarGraph.test.js src/views/logs/logSearchQuery.test.js src/utils/navigation.test.js",
     "test:e2e": "playwright test",
     "build": "vite build",
     "preview": "vite preview"

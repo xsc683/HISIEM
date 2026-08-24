@@ -1,4 +1,4 @@
-<template><a-tag :color="color">{{ text }}</a-tag></template>
+<template><a-tag :color="color" class="status-tag"><span class="status-dot" />{{ text }}</a-tag></template>
 
 <script setup>
 import { computed } from 'vue'
@@ -15,3 +15,8 @@ const groupColors = {
 }
 const color = computed(() => groupColors[props.group]?.[props.value] || statusColor(props.value))
 </script>
+
+<style scoped>
+.status-tag { display: inline-flex; min-height: 22px; align-items: center; gap: 5px; padding-inline: 7px; font-size: 11px; font-weight: 600; line-height: 20px; }
+.status-dot { width: 5px; height: 5px; flex: 0 0 5px; border-radius: 50%; background: currentColor; opacity: .8; }
+</style>

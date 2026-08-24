@@ -2,7 +2,7 @@
 
 > 定位：面向项目交接、迭代决策和后续开发的管理视图。当前运行事实仍以 [`current-status.md`](current-status.md) 为准，功能/API 以 [`product-contract.md`](product-contract.md) 为准，阶段优先级以 [`roadmap.md`](roadmap.md) 为准；本文不建立第四份接口契约。
 >
-> 基线：2026-08-24，`add_frame` 分支，WSL2 + Docker Desktop；最近一次完整验证基线为 Spring Boot 114 个测试、Flink 38 个测试、前端 3 个单元测试、生产构建和 1 条 Playwright E2E。
+> 基线：2026-08-24，`add_frame` 分支，WSL2 + Docker Desktop；最近一次完整验证基线为 Spring Boot 124 个测试、Flink 38 个测试、前端 9 个单元测试、生产构建和 3 条 Playwright E2E。
 
 ## 1. 当前结论
 

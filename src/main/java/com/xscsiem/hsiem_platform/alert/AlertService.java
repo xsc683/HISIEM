@@ -83,6 +83,76 @@ public class AlertService {
         return out;
     }
 
+    /**
+     * 大屏告警口径：状态与归案数量由 Elasticsearch 全量聚合，最新告警按创建时间取前 7 条。
+     * 与风险优先的告警工作队列分离，防止把高风险前 200 条错误解释为总体或最新数据。
+     */
+    public Map<String, Object> summary() {
+        String body = """
+                {"size":7,"track_total_hits":true,
+                 "sort":[{"alert.created_at":{"order":"desc","unmapped_type":"date"}},
+                         {"@timestamp":{"order":"desc","unmapped_type":"date"}}],
+                 "aggs":{
+                   "statuses":{"filters":{"filters":{
+                     "open":{"term":{"alert.status":"open"}},
+                     "acknowledged":{"term":{"alert.status":"acknowledged"}},
+                     "investigating":{"term":{"alert.status":"investigating"}},
+                     "resolved":{"term":{"alert.status":"resolved"}},
+                     "closed":{"term":{"alert.status":"closed"}}
+                   }}},
+                   "linked":{"filter":{"exists":{"field":"alert.case_id"}}}
+                 }}
+                """;
+        Map<String, Object> response = esCall("POST", "/siem-alerts/_search", body);
+        Map<String, Long> statuses = new LinkedHashMap<>();
+        long total = 0;
+        List<Map<String, Object>> recent = new ArrayList<>();
+
+        Object hitsObject = response.get("hits");
+        if (hitsObject instanceof Map<?, ?> hits) {
+            Object totalObject = hits.get("total");
+            if (totalObject instanceof Map<?, ?> totalMap && totalMap.get("value") instanceof Number number) {
+                total = number.longValue();
+            } else if (totalObject instanceof Number number) {
+                total = number.longValue();
+            }
+            if (hits.get("hits") instanceof List<?> rows) {
+                for (Object row : rows) {
+                    if (row instanceof Map<?, ?> hit && hit.get("_source") instanceof Map<?, ?> source) {
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> item = new LinkedHashMap<>((Map<String, Object>) source);
+                        item.put("_id", hit.get("_id"));
+                        recent.add(item);
+                    }
+                }
+            }
+        }
+
+        long linked = 0;
+        Object aggregationsObject = response.get("aggregations");
+        if (aggregationsObject instanceof Map<?, ?> aggregations) {
+            if (aggregations.get("statuses") instanceof Map<?, ?> statusAggregation
+                    && statusAggregation.get("buckets") instanceof Map<?, ?> buckets) {
+                for (Map.Entry<?, ?> bucket : buckets.entrySet()) {
+                    if (bucket.getValue() instanceof Map<?, ?> values
+                            && values.get("doc_count") instanceof Number count) {
+                        statuses.put(String.valueOf(bucket.getKey()), count.longValue());
+                    }
+                }
+            }
+            if (aggregations.get("linked") instanceof Map<?, ?> linkedAggregation
+                    && linkedAggregation.get("doc_count") instanceof Number count) {
+                linked = count.longValue();
+            }
+        }
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("total", total);
+        result.put("statuses", statuses);
+        result.put("linked", linked);
+        result.put("recent", recent);
+        return result;
+    }
+
     /** 告警详情(by _id = 确定性 sha1 id)。 */
     public Map<String, Object> detail(String id) {
         return esGet("/siem-alerts/_doc/" + id);

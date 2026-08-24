@@ -17,7 +17,7 @@
       <a-button v-if="isNew" type="primary" :loading="saving" @click="create">创建草稿并进入设计器</a-button>
     </a-card>
     <a-card v-if="!isNew && loaded && form.graph" class="surface-card" :body-style="{ padding: 0 }">
-      <SoarMvpCanvas v-model="form.graph" :fields="fields" :actions="actions" />
+      <SoarMvpCanvas :model-value="form.graph" :fields="fields" :actions="actions" @update:model-value="updateGraph" />
     </a-card>
   </div>
 </template>
@@ -38,12 +38,28 @@ const objectOptions = [{ value: 'alert', label: '告警' }, { value: 'case', lab
 const eventOptions = computed(() => [{ value: `${form.entryType}.created`, label: '创建' }, { value: `${form.entryType}.updated`, label: '更新' }])
 const executionWarning = computed(() => form.status === 'published' || form.status === 'disabled' ? '修改已发布/停用的 Playbook 会自动回到草稿并停用；现有执行继续使用旧快照。' : '')
 
-watch(form, () => {
-  if (!loaded.value || syncing.value || isNew.value) return
-  editVersion += 1; dirty.value = true; saveState.value = '有未保存更改'; window.clearTimeout(saveTimer); saveTimer = window.setTimeout(saveNow, 900)
-}, { deep: true })
+watch(() => [form.name, form.description, form.entryType, [...form.eventTypes]], markDirty, { deep: true })
 
 function assign(value) { syncing.value = true; Object.assign(form, { id: value.id, name: value.name, description: value.description, entryType: value.entryType, eventTypes: [...value.eventTypes], graph: cloneGraph(value.graph), revision: value.revision, status: value.status }); queueMicrotask(() => { syncing.value = false }) }
+function graphSignature(graph) { return JSON.stringify(graph || { nodes: [], edges: [] }) }
+function editablePayload() { return { name: form.name, description: form.description, entryType: form.entryType, eventTypes: [...form.eventTypes], graph: cloneGraph(form.graph) } }
+function editableSignature(value = editablePayload()) { return JSON.stringify(value) }
+function markDirty() {
+  if (!loaded.value || syncing.value || isNew.value) return
+  editVersion += 1
+  dirty.value = true
+  saveState.value = '有未保存更改'
+  window.clearTimeout(saveTimer)
+  saveTimer = window.setTimeout(saveNow, 900)
+}
+function updateGraph(graph) {
+  const snapshot = cloneGraph(graph)
+  if (graphSignature(snapshot) === graphSignature(form.graph)) return
+  form.graph = snapshot
+  // v-model 的父级赋值与 Vue watch 刷新并非同一个同步边界。图变更在这里直接
+  // 递增版本，保存响应就没有机会在 watch 尚未执行时回填旧节点/旧连线。
+  markDirty()
+}
 async function dictionaries() { [fields.value, actions.value] = await Promise.all([getSoarFieldDictionary(form.entryType), getSoarActionDictionary(form.entryType)]) }
 async function load() { try { const value = await getSoarPlaybook(route.params.id); assign(value); await dictionaries(); loaded.value = true; saveState.value = `revision ${value.revision}` } catch (cause) { message.error(cause.message); router.push('/soar/playbooks') } }
 async function create() {
@@ -62,14 +78,23 @@ function saveNow() {
   if (activeSave) return activeSave.then((saved) => saved && dirty.value ? saveNow() : saved)
   saving.value = true
   const startedVersion = editVersion
-  const payload = { name: form.name, description: form.description, entryType: form.entryType, eventTypes: [...form.eventTypes], graph: cloneGraph(form.graph), revision: form.revision }
+  const editable = editablePayload()
+  const payloadSignature = editableSignature(editable)
+  const payload = { ...editable, revision: form.revision }
   activeSave = (async () => {
     try {
       const value = await updateSoarPlaybook(form.id, payload)
-      if (editVersion === startedVersion) {
-        assign(value); dirty.value = false; saveState.value = `已保存 · revision ${value.revision}`
+      const unchanged = editVersion === startedVersion && editableSignature() === payloadSignature
+      // PUT 响应代表服务端已经接受该快照，只同步并发控制字段。整图仍以浏览器当前
+      // 编辑状态为准，避免较慢的旧响应恢复刚删除的节点或连线。
+      syncing.value = true
+      form.revision = value.revision
+      form.status = value.status
+      queueMicrotask(() => { syncing.value = false })
+      if (unchanged) {
+        dirty.value = false; saveState.value = `已保存 · revision ${value.revision}`
       } else {
-        syncing.value = true; form.revision = value.revision; form.status = value.status; queueMicrotask(() => { syncing.value = false })
+        dirty.value = true
         saveState.value = `revision ${value.revision} 已保存，继续同步新更改`
       }
       return true
@@ -109,4 +134,12 @@ onMounted(() => { if (isNew.value) { loaded.value = true; dictionaries() } else 
 onMounted(() => window.addEventListener('beforeunload', warnBeforeBrowserLeave))
 onBeforeUnmount(() => { window.clearTimeout(saveTimer); window.removeEventListener('beforeunload', warnBeforeBrowserLeave) })
 </script>
-<style scoped>.meta-grid { display:grid; grid-template-columns:1.2fr .6fr 1fr 1.4fr; gap:14px; }.save-state { color:#6c7f8e; font-size:12px; }</style>
+<style scoped>
+.meta-grid { display:grid; grid-template-columns:1.2fr .6fr 1fr 1.4fr; gap:14px; }
+.save-state { color:#6c7f8e; font-size:12px; }
+@media (max-width: 1180px) { .meta-grid { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 680px) {
+  .meta-grid { grid-template-columns: 1fr; gap: 0; }
+  .save-state { width: 100%; order: -1; }
+}
+</style>

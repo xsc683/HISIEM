@@ -35,6 +35,13 @@ public class AlertController {
         return service.list(status, size);
     }
 
+    /** 大屏告警全量聚合与最新队列。 */
+    @GetMapping("/summary")
+    @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST', 'AUDIT')")
+    public Map<String, Object> summary() {
+        return service.summary();
+    }
+
     /** 告警详情。 */
     @GetMapping("/{id}")
     @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST', 'AUDIT')")

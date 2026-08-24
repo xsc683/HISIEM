@@ -104,4 +104,30 @@ class AlertServiceTest {
         assertDoesNotThrow(() -> AlertService.validateStatusTransition(
                 "closed", "open", "false_positive", null));
     }
+
+    @Test
+    void summary_usesFullAggregationsAndNewestHits() {
+        ElasticsearchGateway gateway = mock(ElasticsearchGateway.class);
+        Map<String, Object> response = Map.of(
+                "hits", Map.of(
+                        "total", Map.of("value", 503),
+                        "hits", List.of(Map.of("_id", "newest", "_source", Map.of(
+                                "alert.status", "open", "alert.created_at", "2026-08-24T14:00:00Z")))),
+                "aggregations", Map.of(
+                        "statuses", Map.of("buckets", Map.of(
+                                "open", Map.of("doc_count", 201),
+                                "closed", Map.of("doc_count", 302))),
+                        "linked", Map.of("doc_count", 77)));
+        when(gateway.request(eq("POST"), eq("/siem-alerts/_search"), anyString()))
+                .thenReturn(new ElasticsearchGateway.Response(200, response));
+
+        Map<String, Object> summary = new AlertService("http://unused", gateway).summary();
+
+        assertEquals(503L, summary.get("total"));
+        assertEquals(77L, summary.get("linked"));
+        assertEquals(Map.of("open", 201L, "closed", 302L), summary.get("statuses"));
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> recent = (List<Map<String, Object>>) summary.get("recent");
+        assertEquals("newest", recent.get(0).get("_id"));
+    }
 }

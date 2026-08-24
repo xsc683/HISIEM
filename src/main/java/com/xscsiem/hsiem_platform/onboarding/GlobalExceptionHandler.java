@@ -2,6 +2,7 @@ package com.xscsiem.hsiem_platform.onboarding;
 
 import com.xscsiem.hsiem_platform.auth.ForbiddenException;
 import com.xscsiem.hsiem_platform.auth.UnauthorizedException;
+import com.xscsiem.hsiem_platform.logsearch.LogSearchUnavailableException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolationException;
 import org.springframework.http.ResponseEntity;
@@ -60,6 +61,12 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(AccessDeniedException.class)
     public ResponseEntity<ApiError> accessDenied(AccessDeniedException e, HttpServletRequest request) {
         return error(HttpStatus.FORBIDDEN, "FORBIDDEN", "当前角色无权执行该操作", request);
+    }
+
+    @ExceptionHandler(LogSearchUnavailableException.class)
+    public ResponseEntity<ApiError> logSearchUnavailable(LogSearchUnavailableException e,
+                                                         HttpServletRequest request) {
+        return error(HttpStatus.SERVICE_UNAVAILABLE, "LOG_SEARCH_UNAVAILABLE", e.getMessage(), request);
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)

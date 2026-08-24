@@ -22,6 +22,6 @@ const conditionText = computed(() => summarize(props.rule.condition))
 </script>
 
 <style scoped>
-.summary { min-width: 260px; max-width: 520px; color: #314b5f; font-size: 12px; line-height: 1.55; }
+.summary { min-width: 0; max-width: 520px; color: #314b5f; font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
 .window { margin-top: 3px; color: #1d6fa5; }
 </style>

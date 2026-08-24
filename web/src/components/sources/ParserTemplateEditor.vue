@@ -1,5 +1,5 @@
 <template>
-  <a-modal :open="open" :title="title" width="1040px" :footer="null" @cancel="close">
+  <a-modal :open="open" :title="title" width="min(1040px, calc(100vw - 32px))" :footer="null" @cancel="close">
     <div class="editor-body">
       <a-alert type="info" show-icon message="保存门禁：至少一个 Grok pattern、一个能命中的正样本；负样本必须全部不命中。" />
 
@@ -166,4 +166,18 @@ async function save() {
 .editor-body { max-height: calc(100vh - 210px); padding-right: 6px; overflow-y: auto; }.section { margin-top: 16px; padding: 14px; border: 1px solid #dce6ec; border-radius: 9px; background: #fafcfd; }
 .base-grid { display: grid; grid-template-columns: 1.2fr 1.2fr .7fr .7fr; gap: 12px; }.time-grid { display: grid; grid-template-columns: 1fr 1.5fr 1fr; gap: 12px; }.section-title { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }.section-title strong, .section-title small { display: block; }.section-title strong { color: #18364a; }.section-title small { margin-top: 2px; color: #718592; font-size: 12px; }.section-title em { color: #c83d49; font-style: normal; }
 :deep(.list-row) { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: start; margin: 8px 0; }:deep(.empty-text) { padding: 10px; color: #8696a2; text-align: center; }.pair-row { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; margin: 8px 0; }.action-grid { display: grid; grid-template-columns: .8fr 1.5fr; gap: 8px; }.sample-grid { display: grid; grid-template-columns: 1.4fr 1fr; gap: 8px; }.test-section > .ant-space { margin-top: 10px; }.result-panel { max-height: 220px; margin-top: 10px; padding: 10px; overflow: auto; border-radius: 6px; background: #102b3d; color: #d7edf5; }.modal-actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 16px; }
+@media (max-width: 900px) {
+  .base-grid { grid-template-columns: 1fr 1fr; }
+  .time-grid { grid-template-columns: 1fr; gap: 0; }
+  .action-grid, .sample-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 600px) {
+  .editor-body { max-height: calc(100vh - 170px); padding-right: 1px; }
+  .section { margin-top: 12px; padding: 11px; }
+  .base-grid, .pair-row { grid-template-columns: 1fr; gap: 0; }
+  :deep(.list-row) { grid-template-columns: 1fr; }
+  :deep(.list-row > .ant-btn), .pair-row > .ant-btn { justify-self: end; }
+  .section-title { align-items: flex-start; gap: 8px; }
+  .modal-actions > .ant-btn { flex: 1; }
+}
 </style>

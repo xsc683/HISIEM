@@ -70,4 +70,9 @@ onMounted(load)
 
 <style scoped>
 .aggregation-grid { display: flex; align-items: flex-end; gap: 18px; flex-wrap: wrap; }
+@media (max-width: 680px) {
+  .aggregation-grid { display: grid; grid-template-columns: 1fr; gap: 11px; }
+  .aggregation-grid :deep(.ant-input-number), .aggregation-grid :deep(.ant-select) { width: 100% !important; }
+  .aggregation-grid > .ant-btn { width: 100%; }
+}
 </style>

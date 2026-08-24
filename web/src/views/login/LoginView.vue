@@ -31,6 +31,7 @@
 import { reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuth } from '../../composables/useAuth.js'
+import { landingRoute } from '../../utils/navigation.js'
 
 const auth = useAuth()
 const route = useRoute()
@@ -41,8 +42,8 @@ const error = ref('')
 async function submit() {
   error.value = ''
   try {
-    await auth.signIn(form.username, form.password)
-    await router.replace(typeof route.query.redirect === 'string' ? route.query.redirect : '/alerts')
+    const user = await auth.signIn(form.username, form.password)
+    await router.replace(typeof route.query.redirect === 'string' ? route.query.redirect : landingRoute(user?.role))
   } catch (cause) {
     error.value = cause?.message || '登录失败'
   }
@@ -63,4 +64,25 @@ async function submit() {
 .login-form { width: 390px; }
 .login-form h2 { margin: 8px 0 4px; color: #122c40; font-size: 30px; }
 .eyebrow { color: #1d6fa5; font-size: 11px; font-weight: 700; letter-spacing: .16em; }
+@media (max-width: 900px) {
+  .login-page { grid-template-columns: 1fr; grid-template-rows: minmax(230px, 32vh) 1fr; }
+  .login-visual { place-items: center start; padding: 34px; }
+  .visual-content { width: min(620px, 92%); }
+  .shield { width: 52px; height: 52px; border-radius: 14px; font-size: 25px; }
+  .visual-content h1 { margin: 13px 0 3px; font-size: 32px; }
+  .visual-content p { margin: 0; font-size: 15px; }
+  .capabilities { margin-top: 14px; }
+  .login-panel { place-items: start center; padding: 38px 24px 52px; }
+  .login-form { width: min(420px, 100%); }
+}
+@media (max-width: 520px) {
+  .login-page { grid-template-rows: 178px 1fr; }
+  .login-visual { padding: 24px 20px; }
+  .shield { width: 40px; height: 40px; border-radius: 11px; font-size: 20px; }
+  .visual-content h1 { margin-top: 8px; font-size: 25px; }
+  .visual-content p { font-size: 12px; line-height: 1.5; }
+  .capabilities { display: none; }
+  .login-panel { padding: 28px 18px 40px; }
+  .login-form h2 { font-size: 25px; }
+}
 </style>

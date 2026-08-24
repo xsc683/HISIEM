@@ -1,13 +1,19 @@
 package com.xscsiem.hsiem_platform.investigation;
 
 import com.xscsiem.hsiem_platform.alert.AlertService;
+import com.xscsiem.hsiem_platform.control.ControlPlaneStore;
+import com.xscsiem.hsiem_platform.search.ElasticsearchGateway;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * 调查台案件(story-07)校验逻辑(纯逻辑,不触 ES):
@@ -69,5 +75,20 @@ class CaseServiceTest {
                 () -> CaseService.validateAlertCanJoinCase("open", "case-1", "a"));
         assertThrows(IllegalArgumentException.class,
                 () -> CaseService.validateAlertCanJoinCase("closed", null, "a"));
+    }
+
+    @Test
+    void summary_usesDatabaseFullCountsAndRecentRows() {
+        ControlPlaneStore control = mock(ControlPlaneStore.class);
+        Map<String, Object> newest = Map.of("case.id", "case-new", "case.status", "open");
+        when(control.listCases(null, null, 7)).thenReturn(List.of(newest));
+        when(control.caseStatusCounts()).thenReturn(Map.of("open", 4L, "investigating", 3L, "resolved", 13L));
+        CaseService service = new CaseService("http://unused", mock(AlertService.class), control,
+                mock(ElasticsearchGateway.class));
+
+        Map<String, Object> summary = service.summary();
+
+        assertEquals(20L, summary.get("total"));
+        assertEquals(List.of(newest), summary.get("recent"));
     }
 }

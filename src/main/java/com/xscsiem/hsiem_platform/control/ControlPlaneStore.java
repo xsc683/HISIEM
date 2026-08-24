@@ -61,6 +61,9 @@ public interface ControlPlaneStore {
 
     List<Map<String, Object>> listCases(String status, String entity, int size);
 
+    /** 大屏使用的案件全量状态计数，避免把列表的前 200 条误当成总体。 */
+    Map<String, Long> caseStatusCounts();
+
     Map<String, Object> findCase(String id);
 
     void createCase(Map<String, Object> document, List<String> alertIds);
