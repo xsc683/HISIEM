@@ -60,6 +60,7 @@ SIEM/
 | [docs/rule-engine.md](docs/rule-engine.md) | 规则引擎使用与扩展 |
 | [docs/roadmap.md](docs/roadmap.md) | 统一阶段路线图、验收基线和后续优先级 |
 | [docs/product-contract.md](docs/product-contract.md) | 当前页面、API、用户旅程和验收契约 |
+| [docs/agent-integration.md](docs/agent-integration.md) | 从告警/案件详情启动 HISIEM-Agent 的服务端代理 |
 | [docs/learn/README.md](docs/learn/README.md) | 从 SIEM 基础到 Kafka/ES/Flink/Logstash 的学习地图 |
 
 ## 快速开始(新机器)

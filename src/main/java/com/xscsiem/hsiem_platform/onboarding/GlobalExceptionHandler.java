@@ -1,5 +1,6 @@
 package com.xscsiem.hsiem_platform.onboarding;
 
+import com.xscsiem.hsiem_platform.agent.AgentLaunchException;
 import com.xscsiem.hsiem_platform.auth.ForbiddenException;
 import com.xscsiem.hsiem_platform.auth.UnauthorizedException;
 import com.xscsiem.hsiem_platform.logsearch.LogSearchUnavailableException;
@@ -67,6 +68,11 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiError> logSearchUnavailable(LogSearchUnavailableException e,
                                                          HttpServletRequest request) {
         return error(HttpStatus.SERVICE_UNAVAILABLE, "LOG_SEARCH_UNAVAILABLE", e.getMessage(), request);
+    }
+
+    @ExceptionHandler(AgentLaunchException.class)
+    public ResponseEntity<ApiError> agentLaunch(AgentLaunchException e, HttpServletRequest request) {
+        return error(HttpStatus.valueOf(e.status()), e.code(), e.getMessage(), request);
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)

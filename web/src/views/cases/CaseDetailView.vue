@@ -2,6 +2,7 @@
   <div class="page-shell">
     <PageHeader :title="caseData?.['case.title'] || '案件详情'" description="完整调查工作区：关联告警、实体、负责人、证据和事件时间线均在独立深链页面。">
       <a-button @click="router.push('/cases')">返回案件列表</a-button>
+      <a-button v-if="caseData" type="primary" :loading="agentLaunching" @click="investigateWithAgent">交给 Agent 调查</a-button>
       <a-button v-if="caseData" type="primary" @click="runSoar">运行 SOAR</a-button>
     </PageHeader>
     <LoadState :loading="loading" :error="error" :empty="!caseData" @retry="load">
@@ -73,7 +74,7 @@
 import { onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
-import { caseTimeline, getAlert, getCase, removeCaseAlert, updateCaseCollaborators, updateCaseMetadata, updateCaseStatus } from '../../api/index.js'
+import { caseTimeline, getAlert, getCase, launchCaseInvestigation, removeCaseAlert, updateCaseCollaborators, updateCaseMetadata, updateCaseStatus } from '../../api/index.js'
 import PageHeader from '../../components/common/PageHeader.vue'
 import LoadState from '../../components/common/LoadState.vue'
 import StatusTag from '../../components/common/StatusTag.vue'
@@ -82,7 +83,7 @@ import { displayLabel, entityOf } from '../../utils/display.js'
 
 const route = useRoute(); const router = useRouter()
 const caseData = ref(null); const timeline = ref([]); const linkedAlerts = ref([]); const alertLoadWarnings = ref([])
-const loading = ref(false); const saving = ref(false); const error = ref('')
+const loading = ref(false); const saving = ref(false); const agentLaunching = ref(false); const error = ref('')
 const metadata = reactive({ owner: '', collaborators: [], evidenceTitle: '', evidenceUri: '' })
 const verdictOptions = ['true_positive', 'false_positive', 'duplicate'].map((value) => ({ value, label: displayLabel('verdict', value) }))
 const alertColumns = [{ key: 'rule', title: '规则' }, { key: 'severity', title: '级别', width: 80 }, { key: 'entity', title: '实体', width: 160 }, { key: 'action', title: '操作', width: 75 }]
@@ -112,6 +113,17 @@ async function saveMetadata() {
 async function saveCollaborators() { saving.value = true; try { await updateCaseCollaborators(caseData.value['case.id'], metadata.collaborators); message.success('协作者已保存'); await load() } catch (cause) { message.error(cause.message) } finally { saving.value = false } }
 async function removeAlert(id) { try { await removeCaseAlert(caseData.value['case.id'], id); message.success('告警已移出案件'); await load() } catch (cause) { message.error(cause.message) } }
 function runSoar() { router.push({ path: '/soar/executions', query: { resourceType: 'case', resourceId: caseData.value['case.id'], manual: '1' } }) }
+async function investigateWithAgent() {
+  if (agentLaunching.value || !caseData.value) return
+  agentLaunching.value = true
+  try {
+    const result = await launchCaseInvestigation(caseData.value['case.id'])
+    if (!result?.redirectUrl) throw new Error('Agent 未返回任务跳转地址')
+    window.location.assign(result.redirectUrl)
+  } catch (cause) {
+    message.error(`Agent 任务创建失败：${cause.message}`)
+  } finally { agentLaunching.value = false }
+}
 onMounted(load)
 </script>
 

@@ -148,6 +148,7 @@ export function getAlertSummary() {
   return request('/alerts/summary')
 }
 export const getAlert = (id) => request(`/alerts/${segment(id)}`)
+export const launchAlertInvestigation = (id) => request(`/alerts/${segment(id)}/agent-investigation`, { method: 'POST' })
 export const updateAlertStatus = (id, status) => request(`/alerts/${segment(id)}/status`, json('POST', { status }))
 export const updateAlertVerdict = (id, verdict) => request(`/alerts/${segment(id)}/verdict`, json('POST', { verdict }))
 export const batchAlertStatus = (ids, status) => request('/alerts/batch-status', json('POST', { ids, status }))
@@ -166,6 +167,7 @@ export function getCaseSummary() {
   return request('/cases/summary')
 }
 export const getCase = (id) => request(`/cases/${segment(id)}`)
+export const launchCaseInvestigation = (id) => request(`/cases/${segment(id)}/agent-investigation`, { method: 'POST' })
 export const createCase = (alertIds, title) => request('/cases', json('POST', { alertIds, title }))
 export const addCaseAlerts = (id, alertIds) => request(`/cases/${segment(id)}/alerts`, json('POST', { alertIds }))
 export const removeCaseAlert = (id, alertId) => request(`/cases/${segment(id)}/alerts/${segment(alertId)}`, { method: 'DELETE' })

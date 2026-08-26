@@ -1,5 +1,7 @@
 package com.xscsiem.hsiem_platform.alert;
 
+import com.xscsiem.hsiem_platform.agent.AgentLaunchResponse;
+import com.xscsiem.hsiem_platform.agent.AgentLaunchService;
 import com.xscsiem.hsiem_platform.auth.AuthService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -10,6 +12,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
 
 import java.util.List;
 import java.util.Map;
@@ -21,10 +24,12 @@ public class AlertController {
 
     private final AlertService service;
     private final AuthService auth;
+    private final AgentLaunchService agentLaunch;
 
-    public AlertController(AlertService service, AuthService auth) {
+    public AlertController(AlertService service, AuthService auth, AgentLaunchService agentLaunch) {
         this.service = service;
         this.auth = auth;
+        this.agentLaunch = agentLaunch;
     }
 
     /** 告警列表(open 默认,risk_score DESC)。 */
@@ -47,6 +52,15 @@ public class AlertController {
     @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST', 'AUDIT')")
     public Map<String, Object> detail(@PathVariable String id) {
         return service.detail(id);
+    }
+
+    /** 从告警详情启动 Agent 调查；仅传递 HISIEM resource reference。 */
+    @PostMapping("/{id}/agent-investigation")
+    @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST')")
+    public AgentLaunchResponse investigateWithAgent(@PathVariable String id,
+                                                    Authentication authentication) {
+        return agentLaunch.launch("alert_investigation", "alert", id,
+                authentication.getName());
     }
 
     /** 三线流转(open→ack→investigating→resolved/closed)。 */
