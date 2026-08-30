@@ -5,15 +5,14 @@
 
     <modelVersion>4.0.0</modelVersion>
 
-    <parent>
-        <groupId>com.xscsiem</groupId>
-        <artifactId>hsiem-platform</artifactId>
-        <version>0.0.1-SNAPSHOT</version>
-        <relativePath>../pom.xml</relativePath>
-    </parent>
+    <!-- Standalone Maven project (CI runs `-f flink/pom.xml clean package`).  Deliberately
+         no parent: inheriting spring-boot-starter-parent would merge its maven-shade-plugin
+         executions (AppendingTransformer + <resource>) into the Flink manifest transformer
+         config and fail with "Cannot find 'resource'".  All versions are pinned here. -->
 
-
+    <groupId>com.siem</groupId>
     <artifactId>detection-job</artifactId>
+    <version>1.0</version>
 
     <properties>
         <maven.compiler.release>21</maven.compiler.release>
