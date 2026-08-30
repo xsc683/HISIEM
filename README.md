@@ -28,10 +28,23 @@ flowchart LR
 
 ```
 SIEM/
-├── pom.xml / src/          Spring Boot 控制面 API(认证、接入、告警、案件、运维)
-├── flink/                  独立 Flink job 工程(规则引擎 + 检测任务)
-│   ├── pom.xml             Flink 2.1,shade 打 jar,mainClass com.siem.DetectionJob
-│   └── src/{main,test}/    规则引擎代码 + JUnit 测试
+├── pom.xml                   Maven reactor aggregator (Java 21 / Spring Boot 4.1)
+├── modules/                  contracts、IAM、agent、security-ops、operations、detection、SOAR
+│   ├── platform-contracts/   跨域稳定契约
+│   ├── platform-migrations/  共享 Flyway migration 资源（resource-only）
+│   ├── iam/                  认证、会话、租户与控制面存储
+│   ├── agent-adapter/        HISIEM-Agent 出站适配
+│   ├── security-ops/         告警、案件、日志检索与 ES 网关
+│   ├── platform-operations/  接入、通知、健康与运维任务
+│   ├── detection-control/    规则、计划与 managed detection
+│   ├── soar-core/            传输无关 SOAR 执行引擎、SPI 与 handler
+│   ├── soar-adapters/        Kafka lifecycle 与 HTTP connector 适配
+│   └── soar-worker-runtime/  Kafka consumer、health 与 SOAR worker loop
+├── applications/control-api/ 控制 API 可执行应用（hsiem-platform.jar）
+├── applications/soar-worker/ 独立 SOAR worker 可执行应用（hsiem-soar-worker.jar）
+├── flink/                    独立 Flink job 工程(规则引擎 + 检测任务)
+│   ├── pom.xml               Flink 2.1, shade 打 jar, mainClass com.siem.DetectionJob
+│   └── src/{main,test}/      规则引擎代码 + JUnit 测试
 ├── infra/                  基础设施配置(唯一来源,deploy.sh 同步到部署环境)
 │   ├── docker-compose.yml  PostgreSQL/ES/Kibana/Logstash/Kafka/Flink 编排
 │   ├── logstash/           Grok 解析规则
@@ -43,6 +56,13 @@ SIEM/
 ├── web/                    Vue 3/Vite 控制台（vue-router + Ant Design Vue + Vue Flow）
 └── CLAUDE.md               面向 AI 会话的项目速览
 ```
+
+`soar-core` 不依赖 Kafka client、Actuator health 或 `java.net.http`；`soar-adapters` 依赖
+`soar-core`/`platform-contracts` 并承载 Kafka/HTTP adapter；`soar-worker-runtime`
+依赖前两者并承载 Kafka/Actuator/Micrometer runtime。`control-api` 的生产依赖只有
+`soar-core`、`soar-adapters`（另依赖共享 migration 资源），worker-runtime 仅以 test
+scope 提供集中单元测试。`soar-worker` 依赖 core、adapters、worker-runtime、iam、
+security-ops、platform-operations 和 platform-migrations，不依赖 control-api。
 
 ## 文档入口
 
@@ -79,10 +99,19 @@ docker exec siem-flink-jobmanager flink run -d /opt/flink/detection-job-1.0.jar
 # 6. 验证(发一条测试日志)
 echo 'Aug 1 10:20:00 server03 sshd[9999]: Failed password for test from 172.16.1.20' | nc -w1 localhost 5000
 
-# 7. 启动控制面(另开终端;默认连接 localhost:5432/siem)
-./mvnw spring-boot:run
+# 构建并运行控制面全量测试（在仓库根目录）
+./mvnw test
+# 只运行 Flink 模块测试
+./mvnw -f flink/pom.xml test
 
-# 8. 启动前端(另开终端)
+# 7. 启动控制面(另开终端;默认连接 localhost:5432/siem)
+./mvnw -pl applications/control-api spring-boot:run
+
+# 8. 独立启动 SOAR worker(另开终端;无 HTTP server)
+./mvnw -pl applications/soar-worker spring-boot:run
+# worker 默认 app.operations.runtime-enabled=false，只有 SOAR runtime/consumer 开启
+
+# 9. 启动前端(另开终端)
 npm --prefix web run dev
 ```
 

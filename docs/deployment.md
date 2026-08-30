@@ -48,16 +48,36 @@ Elasticsearch 备份卷会在启动前由一次性初始化服务修正为 ES �
 
 Kafka 的默认开发配置使用双监听：容器内的 Logstash/Flink 连接 `kafka:9092`，宿主机上的 API 和运维脚本连接 `localhost:9092`（宿主机端口映射到容器的 EXTERNAL 监听）。不要把 `KAFKA_ADVERTISED_LISTENERS` 改成只有 `kafka:9092`，否则宿主机 Kafka AdminClient 首次连接后会被元数据重定向到 Docker 内部主机名，运行态扫描会报 `Timed out waiting for a node assignment`。
 
-Spring Boot 应用启动时默认读取 PostgreSQL:
+Spring Boot 有两个独立入口，共用 PostgreSQL 和 `platform-migrations` 的
+`classpath:db/migration` 资源。控制 API 默认运行全部非 SOAR 运维调度：
 
 ```bash
-java -jar target/hsiem-platform-0.0.1-SNAPSHOT.jar
-# 首次启动且 users 表为空时必须提供一次性临时管理员口令；另可用 SIEM_DB_URL / SIEM_DB_USERNAME / SIEM_DB_PASSWORD 覆盖连接
+./mvnw -pl applications/control-api spring-boot:run
+```
+
+SOAR worker 是无 HTTP 的独立进程；它默认只打开 SOAR runtime/Kafka consumer，并将
+`app.operations.runtime-enabled=false`，因此不会运行非 SOAR 定时任务：
+
+```bash
+./mvnw -pl applications/soar-worker spring-boot:run
+```
+
+也可以先打包后分别运行：
+
+```bash
+java -jar applications/control-api/target/hsiem-platform.jar
+java -jar applications/soar-worker/target/hsiem-soar-worker.jar
+```
+
+两者均默认读取 PostgreSQL:
+
+```bash
+# 首次启动且 users 表为空时，控制 API 需要提供一次性临时管理员口令
 # PowerShell: $env:SIEM_BOOTSTRAP_PASSWORD = '<至少12位临时口令>'
 # WSL: export SIEM_BOOTSTRAP_PASSWORD='<至少12位临时口令>'
 ```
 
-Flyway 首次启动会创建控制面表并导入旧版本 `infra/auth/users.yaml` 用户；当前迁移为 V15。V11 建立 lifecycle SOAR 的 Playbook/execution 基线，V12 增加 trigger envelope、逐 attempt `soar_node_execution`、`soar_approval_task` 和 `soar_action_receipt`，V13/V14 增加持久并行与循环状态，V15 增加触发类型。V8-V10 旧 SOAR 表以及 V11 被替代的 node/approval 表作为历史迁移保留；之后 PostgreSQL 是用户、角色、审计和 SOAR 控制面记录的唯一来源。
+Flyway 首次启动会创建控制面表并导入旧版本 `infra/auth/users.yaml` 用户；当前迁移为 V16。V11 建立 lifecycle SOAR 的 Playbook/execution 基线，V12 增加 trigger envelope、逐 attempt `soar_node_execution`、`soar_approval_task` 和 `soar_action_receipt`，V13/V14 增加持久并行与循环状态，V15 增加触发类型，V16 增加 managed detection 运行态。V8-V10 旧 SOAR 表以及 V11 被替代的 node/approval 表作为历史迁移保留；之后 PostgreSQL 是用户、角色、审计和 SOAR 控制面记录的唯一来源。
 登录 Token 只在响应中返回一次，数据库保存 SHA-256 后的会话值；默认会话 8 小时，连续 5 次失败后锁定 15 分钟。控制面 API 需要 `Authorization: Bearer <token>`。首次登录或管理员新建用户必须先调用密码轮换接口，业务 API 在轮换完成前返回 428。
 
 Logstash 的 healthcheck 同时检查 5000/5001/5002/5004/5005/5006 和 9600,

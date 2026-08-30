@@ -25,9 +25,12 @@ flowchart LR
 
 ## 仓库布局
 
+- `modules/` — 控制面物理 Maven 模块（contracts、iam、agent-adapter、security-ops、platform-operations、detection-control、platform-migrations、soar-core、soar-adapters、soar-worker-runtime）
+- `applications/control-api/` — Spring Boot 控制 API 可执行应用（HTTP/API 进程）
+- `applications/soar-worker/` — 独立 Spring Boot SOAR worker 可执行应用（`WebApplicationType.NONE`，不依赖 control-api）
 - `flink/` — **Flink 检测 job**（独立 Maven 工程，主类 `com.siem.DetectionJob`）。规则 YAML 经 `RuleConfigLoader`/`RuleBuilder` 生成单事件、窗口、CEP 和基线四类分支
 - `infra/` — 基础设施配置唯一来源:docker-compose、logstash、ES 模板、Kibana 脚本、simulator、deploy.sh
-- `src/` `pom.xml` — Spring Boot 控制面 API（认证、接入、告警、案件、SOAR、通知、运维）
+- `src/` `pom.xml` — 历史控制面工作树（当前可执行控制 API 位于 `applications/control-api`）
 - `web/` — Vue 3/Vite 控制台；真实路由见 `web/src/router/index.js`，统一请求见 `web/src/api/index.js`，页面按 `views/<module>/` 拆分
 - `docs/` — 架构/部署/决策/规则引擎文档
 
@@ -39,7 +42,8 @@ flowchart LR
 ./mvnw -f flink/pom.xml clean package                       # 构建(含测试)
 ./mvnw -f flink/pom.xml test                                # 全部用例
 ./mvnw -f flink/pom.xml test -Dtest=RuleEngineTest          # 单个测试类
-./mvnw spring-boot:run                                     # 启动控制面(默认 8080)
+./mvnw -pl applications/control-api spring-boot:run                    # 启动控制 API(默认 8080)
+./mvnw -pl applications/soar-worker spring-boot:run                    # 独立启动 SOAR worker(无 HTTP)
 npm --prefix web run dev                                   # 启动前端(默认 5173)
 npm --prefix web run build                                 # Vue 3 生产构建
 
@@ -76,9 +80,13 @@ bash /mnt/d/Project/SIEM/infra/simulator/brute-force-test.sh
 8. **Flink checkpoint 默认在 cancel 时删除**(cleanup-mode=DELETE_ON_CANCELLATION),cancel 后无法从 checkpoint 恢复。**cancel→restore 演练用 savepoint**:`flink cancel -s file:///opt/flink/savepoints <jobid>`(Flink 2.x 推荐 `flink stop -p <dir> <jobid>`);savepoint 目录需 `chown flink:flink`(docker exec 以 root 创建会使 Flink 进程写失败,报 `Failed to create savepoint directory`)。已演练通过(2026-08-16)。
 9. **Kibana dashboard** 对象必须带 `kibanaSavedObjectMeta.searchSourceJSON`。
 10. **Kafka topic 必须显式创建**：`apache/kafka:3.8` 配置 `auto.create.topics.enable=false`，消费者和生产者都不能依赖自动建 topic。提交 Flink job 前先跑 `infra/kafka/create-topics.sh`（deploy.sh 只同步脚本，不执行）。
-11. **Flink checkpoint 曾出现卡滞(2026-08-16)**:现象 = Kafka consumer group `siem-detection` LAG 持续不降,告警在恢复后批量新增;日志报 `Checkpoint expired before completing`。本轮已统一 `RuntimeTuning` 参数并完成 2000 条事件负载验证，作业保持 `RUNNING` 且连续完成 checkpoint。后续仍需在生产容量和升级场景下持续压测，见 [当前状态](docs/current-status.md) 的生产风险。
+12. **SOAR 进程隔离**：`soar-core` 只包含传输无关模型/引擎/SPI，不得引入 Kafka、Actuator health、`java.net.http` 或 scheduled worker loop；Kafka/HTTP 适配在 `soar-adapters`，Kafka consumer/health/lease worker 在 `soar-worker-runtime`。`platform-migrations` 是唯一 `db/migration` 物理来源，control API 与 worker 都用 `classpath:db/migration`。
+13. **定时任务隔离**：非 SOAR 的 BackgroundTaskRecovery、CaseAggregateJob、CaseMirrorDispatcher/CaseMirrorReconcileJob 和 NotificationScanner 都受 `app.operations.runtime-enabled` 控制；control API 默认 true，worker 默认 false。不要仅依赖 WebApplicationType 判断。
+14. **独立入口**：控制 API 用 `./mvnw -pl applications/control-api spring-boot:run`，SOAR worker 用 `./mvnw -pl applications/soar-worker spring-boot:run`；worker 不得依赖 control-api。
 
-## 告警/事件快速查询
+## 模块边界与进程角色
+
+详细依赖图、职责和运行方式见 [docs/design/module-boundaries.md](docs/design/module-boundaries.md)。
 
 ```bash
 curl -s "http://localhost:9200/siem-events-*/_count"

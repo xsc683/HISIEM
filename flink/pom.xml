@@ -5,9 +5,15 @@
 
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>com.siem</groupId>
+    <parent>
+        <groupId>com.xscsiem</groupId>
+        <artifactId>hsiem-platform</artifactId>
+        <version>0.0.1-SNAPSHOT</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+
     <artifactId>detection-job</artifactId>
-    <version>1.0</version>
 
     <properties>
         <maven.compiler.release>21</maven.compiler.release>
@@ -110,6 +116,7 @@
     </dependencies>
 
     <build>
+        <finalName>detection-job-1.0</finalName>
         <plugins>
 
             <plugin>
