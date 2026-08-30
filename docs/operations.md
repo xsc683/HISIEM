@@ -63,9 +63,16 @@ docker logs --tail 100 siem-logstash
 
 ### Flink
 
-确认 JobManager/TaskManager 正常后，查看检测作业状态；作业必须是 `RUNNING`。作业丢失或反复重启时，先检查 Kafka topic 分区数、checkpoint 和 ES sink 错误，再按[部署指南](deployment.md)重新提交，不要直接删除历史索引。
+确认 JobManager/TaskManager 正常后，查看检测作业状态；managed 作业必须使用结构化名称 `SIEM-DETECTION-dg-<24hex>-g<generation>-m<64hex>` 并且状态为 `RUNNING`。启用 Phase 5B 时，查看和变更应通过独立 `detection-controller` 完成：
 
-坏 JSON、缺失或非法 `@timestamp` 不会进入规则分支，而是以包含 `dlq.id/dlq.stage/dlq.error_*` 和截断保护后的 `event.original` 的 JSON 写入 `siem-events-dlq`。排查解析质量可只读消费：
+```bash
+docker exec siem-flink-jobmanager flink list -a
+# 只读检查 controller 日志；不要对 managed job 使用全局 cancel
+```
+
+控制器会把 artifact 放在 `<artifact-root>/<jobKey>/<generation>-<manifestHash>/`，并在 Flink 启动时验证 `runtime-manifest.json` 的原始 UTF-8 SHA-256、schema/generation 和实际加载的 rule ID 集合。发现 `ARTIFACT_INVALID`、`DUPLICATE_JOBS`、持续 `UNKNOWN` 或 exact `RUNNING` 验证失败时，先保留旧 artifact/savepoint，检查 controller 与 JobManager 日志及磁盘权限，再按[部署指南](deployment.md)受控恢复；不要手工编辑 immutable artifact 或直接删除 savepoint。
+
+默认 `app.detection.runtime-adapter=disabled` 不执行 Docker/Flink 命令，只报告 `UNKNOWN`。process adapter 仅允许配置白名单中的 cluster，使用 jobKey 隔离 Kafka group、checkpoint/savepoint 和 artifact；它不是生产 HA、多集群调度或灾备系统。坏 JSON、缺失或非法 `@timestamp` 不会进入规则分支，而是以包含 `dlq.id/dlq.stage/dlq.error_*` 和截断保护后的 `event.original` 的 JSON 写入 `siem-events-dlq`。排查解析质量可只读消费：
 
 ```bash
 docker exec siem-kafka /opt/kafka/bin/kafka-console-consumer.sh \

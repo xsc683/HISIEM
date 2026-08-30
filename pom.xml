@@ -57,7 +57,17 @@
             </dependency>
             <dependency>
                 <groupId>com.xscsiem</groupId>
+                <artifactId>platform-operations-adapters</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.xscsiem</groupId>
                 <artifactId>detection-control</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.xscsiem</groupId>
+                <artifactId>detection-runtime</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
@@ -94,12 +104,15 @@
         <module>modules/agent-adapter</module>
         <module>modules/security-ops</module>
         <module>modules/platform-operations</module>
+        <module>modules/platform-operations-adapters</module>
         <module>modules/detection-control</module>
+        <module>modules/detection-runtime</module>
         <module>modules/platform-migrations</module>
         <module>modules/soar-core</module>
         <module>modules/soar-adapters</module>
         <module>modules/soar-worker-runtime</module>
         <module>applications/control-api</module>
+        <module>applications/detection-controller</module>
         <module>applications/soar-worker</module>
         <module>flink</module>
     </modules>

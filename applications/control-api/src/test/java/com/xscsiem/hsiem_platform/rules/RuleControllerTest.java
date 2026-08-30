@@ -1,6 +1,5 @@
 package com.xscsiem.hsiem_platform.rules;
 
-import com.xscsiem.hsiem_platform.notify.NotificationService;
 import com.xscsiem.hsiem_platform.tenant.TenantContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -18,7 +17,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /** 自定义检测规则写 API：操作者透传、201 语义和待部署标记。 */
@@ -30,7 +28,7 @@ class RuleControllerTest {
     @BeforeEach
     void setUp() {
         service = mock(RuleService.class);
-        controller = new RuleController(service, mock(RulesDeployer.class), mock(NotificationService.class));
+        controller = new RuleController(service);
         SecurityContextHolder.getContext().setAuthentication(
                 new UsernamePasswordAuthenticationToken("rule-admin", "n/a"));
     }
@@ -69,10 +67,8 @@ class RuleControllerTest {
 
     @Test
     void bulkDeployOnlyWritesDesiredStateAndDoesNotCallPhysicalDeployer() {
-        RulesDeployer physical = mock(RulesDeployer.class);
-        NotificationService notifications = mock(NotificationService.class);
         ManagedDetectionService managed = mock(ManagedDetectionService.class);
-        controller = new RuleController(service, physical, notifications, managed);
+        controller = new RuleController(service, managed);
         when(service.list()).thenReturn(List.of(Map.of("id", "rule-ui-api", "enabled", true)));
         when(managed.deployAll("default",
                 List.of(Map.of("id", "rule-ui-api", "enabled", true)), "rule-admin"))
@@ -87,7 +83,6 @@ class RuleControllerTest {
                 response.getBody().get("pendingSummaries"));
         verify(managed).deployAll("default",
                 List.of(Map.of("id", "rule-ui-api", "enabled", true)), "rule-admin");
-        verifyNoInteractions(physical, notifications);
     }
 
     @AfterEach

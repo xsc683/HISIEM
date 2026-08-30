@@ -2,7 +2,7 @@
 
 > 定位：面向项目交接、迭代决策和后续开发的管理视图。当前运行事实仍以 [`current-status.md`](current-status.md) 为准，功能/API 以 [`product-contract.md`](product-contract.md) 为准，阶段优先级以 [`roadmap.md`](roadmap.md) 为准；本文不建立第四份接口契约。
 >
-> 基线：2026-08-24，`add_frame` 分支，WSL2 + Docker Desktop；最近一次完整验证基线为 Spring Boot 124 个测试、Flink 38 个测试、前端 9 个单元测试、生产构建和 3 条 Playwright E2E。
+> 基线：2026-08-30，`add_frame` 分支，WSL2 + Docker Desktop；最近一次 Maven 完整验证基线为 control-api 149 个测试、detection-runtime 21 个测试、detection-controller 17 个测试、SOAR worker 1 个测试、Flink 46 个测试，全部通过；前端验证沿用 CI/历史记录。
 
 ## 1. 当前结论
 
@@ -34,6 +34,7 @@ flowchart LR
 | --- | --- | --- | --- |
 | 日志接入与解析 | 已完成开发闭环 | TCP/Syslog/File 数据源、解析模板、预览、激活/停用/删除、原子配置写入、持久 sincedb、raw 失败隔离 | 生产接入协议、采集代理治理和超大规模来源管理未覆盖 |
 | 事件检测 | 已完成开发闭环 | YAML 规则、单事件/滑动窗口/CEP/基线四类分支、事件时间/watermark、告警抑制、确定性 ID、安全 partial update | CEP/基线仍只读维护；尚未做生产规模基准和规则热升级治理 |
+| Managed Detection Runtime | 已完成单集群开发闭环 | Phase 5A durable claim/lease/fencing；Phase 5B immutable job-group artifact、structured Flink identity、真实 job/artifact observation、savepoint replacement/rollback、启动 manifest/rule-ID verification 和 opt-in process adapter | 默认 disabled；process path 仅支持单配置集群，生产 HA、多集群编排、分布式 artifact 锁和灾备治理未完成 |
 | 数据质量 | 已完成基础保护 | Logstash 解析失败进入 `siem-events-raw-*`；Flink 坏 JSON/非法时间戳进入 `siem-events-dlq` | DLQ 没有管理页面、审批式重放和积压告警 |
 | 告警与调查 | 已完成主要旅程 | 告警筛选/详情/批量处置、自动聚合、案件状态/负责人/证据/时间线、告警与案件关联 | PostgreSQL、ES 与告警 marker 仍是补偿 + 最终一致性模型 |
 | 控制面与权限 | 已完成基础闭环 | Spring Security、Bearer 会话、RBAC、首次改密、审计、通知、Flyway V15、后台任务租约 | 数据面尚未形成完整 tenant 隔离；生产密钥与统一身份源未接入 |

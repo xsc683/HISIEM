@@ -20,7 +20,7 @@
 | [设计决策](design-decisions.md) | 为什么采用 ECS、事件时间、Kafka/Flink checkpoint、YAML 规则和当前部署方式 |
 | [事件与告警 Schema](event-alert-schema.md) | 当前事件、告警、时间字段、处置字段和 ES mapping 约束 |
 | [规则引擎](rule-engine.md) | 如何理解和扩展单事件、窗口、CEP、基线检测 |
-| [SOAR 设计与实现](soar.md) | 生命周期契约、Playbook 门禁、执行状态机、参数传递和持久审批/等待 |
+| [Managed detection runtime Phase 5A/5B](design/managed-detection-runtime.md) | detection controller 的 claim/lease/fencing、immutable artifact、Flink process adapter、real observed state、adapter 模式与 5B 限制 |
 | [SOAR 后端架构与数据流](design/soar-runtime-architecture.md) | 从事实落库、Kafka 消费到租约 Worker、节点推进、挂起恢复和一致性保护的完整执行链 |
 | [SOAR 能力扩展架构](design/soar-capability-runtime.md) | 持久并行/循环、手动触发、Connector 与验证器链的数据流和边界 |
 | [SOAR 可视化编辑基线](design/soar-playbook-mvp.md) | 节点、分支 Handle、类型化表单和发布校验 |

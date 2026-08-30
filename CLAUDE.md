@@ -25,8 +25,9 @@ flowchart LR
 
 ## 仓库布局
 
-- `modules/` — 控制面物理 Maven 模块（contracts、iam、agent-adapter、security-ops、platform-operations、detection-control、platform-migrations、soar-core、soar-adapters、soar-worker-runtime）
-- `applications/control-api/` — Spring Boot 控制 API 可执行应用（HTTP/API 进程）
+- `modules/` — 控制面物理 Maven 模块（contracts、iam、agent-adapter、security-ops、platform-operations、platform-operations-adapters、detection-control、detection-runtime、platform-migrations、soar-core、soar-adapters、soar-worker-runtime）
+- `applications/control-api/` — Spring Boot 控制 API 可执行应用（HTTP/API 进程；只写 detection desired state，不拥有物理部署权限）
+- `applications/detection-controller/` — 独立 Spring Boot detection controller（`WebApplicationType.NONE`，默认 disabled adapter；5A durable claim/reconcile core，5B opt-in process adapter）
 - `applications/soar-worker/` — 独立 Spring Boot SOAR worker 可执行应用（`WebApplicationType.NONE`，不依赖 control-api）
 - `flink/` — **Flink 检测 job**（独立 Maven 工程，主类 `com.siem.DetectionJob`）。规则 YAML 经 `RuleConfigLoader`/`RuleBuilder` 生成单事件、窗口、CEP 和基线四类分支
 - `infra/` — 基础设施配置唯一来源:docker-compose、logstash、ES 模板、Kibana 脚本、simulator、deploy.sh
@@ -43,7 +44,8 @@ flowchart LR
 ./mvnw -f flink/pom.xml test                                # 全部用例
 ./mvnw -f flink/pom.xml test -Dtest=RuleEngineTest          # 单个测试类
 ./mvnw -pl applications/control-api spring-boot:run                    # 启动控制 API(默认 8080)
-./mvnw -pl applications/soar-worker spring-boot:run                    # 独立启动 SOAR worker(无 HTTP)
+./mvnw -pl applications/detection-controller spring-boot:run          # 独立启动检测 controller(默认无物理 adapter)
+./mvnw -pl applications/soar-worker spring-boot:run
 npm --prefix web run dev                                   # 启动前端(默认 5173)
 npm --prefix web run build                                 # Vue 3 生产构建
 
@@ -82,7 +84,8 @@ bash /mnt/d/Project/SIEM/infra/simulator/brute-force-test.sh
 10. **Kafka topic 必须显式创建**：`apache/kafka:3.8` 配置 `auto.create.topics.enable=false`，消费者和生产者都不能依赖自动建 topic。提交 Flink job 前先跑 `infra/kafka/create-topics.sh`（deploy.sh 只同步脚本，不执行）。
 12. **SOAR 进程隔离**：`soar-core` 只包含传输无关模型/引擎/SPI，不得引入 Kafka、Actuator health、`java.net.http` 或 scheduled worker loop；Kafka/HTTP 适配在 `soar-adapters`，Kafka consumer/health/lease worker 在 `soar-worker-runtime`。`platform-migrations` 是唯一 `db/migration` 物理来源，control API 与 worker 都用 `classpath:db/migration`。
 13. **定时任务隔离**：非 SOAR 的 BackgroundTaskRecovery、CaseAggregateJob、CaseMirrorDispatcher/CaseMirrorReconcileJob 和 NotificationScanner 都受 `app.operations.runtime-enabled` 控制；control API 默认 true，worker 默认 false。不要仅依赖 WebApplicationType 判断。
-14. **独立入口**：控制 API 用 `./mvnw -pl applications/control-api spring-boot:run`，SOAR worker 用 `./mvnw -pl applications/soar-worker spring-boot:run`；worker 不得依赖 control-api。
+15. **检测 controller 隔离**：`control-api` 只持久化 desired state 并返回 `202 PENDING`，不得依赖或注入 `RulesDeployer`/`ProcessRulesDeployer`；`detection-controller` 是独立 `WebApplicationType.NONE` 进程，使用 V18 durable claim/lease/fencing。默认 `app.detection.runtime-adapter=disabled` 只报告 UNKNOWN，不执行 Docker/Flink 物理部署；设置为 `process` 才启用 5B 单集群 process adapter。
+16. **控制面物理命令隔离**：WSL/Docker `ProcessBuilder` 实现在 `platform-operations-adapters` 模块；control-api 为保持既有非 Detection 运维行为显式依赖该模块，默认 `app.operations.process-adapters=enabled`，可通过环境变量禁用，未来再拆独立 operations worker。Detection controller 不依赖该模块；Detection 5B process adapter 位于 `detection-runtime`，仅在显式 `app.detection.runtime-adapter=process` 时启用。
 
 ## 模块边界与进程角色
 
@@ -97,7 +100,7 @@ curl -s "http://localhost:9200/siem-alerts/_count"
 
 ```bash
 ./mvnw test                                                # 根项目测试（最新数量见 docs/current-status.md）
-./mvnw -f flink/pom.xml test                              # Flink 模块全部 38 个测试
+./mvnw -f flink/pom.xml test                              # Flink 模块全部 46 个测试
 ./mvnw -f flink/pom.xml test -Dtest=RuleEngineTest        # 单个测试类
 ./mvnw -f flink/pom.xml test "-Dtest=WindowRuleTest#bruteForceAlertHasCountAndRelatedEvents"  # 单个方法
 ```

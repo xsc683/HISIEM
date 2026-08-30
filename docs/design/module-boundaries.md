@@ -11,11 +11,14 @@ boundaries without turning every CRUD package into a network service.
 | `platform-migrations` | `db/migration` resources only | one physical Flyway migration artifact shared by both applications |
 | `iam` | `auth`, `tenant` | authentication, sessions, RBAC and tenant membership |
 | `security-ops` | `alert`, `investigation`, `logsearch`, `search` | analyst queries, alerts and cases |
-| `detection-control` | `rules` | YAML validation, immutable revisions, plans and desired deployments |
+| `detection-control` | `rules` | YAML validation, immutable revisions, plans and desired deployments; no physical runtime adapter |
+| `detection-runtime` | `detection.runtime` | transport-neutral lease/target/observation/port contracts, immutable artifact builder, stable job-name codec, and opt-in Flink process adapter |
+| `detection-controller` | `detection.controller` | independent non-web claim, lease/fencing, reconciliation, conditional adapter wiring and adapter health process |
 | `soar-core` | SOAR model, engine and handlers | transport-neutral playbook execution, lease, retry, approval and connector SPI; defines the consumer-owned `SecurityOperationPort`; no Kafka, Actuator health or JDK HTTP imports |
 | `soar-adapters` | SOAR Kafka/HTTP and security-operation adapters | lifecycle publisher, Kafka properties and record mapper, generic HTTP connector implementations, and the local `SecurityOperationPort` implementation |
 | `soar-worker-runtime` | SOAR worker runtime | Kafka consumer, Kafka health indicator and leased scheduled SOAR worker |
-| `platform-operations` | `health`, `notify`, `control`, `settings` | operational jobs, health and configuration |
+| `platform-operations` | `health`, `notify`, `control`, `settings` | operational jobs, health and configuration; no process/Docker/WSL adapter code |
+| `platform-operations-adapters` | optional process adapter implementations | WSL/Docker process adapters for existing non-Detection operations; explicitly included by `control-api` for compatibility, can be disabled with `app.operations.process-adapters=disabled`, and is a candidate for a future operations worker |
 | `agent-adapter` | `agent` | typed outbound integration with HISIEM-Agent |
 
 The two executable Spring Boot applications are composition roots. Moving a package
@@ -43,7 +46,13 @@ for development. `SoarWorkerApplication` is a separate non-servlet process role:
 
 ```text
 control-api
-  └── HTTP controllers + control-plane operations + soar-core + soar-adapters
+  ├── HTTP controllers + control-plane operations + detection-control + soar-core + soar-adapters
+  └── platform-operations-adapters (non-Detection operations; enabled by default, disable when needed)
+  (no physical Detection deployment authority)
+detection-controller
+  ├── durable detection group claims and fencing
+  ├── detection-runtime port contracts + disabled/process adapter
+  └── DetectionRuntimeService observation bridge
 soar-worker
   ├── SOAR Kafka consumer
   ├── leased SOAR execution worker
@@ -69,21 +78,12 @@ same desired-state transaction. Placement is deterministic from tenant, target
 cluster, plan input source family (default `siem-events`), category, and the
 configured positive bucket count.
 
-This phase is an **observed-state foundation**. The API records desired state and
-returns `PENDING`; it never treats desired state as observed state. Only an
-explicit `observe(RuntimeManifest, RuntimeJobState, ...)` call can move a rule to
-`RUNNING`, `DISABLED`, `FAILED`, or `UNKNOWN`, and manifest comparison reports
-missing, outdated (revision/generation/plan hash), and unexpected members.
-`STOPPED` removes a rule from the expected running member set while retaining its
-status row so a stopped observation can converge it to `DISABLED`. No physical
-Flink/Docker controller or deployment loop is implemented in this phase; that is
-the next phase's responsibility. Runtime observations are accepted and updated
-only for their exact tenant + target-cluster + job-group scope.
+This phase is an **observed-state foundation plus the Phase 5A controller core and the Phase 5B single-cluster process adapter**. The API records desired state and returns `PENDING`; it has no physical deployment permission. The independent `detection-controller` process claims durable V18 leases, fences stale work, reconciles through `FlinkRuntimePort`, and calls `observe` only after a final exact verification inspect. Its default disabled adapter performs no physical Flink/Docker operation and reports `UNKNOWN`. When explicitly enabled, the process adapter materializes immutable job-group artifacts, submits structured Flink jobs through argument vectors, and derives observed members from the real job list and local artifact. It is not a production HA or multi-cluster deployment solution. Runtime observations are accepted and updated only for their exact tenant + target-cluster + job-group scope.
 
 Runtime manifest JSON and its spec hash are produced by
 `RuntimeManifestCodec`; member order is canonical by `ruleKey`, and volatile
 observed `jobId`/`jobKey` fields are excluded from the SHA-256 spec hash. Runtime
-persistence and the V17 migration live in `detection-control` and
+persistence and the V17/V18 migrations live in `detection-control` and
 `platform-migrations` respectively; the Flink module remains independent.
 
 This intentionally avoids splitting alert, case, planner, tool, or connector
@@ -99,10 +99,11 @@ From the repository root, build and test the complete Maven reactor with:
 ./mvnw test
 ```
 
-The control API and SOAR worker have independent entrypoints:
+The control API, detection controller, and SOAR worker have independent entrypoints:
 
 ```bash
 ./mvnw -pl applications/control-api spring-boot:run
+./mvnw -pl applications/detection-controller spring-boot:run
 ./mvnw -pl applications/soar-worker spring-boot:run
 ```
 

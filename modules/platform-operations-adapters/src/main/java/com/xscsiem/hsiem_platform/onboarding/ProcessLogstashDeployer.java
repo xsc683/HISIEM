@@ -1,6 +1,7 @@
 package com.xscsiem.hsiem_platform.onboarding;
 
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -19,6 +20,7 @@ import java.util.concurrent.TimeoutException;
  * 命令路径(仓库 WSL 路径 / 部署目录 / 容器名)可由 application.properties 覆盖。
  */
 @Component
+@ConditionalOnProperty(name = "app.operations.process-adapters", havingValue = "enabled")
 public class ProcessLogstashDeployer implements LogstashDeployer {
 
     private static final long TIMEOUT_SECONDS = 120;

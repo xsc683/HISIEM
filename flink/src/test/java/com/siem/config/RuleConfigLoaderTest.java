@@ -80,6 +80,36 @@ class RuleConfigLoaderTest {
     }
 
     @Test
+    void loadDir_sortsFilesByNameAndRejectsDuplicateIds() throws IOException {
+        write("z-rule.yaml", """
+                id: same
+                category: single_event
+                type: t
+                enabled: true
+                condition: {type: field_equals, field: f, value: v}
+                """);
+        write("a-rule.yaml", """
+                id: first
+                category: single_event
+                type: t
+                enabled: true
+                condition: {type: field_equals, field: f, value: v}
+                """);
+
+        List<RuleDecl> sorted = new RuleConfigLoader().loadDir(temp.toString());
+        assertEquals(List.of("first", "same"), sorted.stream().map(rule -> rule.id).toList());
+
+        write("another-rule.yaml", """
+                id: same
+                category: single_event
+                type: t
+                enabled: true
+                condition: {type: field_equals, field: f, value: v}
+                """);
+        assertThrows(IllegalStateException.class, () -> new RuleConfigLoader().loadDir(temp.toString()));
+    }
+
+    @Test
     void loadDir_missingDir_throws() {
         assertThrows(IllegalStateException.class,
                 () -> new RuleConfigLoader().loadDir(temp.resolve("nope").toString()));

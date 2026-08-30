@@ -1,6 +1,7 @@
 package com.xscsiem.hsiem_platform.settings;
 
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -12,6 +13,7 @@ import java.util.concurrent.TimeoutException;
 
 /** 生产实现:通过 wsl 运行 entity-risk.py(重算实体风险,读最新 asset-criticality.json)。 */
 @Component
+@ConditionalOnProperty(name = "app.operations.process-adapters", havingValue = "enabled")
 public class ProcessCriticalityDeployer implements CriticalityDeployer {
 
     private static final long TIMEOUT_SECONDS = 120;

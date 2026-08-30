@@ -143,6 +143,7 @@ public class DetectionRuntimeService {
                     metadata.targetCluster(), groupKey, generation, manifestMembers);
             repository.upsertGroup(tenantId, groupKey, metadata.targetCluster(), metadata.sourceFamily(),
                     metadata.category(), metadata.bucket(), generation, codec.encode(expected), codec.specHash(expected));
+            repository.updateAssignmentGenerations(tenantId, groupKey, generation);
             generations.put(groupKey, generation);
         }
 

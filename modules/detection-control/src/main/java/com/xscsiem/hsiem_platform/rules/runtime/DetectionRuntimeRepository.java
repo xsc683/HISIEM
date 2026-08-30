@@ -186,6 +186,19 @@ public class DetectionRuntimeRepository {
                 """, tenantId, ruleKey, deploymentId, revision, planId, planHash, groupKey, generation);
     }
 
+    /**
+     * A group generation describes the complete immutable assignment set, not just the rule whose
+     * desired revision changed.  Move every existing assignment in the group before upserting the
+     * changed rule so artifact materialization can enforce one generation for all members.
+     */
+    public void updateAssignmentGenerations(String tenantId, String groupKey, long generation) {
+        jdbc.update("""
+                UPDATE rule_job_assignment
+                SET generation = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE tenant_id = ? AND group_key = ?
+                """, generation, tenantId, groupKey);
+    }
+
     public void upsertGroup(String tenantId, String groupKey, String targetCluster,
                             String sourceFamily, String category, int bucket, long generation,
                             String expectedJson, String expectedHash) {
@@ -194,6 +207,7 @@ public class DetectionRuntimeRepository {
                 SET target_cluster = ?, source_family = ?, category = ?, bucket = ?,
                     desired_generation = ?, expected_manifest_json = ?, expected_manifest_hash = ?,
                     status = 'PENDING', job_id = NULL, job_key = NULL, last_error = NULL,
+                    reconcile_state = 'PENDING', reconcile_available_at = CURRENT_TIMESTAMP,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE tenant_id = ? AND group_key = ?
                 """, targetCluster, sourceFamily, category, bucket, generation,
@@ -214,6 +228,7 @@ public class DetectionRuntimeRepository {
                         SET target_cluster = ?, source_family = ?, category = ?, bucket = ?,
                             desired_generation = ?, expected_manifest_json = ?, expected_manifest_hash = ?,
                             status = 'PENDING', job_id = NULL, job_key = NULL, last_error = NULL,
+                            reconcile_state = 'PENDING', reconcile_available_at = CURRENT_TIMESTAMP,
                             updated_at = CURRENT_TIMESTAMP
                         WHERE tenant_id = ? AND group_key = ?
                         """, targetCluster, sourceFamily, category, bucket, generation,

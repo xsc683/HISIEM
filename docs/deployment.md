@@ -122,13 +122,29 @@ bash /mnt/d/Project/SIEM/infra/kibana/create-dashboards.sh
 
 ## 8. 提交 Flink 检测 job
 
+普通开发/演示作业仍可直接提交（jar 已在容器 `/opt/flink/`）：
+
 ```bash
-# jar 已在容器 /opt/flink/ 下(deploy.sh 或手动 docker cp)
 docker exec siem-flink-jobmanager flink run -d /opt/flink/detection-job-1.0.jar
 ```
 
-> 更新 job:先 `flink list` 拿到 JobID → `flink cancel <JobID>` → 重新 `flink run`。
-> 因为已开 checkpointing + `committedOffsets`,重启**不会重放历史**(不会重复告警)。
+Managed Detection Runtime 的作业必须由独立 `detection-controller` 提交，不要手工对 managed job 执行全局 cancel。先准备控制器数据库、artifact 根目录和 savepoint 根目录，并按最小权限允许控制器执行 Docker CLI：
+
+```bash
+export SIEM_DETECTION_RUNTIME_ADAPTER=process
+export SIEM_DETECTION_CLUSTER_ID=default
+export SIEM_DETECTION_ALLOWED_CLUSTERS=default
+export SIEM_DETECTION_CONTAINER_NAME=siem-flink-jobmanager
+export SIEM_DETECTION_JAR_PATH=/opt/flink/detection-job-1.0.jar
+export SIEM_DETECTION_ARTIFACT_ROOT=/var/lib/siem/detection-artifacts
+export SIEM_DETECTION_CONTAINER_ARTIFACT_ROOT=/opt/flink/detection-artifacts
+export SIEM_DETECTION_SAVEPOINT_ROOT=file:///opt/flink/savepoints
+./mvnw -pl applications/detection-controller spring-boot:run
+```
+
+控制器从数据库 assignment/plan/revision 物化 immutable artifact，并提交带有 `SIEM-DETECTION-dg-<24hex>-g<generation>-m<64hex>` 的结构化名称。更新由 controller 执行 cancel-with-savepoint、artifact copy、submit 和 exact `RUNNING` 验证；失败时会尝试使用旧 artifact 和原 savepoint rollback。保留每个 `jobKey` 的 artifact 至少覆盖最长 savepoint/rollback 窗口，且不要删除正在观察或排障所需的目录。
+
+`app.detection.runtime-adapter` 默认是 `disabled`，只报告 `UNKNOWN`。Phase 5B 的 process adapter 是单配置集群、非 HA 实现；生产环境仍需自行提供容器权限、持久化 artifact/savepoint 存储、备份、监控、升级回滚和多实例 fencing 方案。
 
 ## 9. 自动自验证
 

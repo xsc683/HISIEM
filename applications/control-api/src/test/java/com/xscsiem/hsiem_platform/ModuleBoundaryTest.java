@@ -52,6 +52,46 @@ class ModuleBoundaryTest {
     }
 
     @Test
+    void detectionProcessesArePhysicallySeparated() throws IOException {
+        Path root = repositoryRoot();
+        String controlPom = Files.readString(root.resolve("applications/control-api/pom.xml"));
+        String controllerPom = Files.readString(root.resolve("applications/detection-controller/pom.xml"));
+        assertFalse(controlPom.contains("<artifactId>detection-runtime</artifactId>"));
+        assertTrue(controlPom.contains("<artifactId>platform-operations-adapters</artifactId>"));
+        assertFalse(controllerPom.contains("<artifactId>control-api</artifactId>"));
+        assertFalse(Files.exists(root.resolve("modules/detection-control/src/main/java/com/xscsiem/hsiem_platform/rules/RulesDeployer.java")));
+        assertFalse(Files.exists(root.resolve("modules/detection-control/src/main/java/com/xscsiem/hsiem_platform/rules/ProcessRulesDeployer.java")));
+
+        Path controlApiSource = root.resolve("applications/control-api/src/main");
+        try (Stream<Path> files = Files.walk(controlApiSource)) {
+            for (Path file : files.filter(path -> path.toString().endsWith(".java")).toList()) {
+                String text = Files.readString(file);
+                assertFalse(text.contains("ProcessRulesDeployer"), file.toString());
+                assertFalse(text.contains("RulesDeployer"), file.toString());
+                assertFalse(text.contains("docker exec"), file.toString());
+                assertFalse(text.contains("wsl"), file.toString());
+                assertFalse(text.contains("flink run"), file.toString());
+                assertFalse(text.contains("flink cancel"), file.toString());
+            }
+        }
+
+        Path detectionControl = root.resolve("modules/detection-control/src/main/java");
+        try (Stream<Path> files = Files.walk(detectionControl)) {
+            for (Path file : files.filter(path -> path.toString().endsWith(".java")).toList()) {
+                String text = Files.readString(file);
+                assertFalse(text.contains("ProcessBuilder"), file.toString());
+                assertFalse(text.contains("docker exec"), file.toString());
+                assertFalse(text.contains("wsl"), file.toString());
+                assertFalse(text.contains("flink run"), file.toString());
+                assertFalse(text.contains("flink cancel"), file.toString());
+            }
+        }
+
+        assertTrue(Files.exists(root.resolve(
+                "modules/platform-operations-adapters/src/main/java/com/xscsiem/hsiem_platform/onboarding/ProcessLogstashDeployer.java")));
+    }
+
+    @Test
     void migrationsHaveOnePhysicalOwner() throws IOException {
         Path root = repositoryRoot();
         assertTrue(Files.isDirectory(root.resolve("modules/platform-migrations/src/main/resources/db/migration")));

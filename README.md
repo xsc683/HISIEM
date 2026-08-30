@@ -36,12 +36,14 @@ SIEM/
 │   ├── agent-adapter/        HISIEM-Agent 出站适配
 │   ├── security-ops/         告警、案件、日志检索与 ES 网关
 │   ├── platform-operations/  接入、通知、健康与运维任务
-│   ├── detection-control/    规则、计划与 managed detection
+│   ├── detection-control/    规则、计划与 desired/observed runtime（无物理部署）
+│   ├── detection-runtime/    transport-neutral runtime port contracts
 │   ├── soar-core/            传输无关 SOAR 执行引擎、SPI 与 handler
 │   ├── soar-adapters/        Kafka lifecycle 与 HTTP connector 适配
 │   └── soar-worker-runtime/  Kafka consumer、health 与 SOAR worker loop
-├── applications/control-api/ 控制 API 可执行应用（hsiem-platform.jar）
-├── applications/soar-worker/ 独立 SOAR worker 可执行应用（hsiem-soar-worker.jar）
+├── applications/control-api/       控制 API 可执行应用（不执行物理检测部署）
+├── applications/detection-controller/ 独立检测 controller（WebApplicationType.NONE，默认 disabled adapter）
+├── applications/soar-worker/       独立 SOAR worker 可执行应用（无 HTTP）
 ├── flink/                    独立 Flink job 工程(规则引擎 + 检测任务)
 │   ├── pom.xml               Flink 2.1, shade 打 jar, mainClass com.siem.DetectionJob
 │   └── src/{main,test}/      规则引擎代码 + JUnit 测试
@@ -57,7 +59,9 @@ SIEM/
 └── CLAUDE.md               面向 AI 会话的项目速览
 ```
 
-`soar-core` 不依赖 Kafka client、Actuator health 或 `java.net.http`；`soar-adapters` 依赖
+`detection-runtime` 提供 transport-neutral `DetectionGroupLease`、target/observation、`FlinkRuntimePort` 合同、immutable artifact builder、structured job identity 和 opt-in process adapter；`detection-controller` 独立依赖这些合同、detection-control 的 observation bridge 和共享 migration，不依赖 `control-api`。5A/5B 默认 `app.detection.runtime-adapter=disabled`，不执行任何 Docker/Flink 物理部署；设置为 `process` 才启用单集群 process adapter。`control-api` 的 desired deploy/stop/bulk API 仍返回 `202 PENDING`。
+
+
 `soar-core`/`platform-contracts` 并承载 Kafka/HTTP adapter；`soar-worker-runtime`
 依赖前两者并承载 Kafka/Actuator/Micrometer runtime。`control-api` 的生产依赖只有
 `soar-core`、`soar-adapters`（另依赖共享 migration 资源），worker-runtime 仅以 test
@@ -75,7 +79,8 @@ security-ops、platform-operations 和 platform-migrations，不依赖 control-a
 | [docs/architecture.md](docs/architecture.md) | 系统架构、数据流、Schema、规则引擎概览 |
 | [docs/deployment.md](docs/deployment.md) | **新机器部署指南**(换环境必备) |
 | [docs/operations.md](docs/operations.md) | 日常启动、健康扫描、端到端冒烟、排障和回滚 |
-| [docs/design-decisions.md](docs/design-decisions.md) | 设计决策 + 踩坑记录 |
+| [docs/design/module-boundaries.md](docs/design/module-boundaries.md) | 模块依赖、进程角色与隔离规则 |
+| [docs/design/managed-detection-runtime.md](docs/design/managed-detection-runtime.md) | Phase 5A/5B detection controller、immutable artifact、真实 observed state、process adapter 与限制 |
 | [docs/event-alert-schema.md](docs/event-alert-schema.md) | Event/Alert Schema 详细设计 |
 | [docs/rule-engine.md](docs/rule-engine.md) | 规则引擎使用与扩展 |
 | [docs/roadmap.md](docs/roadmap.md) | 统一阶段路线图、验收基线和后续优先级 |

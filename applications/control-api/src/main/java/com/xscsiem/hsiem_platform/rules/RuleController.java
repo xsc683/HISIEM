@@ -1,6 +1,5 @@
 package com.xscsiem.hsiem_platform.rules;
 
-import com.xscsiem.hsiem_platform.notify.NotificationService;
 import com.xscsiem.hsiem_platform.tenant.TenantContext;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.HttpStatus;
@@ -27,20 +26,15 @@ import java.util.Map;
 public class RuleController {
 
     private final RuleService rules;
-    private final RulesDeployer deployer;
-    private final NotificationService notify;
     private final ManagedDetectionService managed;
 
-    public RuleController(RuleService rules, RulesDeployer deployer, NotificationService notify) {
-        this(rules, deployer, notify, null);
+    public RuleController(RuleService rules) {
+        this(rules, null);
     }
 
     @org.springframework.beans.factory.annotation.Autowired
-    public RuleController(RuleService rules, RulesDeployer deployer, NotificationService notify,
-                          ManagedDetectionService managed) {
+    public RuleController(RuleService rules, ManagedDetectionService managed) {
         this.rules = rules;
-        this.deployer = deployer;
-        this.notify = notify;
         this.managed = managed;
     }
 

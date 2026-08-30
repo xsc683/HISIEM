@@ -31,7 +31,7 @@ class PostgresMigrationContainerTest {
         Flyway.configure().dataSource(dataSource).locations("classpath:db/migration").load().migrate();
 
         JdbcTemplate jdbc = new JdbcTemplate(dataSource);
-        assertEquals(17, jdbc.queryForObject(
+        assertEquals(18, jdbc.queryForObject(
                 "SELECT COUNT(*) FROM flyway_schema_history WHERE success = TRUE", Integer.class));
         assertTrue(jdbc.queryForObject("""
                 SELECT COUNT(*) FROM information_schema.tables
@@ -106,6 +106,22 @@ class PostgresMigrationContainerTest {
                 SELECT COUNT(*) FROM information_schema.columns
                 WHERE table_schema = 'public' AND table_name = 'detection_job_group'
                   AND column_name IN ('expected_manifest_json', 'expected_manifest_hash')
+                """, Integer.class));
+        assertEquals(7, jdbc.queryForObject("""
+                SELECT COUNT(*) FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = 'detection_job_group'
+                  AND column_name IN ('reconcile_state', 'reconcile_available_at',
+                    'controller_lease_owner', 'controller_lease_until', 'controller_fencing_token',
+                    'reconcile_attempts', 'last_reconciled_at')
+                """, Integer.class));
+        assertEquals(1, jdbc.queryForObject("""
+                SELECT COUNT(*) FROM information_schema.table_constraints
+                WHERE table_schema = 'public' AND table_name = 'detection_job_group'
+                  AND constraint_name = 'detection_job_group_reconcile_state_ck'
+                """, Integer.class));
+        assertEquals(1, jdbc.queryForObject("""
+                SELECT COUNT(*) FROM pg_indexes
+                WHERE schemaname = 'public' AND indexname = 'detection_job_group_reconcile_due_idx'
                 """, Integer.class));
         assertEquals(1, jdbc.queryForObject("""
                 SELECT COUNT(*) FROM information_schema.columns

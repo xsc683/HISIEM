@@ -36,6 +36,7 @@ import co.elastic.clients.elasticsearch.core.bulk.BulkOperationVariant;
 import co.elastic.clients.json.JsonData;
 
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
@@ -62,14 +63,33 @@ import java.util.concurrent.TimeUnit;
 public class DetectionJob {
 
     private static final ObjectMapper ALERT_MAPPER = new ObjectMapper();
+    private static final String DEFAULT_CHECKPOINT_ROOT = "file:///opt/flink/checkpoints";
+    private static final String DEFAULT_SAVEPOINT_ROOT = "file:///opt/flink/savepoints";
+
+    /** Fixed, machine-parseable name shared with the process runtime adapter. */
+    public static String structuredJobName(DetectionJobArguments arguments) {
+        if (arguments == null || arguments.legacy()) {
+            return "SIEM Detection Engine";
+        }
+        return "SIEM-DETECTION-" + arguments.jobKey() + "-g" + arguments.generation()
+                + "-m" + arguments.manifestHash();
+    }
 
     public static void main(String[] args) throws Exception {
 
-        // checkpoint/savepoint 落到 Docker 挂载的持久卷(/opt/flink/checkpoints),
-        // 容器重建不丢失,保证恢复能力(Phase 3.0-F1)。
+        DetectionJobArguments arguments = DetectionJobArguments.parse(args);
+        String rulesDir = arguments.rulesDir();
+
+        // Each managed job gets an isolated state path.  Legacy launches retain the historical
+        // shared path until they are redeployed with the typed 5B arguments.
+        String checkpointRoot = System.getenv().getOrDefault("SIEM_CHECKPOINT_ROOT", DEFAULT_CHECKPOINT_ROOT);
+        String savepointRoot = System.getenv().getOrDefault("SIEM_SAVEPOINT_ROOT", DEFAULT_SAVEPOINT_ROOT);
+        String stateSuffix = arguments.managed() ? "/" + arguments.jobKey() : "";
+
+        // checkpoint/savepoint 落到 Docker 挂载的持久卷,按 jobKey 隔离 managed jobs。
         Configuration conf = new Configuration();
-        conf.setString("state.checkpoints.dir", "file:///opt/flink/checkpoints");
-        conf.setString("execution.checkpointing.savepoint-dir", "file:///opt/flink/checkpoints");
+        conf.setString("state.checkpoints.dir", appendPath(checkpointRoot, stateSuffix));
+        conf.setString("execution.checkpointing.savepoint-dir", appendPath(savepointRoot, stateSuffix));
         // 重启策略(Phase 3.0-F3):exponential-delay,Flink 2.x 通过 Configuration 选项配置
         // (旧版 RestartStrategies 工厂已移除)。
         conf.set(RestartStrategyOptions.RESTART_STRATEGY, "exponential-delay");
@@ -98,10 +118,9 @@ public class DetectionJob {
         System.out.println("[DetectionJob] runtime tuning=" + tuning);
 
         // 规则加载(检测即代码):解析目录,enabled 才注册
-        String rulesDir = args.length > 0 ? args[0]
-                : System.getenv().getOrDefault("SIEM_RULES_DIR", "/opt/flink/rules");
         RuleConfigLoader loader = new RuleConfigLoader();
         List<RuleDecl> decls = loader.loadDir(rulesDir);
+        new RuntimeManifestVerifier().verify(Path.of(rulesDir), arguments, decls);
         List<RuleDecl> enabled = decls.stream().filter(d -> d.enabled).toList();
         RuleBuilder builder = new RuleBuilder();
         System.out.println("[DetectionJob] 加载规则目录 " + rulesDir
@@ -112,7 +131,8 @@ public class DetectionJob {
         KafkaSourceBuilder<String> sourceBuilder = KafkaSource.<String>builder()
                 .setBootstrapServers(kafkaBootstrap)
                 .setTopics("siem-events")
-                .setGroupId("siem-detection")
+                .setGroupId(arguments.managed() ? "siem-detection-" + arguments.jobKey()
+                        : "siem-detection")
                 .setStartingOffsets(
                         // 从已提交的 group offset 恢复;首次运行(无已提交 offset)回退到 earliest
                         OffsetsInitializer.committedOffsets(OffsetResetStrategy.EARLIEST)
@@ -285,9 +305,15 @@ public class DetectionJob {
                 .uid("alert-lifecycle-kafka");
 
 
-        env.execute(
-                "SIEM Detection Engine"
-        );
+        env.execute(structuredJobName(arguments));
+    }
+
+    private static String appendPath(String root, String suffix) {
+        if (root == null || root.isBlank()) {
+            throw new IllegalArgumentException("state path root must not be blank");
+        }
+        if (suffix == null || suffix.isEmpty()) return root;
+        return root.replaceAll("/+$", "") + "/" + suffix.replaceAll("^/+", "");
     }
 
     private static void applyKafkaSecurity(KafkaSourceBuilder<?> builder) {

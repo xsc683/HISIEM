@@ -19,6 +19,7 @@
 | 4.8 | Vue 3 控制台与规则编写 | 已完成 | vue-router 深链、模块化列表/表单/详情、规则 DSL CRUD、结构化告警/案件和 Vue Flow Handle 连线 |
 | 4.9 | 可靠性回归门禁 | 已完成 | Case 删除镜像状态、keystore 隔离、SOAR fencing/续租、编辑器离开保存、Flink 解析 DLQ、GitHub Actions 与 Playwright E2E |
 | 4.10 | SOAR 持久能力扩展 | 已完成 | V13–V15 持久 Parallel/Join、静态 item Loop、取消/失败传播、手动触发、Connector SPI/HTTP、验证器链和设计器表单 |
+| 5A/5B | Managed Detection Runtime | 已完成（单集群 process path） | V17/V18 desired/observed、durable lease/fencing、独立 controller、immutable job-group artifact、structured Flink identity、真实 job/artifact observation、启动校验和 opt-in process/disabled adapter；生产 HA、多集群编排和灾备治理仍未完成 |
 
 ## 当前验收基线
 
@@ -32,7 +33,7 @@ npm.cmd --prefix web run build
 npm.cmd --prefix web run test:e2e
 ```
 
-当前基线为根项目 124 个测试、Flink 38 个测试、前端 9 个单元测试、生产构建和 3 条 Playwright 浏览器 E2E 全部通过；测试数量随新增回归用例变化，最终以 Maven/Node/Playwright 输出为准。涉及基础设施时还要执行 Docker Compose、健康扫描、Kafka/Flink/lifecycle 链路和 ES 备份恢复验证。结果与环境说明集中记录在[当前状态](current-status.md)和[运维手册](operations.md)。
+当前 Maven 基线为 control-api 149 个测试、detection-runtime 21 个测试、detection-controller 17 个测试、SOAR worker 1 个测试、Flink 46 个测试，全部通过；前端生产构建和浏览器 E2E 的最近结果仍以 CI/历史验证记录为准，测试数量随新增回归用例变化，最终以 Maven/Node/Playwright 输出为准。涉及基础设施时还要执行 Docker Compose、健康扫描、Kafka/Flink/lifecycle 链路和 ES 备份恢复验证。结果与环境说明集中记录在[当前状态](current-status.md)和[运维手册](operations.md)。
 
 ## 下一阶段优先级
 

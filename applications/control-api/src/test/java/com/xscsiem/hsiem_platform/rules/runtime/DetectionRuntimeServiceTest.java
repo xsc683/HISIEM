@@ -211,7 +211,40 @@ class DetectionRuntimeServiceTest {
     }
 
     @Test
-    void latestObservedManifestUsesNewestAppendOnlyRow() throws Exception {
+    void changingOneRuleInSameGroupUpdatesEveryAssignmentForNextArtifact() throws Exception {
+        String firstRule = "rule-same-group-a";
+        String secondRule = "rule-same-group-b";
+        Files.writeString(rulesDir.resolve(firstRule + ".yaml"),
+                rule(firstRule, "first", "login"));
+        Files.writeString(rulesDir.resolve(secondRule + ".yaml"),
+                rule(secondRule, "second", "logout"));
+        JdbcTemplate jdbc = jdbc();
+        DetectionRuntimeService runtime = new DetectionRuntimeService(jdbc, 1);
+        ManagedDetectionService managed = new ManagedDetectionService(jdbc,
+                new RuleService(rulesDir.toString(), "http://localhost:9200"), "test-commit", runtime);
+        TenantContext.set("default");
+
+        managed.deploy("default", firstRule, Map.of("targetCluster", "cluster-a"), "tester");
+        managed.deploy("default", secondRule, Map.of("targetCluster", "cluster-a"), "tester");
+        String group = jdbc.queryForObject("SELECT group_key FROM rule_job_assignment WHERE rule_key = ?",
+                String.class, firstRule);
+        long before = jdbc.queryForObject("SELECT desired_generation FROM detection_job_group WHERE group_key = ?",
+                Long.class, group);
+
+        Files.writeString(rulesDir.resolve(firstRule + ".yaml"),
+                rule(firstRule, "first changed", "password"));
+        managed.deploy("default", firstRule, Map.of("targetCluster", "cluster-a"), "tester");
+
+        long after = jdbc.queryForObject("SELECT desired_generation FROM detection_job_group WHERE group_key = ?",
+                Long.class, group);
+        assertTrue(after > before);
+        assertEquals(2, jdbc.queryForObject("SELECT COUNT(*) FROM rule_job_assignment WHERE group_key = ?",
+                Integer.class, group));
+        assertEquals(2, jdbc.queryForObject("SELECT COUNT(*) FROM rule_job_assignment "
+                + "WHERE group_key = ? AND generation = ?", Integer.class, group, after));
+    }
+    @Test
+    void inspectionUsesNewestObservedJobForRule() throws Exception {
         Files.writeString(rulesDir.resolve("rule-runtime-test.yaml"), rule("runtime test", "login"));
         JdbcTemplate jdbc = jdbc();
         ManagedDetectionService managed = managed(jdbc);
