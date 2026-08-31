@@ -1,6 +1,6 @@
 # HISIEM / HISIEM-Agent 任务清单与完成状态
 
-> 归档日期：2026-08-30
+> 归档日期：2026-09-01
 > 本文记录跨两个仓库的架构演进任务清单、每项完成状态、对应提交和遗留边界。
 > 相关方案：`docs/design/module-boundaries.md`、`docs/design/managed-detection-runtime.md`、根目录三份 proposal。
 
@@ -10,7 +10,7 @@
 
 | 仓库 | 分支 | 最新提交 |
 |---|---|---|
-| SIEM | `add_frame` | `159ba03` feat(detection): add controller runtime and Flink process adapter |
+| SIEM | `add_frame` | `7affc44` feat(detection): converge DetectionPlan into Flink runtime contract |
 | HISIEM-Agent | `main` | `01e2d49` fix(runtime): harden durable queue atomicity and lease safety |
 
 两者均与远端同步，工作区清洁。
@@ -135,7 +135,43 @@
 
 ---
 
-## 八、未开始阶段（后续）
+## 八、Runtime Contract 收敛（DetectionPlan → Flink Backend）
+
+提交：`SIEM 7affc44`。
+
+目标：完成 Rule DSL → IR → Flink Backend 单向编译链，使 DetectionPlan 从旁路部署元数据真正成为 Runtime Contract。范围仅限现有四类规则，未新增 Rule 类型 / Graph DSL / 微服务。
+
+| 项 | 状态 |
+|---|---|
+| #10 设计 canonical DetectionPlan Runtime Contract（v2，bounded 类别化 IR） | ✅ 完成 |
+| #11 DetectionPlan → Flink artifact 单向编译（`FlinkArtifactCompiler`） | ✅ 完成 |
+| #12 收敛 Desired State 与 generation 语义（plan-hash 幂等 no-op） | ✅ 完成 |
+| #13 Runtime Contract 验收测试（四类 plan/hash/后端/幂等/Flink 消费） | ⬜ 待办 |
+
+关键语义：
+
+- `DetectionPlanCompiler` 输出 `schema_version=2` + `compiler_version=hisiem-detection-plan-2` 的 canonical JSON；`plan_hash` 只覆盖运行时语义（rule_key、alert name/type/severity/description/risk_score/tags/status/version、条件、窗口、CEP、基线），不含 `enabled` / `references` / revision 号。
+- 四类规则语义显式化：single_event 处理时间抑制；window 事件时间 tumbling/sliding + 阈值 + 抑制；cep 事件时间 within + 步骤重复 + `failures`/`success` 输出映射；baseline 事件时间窗口 + 滚动基线 + mean/σ + 正阈值约束。
+- `FlinkArtifactCompiler` 严格校验 plan 字段全集并生成物理 `RuleDecl` JSON；物理声明恒 `enabled=true`（desired 为启停真源，YAML `enabled` 不是 live authority）。
+- `DetectionArtifactBuilder` 只读取 `detection_plan.plan_json`（SHA-256 校验 `plan_hash`），不再读取 `rule_revision.definition_json`。
+- 重复 deploy/stop/rollback 为 no-op；语义相同的新 revision 不触发物理部署；Job Group generation 仅在 canonical 物理 spec（target/source/category/bucket + `ruleKey|planHash` 成员）变化时 +1；group 未变化时跳过 `upsertGroup`，保留 status/job/error/reconcile 字段。
+- `GET /runtime` 为纯查询（只读事务，不创建 revision/plan）。
+
+验证：
+
+- 控制面 reactor（14 模块）与独立 Flink 工程 `-DskipTests compile` 均 BUILD SUCCESS。
+- `git diff --check` 通过；改动文件无 NUL 字节。
+
+遗留边界（明确未完成）：
+
+- #13 验收测试未编写；既有测试仍断言 v1 计划形状（`DetectionPlanCompilerTest`），`DetectionArtifactBuilderTest` fixture 缺 `compiler_version`/`plan_json` 列。
+- `detection_plan` 唯一约束为 `(revision_id, compiler_version, plan_hash)`，未保证每 revision/compiler 只有一份 plan；`findDesiredRunning` 理论可返回重复行，未加迁移收紧。
+- 文档（`managed-detection-runtime.md`）与前端 Desired/Observed 展示未随本轮同步更新。
+- 未执行完整回归测试。
+
+---
+
+## 九、未开始阶段（后续）
 
 | 阶段 | 内容 | 状态 |
 |---|---|---|
@@ -146,7 +182,7 @@
 
 ---
 
-## 九、测试基线（提交时已验证）
+## 十、测试基线（提交时已验证）
 
 SIEM（268 项，0 失败 / 0 错误 / 0 跳过）：
 
@@ -159,7 +195,7 @@ HISIEM-Agent（152 passed / 3 skipped）：
 
 ---
 
-## 十、后续推荐执行顺序
+## 十一、后续推荐执行顺序
 
 ```text
 阶段六 Lifecycle Outbox / Receipt
