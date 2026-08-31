@@ -28,10 +28,19 @@ public class BruteforceSuccessFunction extends PatternProcessFunction<Event, Str
     private final List<String> tags;
     private final String status;
     private final String version;
+    private final String failureStep;
+    private final String successStep;
 
     public BruteforceSuccessFunction(String ruleId, String ruleName, String type, String severity,
                                      String description, int riskScore, List<String> tags, String status,
                                      String version) {
+        this(ruleId, ruleName, type, severity, description, riskScore, tags, status, version,
+                "failures", "success");
+    }
+
+    public BruteforceSuccessFunction(String ruleId, String ruleName, String type, String severity,
+                                     String description, int riskScore, List<String> tags, String status,
+                                     String version, String failureStep, String successStep) {
         this.ruleId = ruleId;
         this.ruleName = ruleName;
         this.type = type;
@@ -41,12 +50,20 @@ public class BruteforceSuccessFunction extends PatternProcessFunction<Event, Str
         this.tags = tags;
         this.status = status;
         this.version = version;
+        this.failureStep = defaultStep(failureStep, "failures");
+        this.successStep = defaultStep(successStep, "success");
+    }
+
+    private static String defaultStep(String value, String fallback) {
+        if (value == null) return fallback;
+        if (value.isBlank()) throw new IllegalArgumentException("CEP output step must not be blank");
+        return value;
     }
 
     @Override
     public void processMatch(Map<String, List<Event>> match, Context ctx, Collector<String> out) throws Exception {
-        List<Event> failures = match.getOrDefault("failures", List.of());
-        List<Event> successes = match.getOrDefault("success", List.of());
+        List<Event> failures = match.getOrDefault(failureStep, List.of());
+        List<Event> successes = match.getOrDefault(successStep, List.of());
         if (successes.isEmpty()) {
             return;
         }

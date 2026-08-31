@@ -65,12 +65,11 @@ public class DetectionRuntimeRepository {
         return jdbc.queryForList("""
                 SELECT d.deployment_id, d.tenant_id, d.rule_key, d.desired_revision_id,
                        d.generation AS deployment_generation, d.target_cluster,
-                       r.revision, p.plan_id, p.plan_hash, p.plan_json, dr.category
+                       r.revision, p.plan_id, p.plan_hash, p.plan_json
                 FROM rule_deployment d
                 JOIN rule_revision r ON r.revision_id = d.desired_revision_id
                 JOIN detection_plan p ON p.revision_id = r.revision_id
                     AND p.compiler_version = ?
-                JOIN detection_rule dr ON dr.rule_key = d.rule_key
                 WHERE d.tenant_id = ? AND d.desired_state = 'RUNNING'
                 ORDER BY d.rule_key
                 """, compilerVersion, tenantId);
@@ -89,7 +88,7 @@ public class DetectionRuntimeRepository {
 
     public Map<String, Object> findAssignment(String tenantId, String ruleKey) {
         List<Map<String, Object>> rows = jdbc.queryForList("""
-                SELECT tenant_id, rule_key, deployment_id, revision, plan_hash, group_key,
+                SELECT tenant_id, rule_key, deployment_id, revision, plan_id, plan_hash, group_key,
                        generation, created_at, updated_at
                 FROM rule_job_assignment
                 WHERE tenant_id = ? AND rule_key = ?

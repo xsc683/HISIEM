@@ -180,14 +180,15 @@ public class DetectionJob {
         /*
          * 1) 单事件规则:逐规则匹配 → 告警 JSON → 抑制(同一规则+实体窗口内只发一条)。
          */
-        List<Rule> singleRules = enabled.stream()
-                .filter(d -> "single_event".equals(d.category))
-                .map(builder::toRule).toList();
+        List<RuleDecl> singleDecls = enabled.stream()
+                .filter(d -> "single_event".equals(d.category)).toList();
+        List<Rule> singleRules = singleDecls.stream().map(builder::toRule).toList();
+        long singleSuppressionMinutes = singleEventSuppressionMinutes(singleDecls);
         DataStream<String> singleAlerts = parsed
                 .flatMap(new DetectionFunction(new RuleRegistry(singleRules)))
                 .uid("single-event-detection")
                 .keyBy(AlertSuppressor::suppressionKey)
-                .process(new AlertSuppressor(Duration.ofMinutes(60)))
+                .process(new AlertSuppressor(Duration.ofMinutes(singleSuppressionMinutes)))
                 .uid("alert-suppression");
 
 
@@ -238,7 +239,7 @@ public class DetectionJob {
                     .process(new BruteforceSuccessFunction(
                             meta.id(), meta.name(), meta.type(), meta.severity(),
                             meta.description(), meta.riskScore(), meta.tags(), meta.status(),
-                            meta.version()))
+                            meta.version(), d.cep.failureStep, d.cep.successStep))
                     .uid("cep-" + d.id));
         }
         DataStream<String> cepAlerts = cepStreams.isEmpty()
@@ -257,11 +258,16 @@ public class DetectionJob {
             }
             RuleMeta meta = builder.toMeta(d);
             long windowHours = b.windowHours == null ? 1L : b.windowHours;
+            double sigmaMultiplier = b.sigmaMultiplier == null ? 3.0d : b.sigmaMultiplier;
+            Condition baselineCondition = d.condition == null
+                    ? new FieldEqualsCondition("event.action", "authentication_failure")
+                    : builder.buildCondition(d.condition);
             anomalyStreams.add(parsedTimed
                     .keyBy(e -> String.valueOf(
                             e.getFields().getOrDefault(b.keyField, "unknown")))
                     .window(TumblingEventTimeWindows.of(Duration.ofHours(windowHours)))
-                    .process(new BaselineAnomalyFunction(b.baselineHours, b.minBaselineHours, meta))
+                    .process(new BaselineAnomalyFunction(b.baselineHours, b.minBaselineHours,
+                            baselineCondition, sigmaMultiplier, meta))
                     .uid("baseline-" + d.id));
         }
         DataStream<String> anomalyAlerts = anomalyStreams.isEmpty()
@@ -306,6 +312,26 @@ public class DetectionJob {
 
 
         env.execute(structuredJobName(arguments));
+    }
+
+    static long singleEventSuppressionMinutes(List<RuleDecl> declarations) {
+        long selected = 60L;
+        boolean explicit = false;
+        for (RuleDecl declaration : declarations) {
+            if (declaration.alertSuppressionMinutes == null) {
+                continue;
+            }
+            long value = declaration.alertSuppressionMinutes;
+            if (value <= 0) {
+                throw new IllegalArgumentException("single_event alertSuppressionMinutes 必须 > 0");
+            }
+            if (explicit && selected != value) {
+                throw new IllegalArgumentException("同一 Job Group 的 single_event 抑制时长必须一致");
+            }
+            selected = value;
+            explicit = true;
+        }
+        return selected;
     }
 
     private static String appendPath(String root, String suffix) {

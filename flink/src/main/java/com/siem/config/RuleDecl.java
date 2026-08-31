@@ -45,7 +45,7 @@ public class RuleDecl implements Serializable {
     public Long windowMinutes;
     /** 滑动步长(分钟);缺省 = tumbling 固定窗口;>0 = 滑动窗口(修边界盲区,F7)。 */
     public Long slidingMinutes;
-    /** 窗口告警抑制时长(分钟);缺省由 WindowRule 回退为 windowMinutes。 */
+    /** 告警抑制时长(分钟);window 缺省由 WindowRule 回退为 windowMinutes。 */
     public Long alertSuppressionMinutes;
     public Integer threshold;
     // ---- cep:序列参数 ----
@@ -68,6 +68,9 @@ public class RuleDecl implements Serializable {
     public static class CepDecl implements Serializable {
         /** 整个序列的时间上限(分钟)。 */
         public Long withinMinutes;
+        /** Output mapping consumed by the bounded brute-force-success result adapter. */
+        public String failureStep;
+        public String successStep;
         /** 序列步骤(首个 begin,其余 next / followedBy)。 */
         public List<CepStep> pattern;
     }
@@ -94,5 +97,6 @@ public class RuleDecl implements Serializable {
         public Integer baselineHours;
         /** 基线最少样本小时数(低于则不判异常,如 3)。 */
         public Integer minBaselineHours;
+        public Double sigmaMultiplier = 3.0;
     }
 }

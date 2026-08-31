@@ -48,15 +48,15 @@ public class ManagedDetectionService {
         this(jdbc, rules, sourceCommit, new DetectionRuntimeService(jdbc));
     }
 
-    @Transactional
+    @Transactional(readOnly = true)
     public Map<String, Object> inspect(String ruleKey, String actor) {
         Map<String, Object> rule = rules.get(ruleKey);
-        Revision revision = ensureRevision(rule, actor);
-        Plan plan = ensurePlan(rule, revision);
+        Revision revision = findCurrentRevision(rule);
+        Plan plan = revision == null ? null : findPlan(revision);
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("rule", rule);
-        response.put("revision", revision.asMap());
-        response.put("plan", plan.asMap());
+        response.put("revision", revision == null ? null : revision.asMap());
+        response.put("plan", plan == null ? null : plan.asMap());
         response.put("deployment", findDeployment(TenantContext.id(), ruleKey));
         Map<String, Object> runtimeView = runtime.inspect(TenantContext.id(), ruleKey);
         response.put("assignment", runtimeView.get("assignment"));
@@ -129,7 +129,7 @@ public class ManagedDetectionService {
                                                         boolean reconcile) {
         Map<String, Object> request = body == null ? Map.of() : body;
         Revision revision = revisionFor(rule, request.get("revisionId"), actor);
-        ensurePlan(rule, revision);
+        Plan plan = ensurePlan(rule, revision);
         UUID deploymentId = UUID.randomUUID();
         Map<String, Object> previous = findDeployment(tenantId, ruleKey);
         Object requestedCluster = request.get("targetCluster");
@@ -137,6 +137,13 @@ public class ManagedDetectionService {
                 ? previous == null || previous.get("target_cluster") == null
                     ? "default" : String.valueOf(previous.get("target_cluster"))
                 : String.valueOf(requestedCluster);
+        if (sameDesiredState(previous, plan, desiredState, targetCluster)) {
+            if (reconcile) {
+                // Even an idempotent mutation reconciles so missing assignments/status can be repaired.
+                runtime.reconcileDesiredState(tenantId, ruleKey, targetCluster, desiredState);
+            }
+            return previous;
+        }
         int updated = jdbc.update("""
                 UPDATE rule_deployment SET desired_revision_id = ?, desired_state = ?,
                     generation = generation + 1, target_cluster = ?, status = 'PENDING',
@@ -173,6 +180,64 @@ public class ManagedDetectionService {
         summary.put("generation", deployment.get("generation"));
         summary.put("status", deployment.get("status"));
         return summary;
+    }
+
+    private Revision findCurrentRevision(Map<String, Object> rule) {
+        String ruleKey = String.valueOf(rule.get("id"));
+        String definition = json(rule);
+        String hash = sha256(definition);
+        List<Revision> revisions = jdbc.query("""
+                SELECT revision_id, revision, definition_json, content_hash, source_commit, created_by, created_at
+                FROM rule_revision WHERE rule_key = ? AND content_hash = ?
+                """, this::revision, ruleKey, hash);
+        return revisions.isEmpty() ? null : revisions.getFirst();
+    }
+
+    private Plan findPlan(Revision revision) {
+        List<Plan> plans = jdbc.query("""
+                SELECT plan_id, compiler_version, plan_json, plan_hash, created_at
+                FROM detection_plan
+                WHERE revision_id = ? AND compiler_version = ?
+                ORDER BY created_at DESC, plan_id DESC
+                """, (rs, rowNum) -> new Plan(rs.getObject("plan_id", UUID.class),
+                rs.getString("compiler_version"), rs.getString("plan_json"),
+                rs.getString("plan_hash"), rs.getTimestamp("created_at").toInstant()),
+                revision.id(), DetectionPlanCompiler.VERSION);
+        return plans.isEmpty() ? null : plans.getFirst();
+    }
+
+    private boolean sameDesiredState(Map<String, Object> previous, Plan requestedPlan,
+                                     String desiredState, String targetCluster) {
+        if (previous == null
+                || !desiredState.equals(previous.get("desired_state"))
+                || !targetCluster.equals(previous.get("target_cluster"))) {
+            return false;
+        }
+        UUID previousRevisionId = uuid(previous.get("desired_revision_id"));
+        Plan previousPlan = previousRevisionId == null ? null : findPlan(previousRevisionId);
+        return previousPlan != null && previousPlan.hash().equals(requestedPlan.hash());
+    }
+
+    private Plan findPlan(UUID revisionId) {
+        List<Plan> plans = jdbc.query("""
+                SELECT plan_id, compiler_version, plan_json, plan_hash, created_at
+                FROM detection_plan
+                WHERE revision_id = ? AND compiler_version = ?
+                ORDER BY created_at DESC, plan_id DESC
+                """, (rs, rowNum) -> new Plan(rs.getObject("plan_id", UUID.class),
+                rs.getString("compiler_version"), rs.getString("plan_json"),
+                rs.getString("plan_hash"), rs.getTimestamp("created_at").toInstant()),
+                revisionId, DetectionPlanCompiler.VERSION);
+        return plans.isEmpty() ? null : plans.getFirst();
+    }
+
+    private static UUID uuid(Object value) {
+        if (value instanceof UUID uuid) return uuid;
+        try {
+            return UUID.fromString(String.valueOf(value));
+        } catch (RuntimeException e) {
+            return null;
+        }
     }
 
     private Revision revisionFor(Map<String, Object> rule, Object requestedId, String actor) {

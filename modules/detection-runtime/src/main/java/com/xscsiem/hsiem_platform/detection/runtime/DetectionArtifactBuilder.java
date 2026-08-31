@@ -1,6 +1,5 @@
 package com.xscsiem.hsiem_platform.detection.runtime;
 
-import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -47,6 +46,7 @@ public final class DetectionArtifactBuilder {
     private final Path artifactRoot;
     private final String containerArtifactRoot;
     private final DetectionJobNameCodec names;
+    private final FlinkArtifactCompiler flinkArtifacts;
 
     public DetectionArtifactBuilder(JdbcTemplate jdbc, RuntimeManifestCodec codec,
                                     Path artifactRoot, String containerArtifactRoot) {
@@ -56,6 +56,7 @@ public final class DetectionArtifactBuilder {
                 .toAbsolutePath().normalize();
         this.containerArtifactRoot = requiredContainerRoot(containerArtifactRoot);
         this.names = new DetectionJobNameCodec();
+        this.flinkArtifacts = new FlinkArtifactCompiler();
     }
 
     public DetectionArtifactBuilder(JdbcTemplate jdbc, RuntimeManifestCodec codec, Path artifactRoot) {
@@ -146,20 +147,20 @@ public final class DetectionArtifactBuilder {
         // rule key alone is not a sufficient scope and must never select another tenant's revision.
         return jdbc.query("""
                 SELECT a.rule_key, a.revision, a.plan_id, a.plan_hash, a.generation,
-                       r.definition_json
+                       p.compiler_version, p.plan_json
                 FROM rule_job_assignment a
                 JOIN detection_plan p
                   ON p.plan_id = a.plan_id AND p.plan_hash = a.plan_hash
                 JOIN rule_revision r
                   ON r.revision_id = p.revision_id
-                 AND r.rule_key = a.rule_key
-                 AND r.revision = a.revision
+                 AND r.rule_key = a.rule_key AND r.revision = a.revision
                 WHERE a.tenant_id = ? AND a.group_key = ?
                 ORDER BY a.rule_key
                 """, (rs, rowNum) -> new RuleRow(
                 rs.getString("rule_key"), rs.getLong("revision"),
                 rs.getObject("plan_id", java.util.UUID.class), rs.getString("plan_hash"),
-                rs.getLong("generation"), rs.getString("definition_json")),
+                rs.getLong("generation"), rs.getString("compiler_version"),
+                rs.getString("plan_json")),
                 target.tenantId(), target.groupKey());
     }
 
@@ -173,8 +174,12 @@ public final class DetectionArtifactBuilder {
             if (byKey.put(row.ruleKey(), row) != null) {
                 throw new IllegalStateException("duplicate assignment ruleKey: " + row.ruleKey());
             }
-            if (row.definitionJson() == null || row.definitionJson().isBlank()) {
-                throw new IllegalStateException("empty definition_json for " + row.ruleKey());
+            if (row.planJson() == null || row.planJson().isBlank()) {
+                throw new IllegalStateException("empty plan_json for " + row.ruleKey());
+            }
+            String actualPlanHash = sha256(row.planJson().getBytes(StandardCharsets.UTF_8));
+            if (!actualPlanHash.equals(row.planHash())) {
+                throw new IllegalStateException("plan_json hash mismatch for " + row.ruleKey());
             }
             if (row.generation() != expected.generation()) {
                 throw new IllegalStateException("assignment generation mismatch for " + row.ruleKey());
@@ -194,25 +199,13 @@ public final class DetectionArtifactBuilder {
         int index = 1;
         for (RuleRow row : rows.stream().sorted(Comparator.comparing(RuleRow::ruleKey)).toList()) {
             result.add(new ArtifactFile(String.format(Locale.ROOT, "%04d-%s.yaml", index++, safeSlug(row.ruleKey())),
-                    row.ruleKey(), runtimeDefinition(row.definitionJson())));
+                    row.ruleKey(), runtimeDefinition(row.planJson(), row.compilerVersion())));
         }
         return List.copyOf(result);
     }
 
-    /**
-     * Runtime desired state is the source of truth for activation.  Revision JSON is immutable
-     * history and can still contain enabled=false, so the immutable runtime copy must explicitly
-     * enable every member selected by the assignment manifest.
-     */
-    private String runtimeDefinition(String definitionJson) {
-        try {
-            Map<String, Object> definition = mapper.readValue(definitionJson,
-                    new TypeReference<>() { });
-            definition.put("enabled", true);
-            return mapper.writeValueAsString(definition);
-        } catch (Exception e) {
-            throw new IllegalStateException("definition_json must be a JSON object", e);
-        }
+    private String runtimeDefinition(String planJson, String compilerVersion) {
+        return flinkArtifacts.compile(planJson, compilerVersion);
     }
 
     private void writeFiles(Path directory, String canonical, RuntimeManifest expected,
@@ -447,7 +440,8 @@ public final class DetectionArtifactBuilder {
     }
 
     private record RuleRow(String ruleKey, long revision, java.util.UUID planId,
-                           String planHash, long generation, String definitionJson) { }
+                           String planHash, long generation, String compilerVersion,
+                           String planJson) { }
 
     private record ArtifactFile(String fileName, String ruleKey, String definitionJson) { }
 }

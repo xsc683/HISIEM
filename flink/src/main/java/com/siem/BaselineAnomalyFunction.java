@@ -28,22 +28,44 @@ public class BaselineAnomalyFunction extends ProcessWindowFunction<Event, String
 
     private final int baselineHours;
     private final int minBaselineHours;
+    private final Condition condition;
+    private final double sigmaMultiplier;
     /** 规则元数据(YAML 化后由声明注入,替代硬编码)。 */
     private final RuleMeta meta;
     private transient ValueState<LinkedList<Double>> baselineState;
 
     /** 默认元数据(历史测试用;生产走 YAML 加载的 RuleMeta)。 */
     public BaselineAnomalyFunction(int baselineHours, int minBaselineHours) {
-        this(baselineHours, minBaselineHours, new RuleMeta(
+        this(baselineHours, minBaselineHours, defaultCondition(), 3.0d, new RuleMeta(
                 "rule-auth-rate-anomaly-001", "认证失败率异常(基线突增)", "auth_rate_anomaly",
                 "high", "该主机认证失败数超出滚动基线(μ+3σ),疑似暴力破解加剧", 60,
                 List.of("attack.t1110.001"), "experimental", "1.0"));
     }
 
     public BaselineAnomalyFunction(int baselineHours, int minBaselineHours, RuleMeta meta) {
+        this(baselineHours, minBaselineHours, defaultCondition(), 3.0d, meta);
+    }
+
+    public BaselineAnomalyFunction(int baselineHours, int minBaselineHours,
+                                   Condition condition, double sigmaMultiplier, RuleMeta meta) {
+        if (baselineHours <= 0 || minBaselineHours <= 0 || minBaselineHours > baselineHours) {
+            throw new IllegalArgumentException("baseline hours are invalid");
+        }
+        if (condition == null) {
+            throw new IllegalArgumentException("baseline condition must not be null");
+        }
+        if (!Double.isFinite(sigmaMultiplier) || sigmaMultiplier <= 0) {
+            throw new IllegalArgumentException("sigmaMultiplier must be finite and positive");
+        }
         this.baselineHours = baselineHours;
         this.minBaselineHours = minBaselineHours;
+        this.condition = condition;
+        this.sigmaMultiplier = sigmaMultiplier;
         this.meta = meta;
+    }
+
+    private static Condition defaultCondition() {
+        return new FieldEqualsCondition("event.action", "authentication_failure");
     }
 
     @Override
@@ -56,7 +78,7 @@ public class BaselineAnomalyFunction extends ProcessWindowFunction<Event, String
     public void process(String key, Context ctx, Iterable<Event> events, Collector<String> out) throws Exception {
         long count = 0;
         for (Event e : events) {
-            if (EventConditions.isAuthenticationFailure(e)) {
+            if (condition.matches(e.getFields())) {
                 count++;
             }
         }
@@ -67,9 +89,10 @@ public class BaselineAnomalyFunction extends ProcessWindowFunction<Event, String
             baseline = new LinkedList<>();
         }
 
-        if (isAnomaly(baseline, current, minBaselineHours)) {
+        if (isAnomaly(baseline, current, minBaselineHours, sigmaMultiplier)) {
             double[] ms = meanSigma(baseline);
-            out.collect(buildAlert(key, current, ms[0], ms[1], ms[0] + 3 * ms[1], ctx.window().getEnd()));
+            out.collect(buildAlert(key, current, ms[0], ms[1],
+                    ms[0] + sigmaMultiplier * ms[1], ctx.window().getEnd()));
         }
 
         baseline.add(current);
@@ -81,11 +104,16 @@ public class BaselineAnomalyFunction extends ProcessWindowFunction<Event, String
 
     /** 判定:基线足够且当前值超过 μ+3σ(阈值 >0 才有意义)。 */
     static boolean isAnomaly(List<Double> baseline, double current, int minBaselineHours) {
+        return isAnomaly(baseline, current, minBaselineHours, 3.0d);
+    }
+
+    static boolean isAnomaly(List<Double> baseline, double current, int minBaselineHours,
+                             double sigmaMultiplier) {
         if (baseline == null || baseline.size() < minBaselineHours) {
             return false;
         }
         double[] ms = meanSigma(baseline);
-        double threshold = ms[0] + 3 * ms[1];
+        double threshold = ms[0] + sigmaMultiplier * ms[1];
         return threshold > 0 && current > threshold;
     }
 

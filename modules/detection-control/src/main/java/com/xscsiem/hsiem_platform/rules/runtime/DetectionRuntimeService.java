@@ -127,6 +127,7 @@ public class DetectionRuntimeService {
         }
 
         Map<String, Long> generations = new HashMap<>();
+        Map<String, Boolean> changedGroups = new HashMap<>();
         for (String groupKey : affectedGroups.stream().sorted().toList()) {
             Map<String, Object> existing = existingGroups.get(groupKey);
             List<DesiredRule> members = grouped.getOrDefault(groupKey, List.of());
@@ -138,37 +139,58 @@ public class DetectionRuntimeService {
                     .sorted(Comparator.comparing(DesiredRule::ruleKey))
                     .map(rule -> new RuntimeManifest.Member(rule.ruleKey(), rule.revision(), rule.planHash()))
                     .toList();
-            long generation = nextGeneration(existing, true, manifestMembers);
+            boolean changed = groupSpecChanged(existing, metadata, manifestMembers);
+            long generation = nextGeneration(existing, changed);
             RuntimeManifest expected = new RuntimeManifest(RuntimeManifest.SCHEMA_VERSION, tenantId,
                     metadata.targetCluster(), groupKey, generation, manifestMembers);
-            repository.upsertGroup(tenantId, groupKey, metadata.targetCluster(), metadata.sourceFamily(),
-                    metadata.category(), metadata.bucket(), generation, codec.encode(expected), codec.specHash(expected));
-            repository.updateAssignmentGenerations(tenantId, groupKey, generation);
+            if (changed) {
+                repository.upsertGroup(tenantId, groupKey, metadata.targetCluster(), metadata.sourceFamily(),
+                        metadata.category(), metadata.bucket(), generation, codec.encode(expected),
+                        codec.specHash(expected));
+                repository.updateAssignmentGenerations(tenantId, groupKey, generation);
+            }
             generations.put(groupKey, generation);
+            changedGroups.put(groupKey, changed);
         }
 
-        // Only the rules in this batch are changed.  Assignments for every other rule/group remain
-        // untouched, including assignments in the same tenant but a different group.
-        for (String ruleKey : orderedRuleKeys) {
-            repository.deleteAssignment(tenantId, ruleKey);
-            DesiredRule desired = desiredByRule.get(ruleKey);
-            if (desired != null) {
-                Long generation = generations.get(desired.groupKey());
-                if (generation == null) {
-                    throw new IllegalStateException("missing group generation for " + desired.groupKey());
-                }
+        // Keep equivalent assignments untouched, while repairing missing or stale rows in touched
+        // groups.  STOPPED rules have no desired assignment and are removed only when one exists.
+        for (DesiredRule desired : desiredRules) {
+            if (!affectedGroups.contains(desired.groupKey())) {
+                continue;
+            }
+            Long generation = generations.get(desired.groupKey());
+            if (generation == null) {
+                throw new IllegalStateException("missing group generation for " + desired.groupKey());
+            }
+            Map<String, Object> assignment = repository.findAssignment(tenantId, desired.ruleKey());
+            if (!assignmentEquivalent(assignment, desired, generation)) {
                 repository.upsertAssignment(tenantId, desired.ruleKey(), desired.deploymentId(),
                         desired.revision(), desired.planId(), desired.planHash(), desired.groupKey(), generation);
             }
         }
+        for (String ruleKey : orderedRuleKeys) {
+            if (!desiredByRule.containsKey(ruleKey)
+                    && repository.findAssignment(tenantId, ruleKey) != null) {
+                repository.deleteAssignment(tenantId, ruleKey);
+            }
+        }
 
-        // A changed group invalidates prior observations for all current members of that group.
+        // A changed group invalidates prior observations for all current members.  An unchanged
+        // group only gets a pending status when its status row is absent or out of scope.
         for (DesiredRule desired : desiredRules) {
             if (!affectedGroups.contains(desired.groupKey())) {
                 continue;
             }
             Map<String, Object> memberDeployment = repository.findDeployment(tenantId, desired.ruleKey());
-            if (memberDeployment != null) {
+            if (memberDeployment == null) {
+                continue;
+            }
+            Map<String, Object> status = repository.findRuntimeStatus(tenantId, desired.ruleKey());
+            boolean statusNeedsRepair = status == null
+                    || !Objects.equals(desired.groupKey(), text(status, "group_key"))
+                    || !Objects.equals(desired.targetCluster(), text(status, "target_cluster"));
+            if (changedGroups.getOrDefault(desired.groupKey(), false) || statusNeedsRepair) {
                 repository.upsertPendingStatus(tenantId, desired.ruleKey(),
                         uuid(memberDeployment, "deployment_id"), desired.groupKey(),
                         text(memberDeployment, "target_cluster"));
@@ -188,8 +210,13 @@ public class DetectionRuntimeService {
             }
             Map<String, Object> oldStatus = oldStatuses.get(ruleKey);
             String statusGroup = oldStatus == null ? null : text(oldStatus, "group_key");
-            repository.upsertPendingStatus(tenantId, ruleKey, uuid(deployment, "deployment_id"),
-                    statusGroup, text(deployment, "target_cluster"));
+            boolean statusNeedsRepair = oldStatus == null
+                    || !Objects.equals(uuid(deployment, "deployment_id"), uuid(oldStatus, "deployment_id"))
+                    || !Objects.equals(text(deployment, "target_cluster"), text(oldStatus, "target_cluster"));
+            if (changedGroups.getOrDefault(statusGroup, false) || statusNeedsRepair) {
+                repository.upsertPendingStatus(tenantId, ruleKey, uuid(deployment, "deployment_id"),
+                        statusGroup, text(deployment, "target_cluster"));
+            }
         }
 
         return orderedRuleKeys.stream().map(ruleKey -> inspect(tenantId, ruleKey)).toList();
@@ -465,13 +492,18 @@ public class DetectionRuntimeService {
     private DesiredRule desiredRule(Map<String, Object> row) {
         String tenantId = text(row, "tenant_id");
         String ruleKey = text(row, "rule_key");
-        String sourceFamily = sourceFamily(text(row, "plan_json"));
-        String category = required(text(row, "category"), "category");
+        String planJson = text(row, "plan_json");
+        String planHash = text(row, "plan_hash");
+        if (!sha256(planJson).equals(planHash)) {
+            throw new IllegalStateException("detection plan hash mismatch for " + ruleKey);
+        }
+        PlanMetadata plan = planMetadata(planJson);
         String targetCluster = required(text(row, "target_cluster"), "target_cluster");
-        int bucket = bucket(tenantId, sourceFamily, category, ruleKey);
+        int bucket = bucket(tenantId, plan.sourceFamily(), plan.category(), ruleKey);
         return new DesiredRule(ruleKey, uuid(row, "deployment_id"), number(row, "revision"),
-                uuid(row, "plan_id"), text(row, "plan_hash"), text(row, "plan_json"), targetCluster, sourceFamily,
-                category, bucket, groupKey(tenantId, targetCluster, sourceFamily, category, bucket));
+                uuid(row, "plan_id"), planHash, planJson, targetCluster, plan.sourceFamily(),
+                plan.category(), bucket, groupKey(tenantId, targetCluster, plan.sourceFamily(),
+                plan.category(), bucket));
     }
 
     private GroupMetadata metadata(String groupKey, Map<String, Object> existing,
@@ -490,29 +522,79 @@ public class DetectionRuntimeService {
                 + " on cluster " + fallbackCluster);
     }
 
-    private long nextGeneration(Map<String, Object> existing, boolean affected,
-                                List<RuntimeManifest.Member> desiredMembers) {
-        if (existing == null) return 1L;
-        long oldGeneration = number(existing, "desired_generation");
-        boolean changed = true;
+    private boolean groupSpecChanged(Map<String, Object> existing, GroupMetadata metadata,
+                                     List<RuntimeManifest.Member> desiredMembers) {
+        if (existing == null) {
+            return true;
+        }
+        if (!metadata.targetCluster().equals(text(existing, "target_cluster"))
+                || !metadata.sourceFamily().equals(text(existing, "source_family"))
+                || !metadata.category().equals(text(existing, "category"))
+                || metadata.bucket() != intNumber(existing, "bucket")) {
+            return true;
+        }
         try {
             RuntimeManifest old = codec.decode(text(existing, "expected_manifest_json"));
-            changed = !old.members().equals(desiredMembers);
+            return !physicalMembers(old.members()).equals(physicalMembers(desiredMembers));
         } catch (RuntimeException ignored) {
-            // An invalid legacy manifest must be replaced and receives a new generation.
+            return true;
         }
-        return affected || changed ? oldGeneration + 1 : oldGeneration;
     }
 
-    private String sourceFamily(String planJson) {
-        if (planJson == null || planJson.isBlank()) return DEFAULT_SOURCE_FAMILY;
+    private static List<String> physicalMembers(List<RuntimeManifest.Member> members) {
+        return members.stream()
+                .map(member -> member.ruleKey() + "|" + member.planHash())
+                .sorted().toList();
+    }
+
+    private long nextGeneration(Map<String, Object> existing, boolean changed) {
+        if (existing == null) return 1L;
+        long oldGeneration = number(existing, "desired_generation");
+        return changed ? oldGeneration + 1 : oldGeneration;
+    }
+
+    private boolean assignmentEquivalent(Map<String, Object> assignment, DesiredRule desired,
+                                         long generation) {
+        return assignment != null
+                && desired.deploymentId().equals(uuid(assignment, "deployment_id"))
+                && desired.revision() == number(assignment, "revision")
+                && desired.planId().equals(uuid(assignment, "plan_id"))
+                && desired.planHash().equals(text(assignment, "plan_hash"))
+                && desired.groupKey().equals(text(assignment, "group_key"))
+                && generation == number(assignment, "generation");
+    }
+
+    private PlanMetadata planMetadata(String planJson) {
+        if (planJson == null || planJson.isBlank()) {
+            throw new IllegalStateException("detection plan JSON must not be blank");
+        }
         try {
             JsonNode root = mapper.readTree(planJson);
-            JsonNode source = root.path("inputs").path(0).path("source");
-            return source.isTextual() && !source.textValue().isBlank()
-                    ? source.textValue() : DEFAULT_SOURCE_FAMILY;
-        } catch (Exception ignored) {
-            return DEFAULT_SOURCE_FAMILY;
+            if (root == null || !root.isObject()
+                    || !com.xscsiem.hsiem_platform.rules.DetectionPlanCompiler.SCHEMA_VERSION
+                    .equals(root.path("schema_version").textValue())
+                    || !com.xscsiem.hsiem_platform.rules.DetectionPlanCompiler.VERSION
+                    .equals(root.path("compiler_version").textValue())) {
+                throw new IllegalStateException("unsupported detection plan contract");
+            }
+            String source = root.path("input").path("source").textValue();
+            String category = root.path("detection").path("type").textValue();
+            return new PlanMetadata(required(source, "input.source"),
+                    required(category, "detection.type"));
+        } catch (IllegalStateException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IllegalStateException("invalid detection plan JSON", e);
+        }
+    }
+
+    private static String sha256(String value) {
+        if (value == null) throw new IllegalStateException("detection plan JSON must not be null");
+        try {
+            return java.util.HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(value.getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is unavailable", e);
         }
     }
 
@@ -572,6 +654,8 @@ public class DetectionRuntimeService {
     private static String firstNonBlank(String first, String second) {
         return first != null && !first.isBlank() ? first : second != null && !second.isBlank() ? second : null;
     }
+
+    private record PlanMetadata(String sourceFamily, String category) { }
 
     private record DesiredRule(String ruleKey, UUID deploymentId, long revision, UUID planId,
                                String planHash, String planJson, String targetCluster, String sourceFamily,
