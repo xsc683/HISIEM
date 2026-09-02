@@ -83,6 +83,13 @@ public interface ControlPlaneStore {
 
     void completeCaseMirror(long id, String owner, boolean success, String error, Instant nextAttemptAt);
 
+    void enqueueLifecycle(String messageId, String eventType, String tenantId, String objectType,
+                          String objectId, Instant occurredAt, String topic, String messageKey, String payload);
+
+    List<Map<String, Object>> claimLifecycleBatch(String owner, Instant leaseUntil, int size);
+
+    boolean completeLifecycle(String messageId, String owner, boolean success, String error, Instant nextAttemptAt);
+
     boolean hasAlert(String alertId);
 
     String createTask(String type, String resourceId, String message);

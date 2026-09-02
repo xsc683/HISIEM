@@ -8,6 +8,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -15,6 +16,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -128,5 +130,109 @@ class ControlPlaneStoreTest {
         List<Map<String, Object>> deleteOutbox = store.claimCaseMirrorBatch("case-test", Instant.now().plusSeconds(60), 10);
         assertTrue(deleteOutbox.stream().anyMatch(row -> caseId.equals(row.get("caseId"))
                 && "delete".equals(row.get("operation"))));
+    }
+
+    @Test
+    void lifecycleOutboxIsIdempotentAndOwnerFenced() {
+        String suffix = String.valueOf(System.nanoTime());
+        String messageId = "lifecycle-" + suffix;
+        String tenantId = "tenant-" + suffix;
+        String objectId = "alert-" + suffix;
+        Instant occurredAt = Instant.now().minusSeconds(5).truncatedTo(ChronoUnit.MICROS);
+        String payload = "{\"version\":1}";
+
+        store.enqueueLifecycle(messageId, "alert.created", tenantId, "alert", objectId, occurredAt,
+                "lifecycle-topic", "key-" + suffix, payload);
+        store.enqueueLifecycle(messageId, "alert.updated", "other-tenant", "case", "other-object",
+                Instant.now(), "other-topic", "other-key", "{\"version\":2}");
+
+        assertEquals(1, jdbc.queryForObject(
+                "SELECT COUNT(*) FROM lifecycle_outbox WHERE message_id = ?", Integer.class, messageId));
+        Map<String, Object> inserted = jdbc.queryForMap("""
+                SELECT event_type, tenant_id, object_type, object_id, topic, message_key, payload_json
+                FROM lifecycle_outbox WHERE message_id = ?
+                """, messageId);
+        assertEquals("alert.created", inserted.get("event_type"));
+        assertEquals(tenantId, inserted.get("tenant_id"));
+        assertEquals("alert", inserted.get("object_type"));
+        assertEquals(objectId, inserted.get("object_id"));
+        assertEquals("lifecycle-topic", inserted.get("topic"));
+        assertEquals("key-" + suffix, inserted.get("message_key"));
+        assertEquals(payload, inserted.get("payload_json"));
+
+        List<Map<String, Object>> firstClaim = store.claimLifecycleBatch("lifecycle-owner-a",
+                Instant.now().plusSeconds(60), 10);
+        Map<String, Object> claimed = firstClaim.stream()
+                .filter(row -> messageId.equals(row.get("messageId"))).findFirst().orElseThrow();
+        assertEquals("alert.created", claimed.get("eventType"));
+        assertEquals(tenantId, claimed.get("tenantId"));
+        assertEquals("alert", claimed.get("objectType"));
+        assertEquals(objectId, claimed.get("objectId"));
+        assertEquals(occurredAt, claimed.get("occurredAt"));
+        assertEquals("lifecycle-topic", claimed.get("topic"));
+        assertEquals("key-" + suffix, claimed.get("messageKey"));
+        assertEquals(payload, claimed.get("payload"));
+        assertEquals(1, ((Number) claimed.get("attempts")).intValue());
+        assertEquals("in_flight", jdbc.queryForObject(
+                "SELECT status FROM lifecycle_outbox WHERE message_id = ?", String.class, messageId));
+
+        assertFalse(store.completeLifecycle(messageId, "lifecycle-wrong-owner", true, null, Instant.now()));
+        Map<String, Object> stillInFlight = jdbc.queryForMap(
+                "SELECT status, lease_owner FROM lifecycle_outbox WHERE message_id = ?", messageId);
+        assertEquals("in_flight", stillInFlight.get("status"));
+        assertEquals("lifecycle-owner-a", stillInFlight.get("lease_owner"));
+
+        Instant retryAt = Instant.now().plusSeconds(60);
+        assertTrue(store.completeLifecycle(messageId, "lifecycle-owner-a", false,
+                "temporary publish failure", retryAt));
+        Map<String, Object> failed = jdbc.queryForMap("""
+                SELECT status, available_at, locked_until, lease_owner, last_error
+                FROM lifecycle_outbox WHERE message_id = ?
+                """, messageId);
+        assertEquals("failed", failed.get("status"));
+        assertNull(failed.get("locked_until"));
+        assertNull(failed.get("lease_owner"));
+        assertEquals("temporary publish failure", failed.get("last_error"));
+        assertEquals(1, jdbc.queryForObject("""
+                SELECT COUNT(*) FROM lifecycle_outbox
+                WHERE message_id = ? AND available_at > CURRENT_TIMESTAMP + INTERVAL '50' SECOND
+                """, Integer.class, messageId));
+
+        assertTrue(store.claimLifecycleBatch("lifecycle-early-owner", Instant.now().plusSeconds(60), 10)
+                .stream().noneMatch(row -> messageId.equals(row.get("messageId"))));
+
+        jdbc.update("UPDATE lifecycle_outbox SET available_at = CURRENT_TIMESTAMP - INTERVAL '1' SECOND "
+                + "WHERE message_id = ?", messageId);
+        Map<String, Object> retryClaim = store.claimLifecycleBatch("lifecycle-owner-b",
+                Instant.now().plusSeconds(60), 10).stream()
+                .filter(row -> messageId.equals(row.get("messageId"))).findFirst().orElseThrow();
+        assertEquals(2, ((Number) retryClaim.get("attempts")).intValue());
+        assertTrue(store.completeLifecycle(messageId, "lifecycle-owner-b", true,
+                "ignored on success", Instant.now()));
+        Map<String, Object> succeeded = jdbc.queryForMap("""
+                SELECT status, locked_until, lease_owner, last_error
+                FROM lifecycle_outbox WHERE message_id = ?
+                """, messageId);
+        assertEquals("succeeded", succeeded.get("status"));
+        assertNull(succeeded.get("locked_until"));
+        assertNull(succeeded.get("lease_owner"));
+        assertNull(succeeded.get("last_error"));
+
+        String expiredMessageId = "lifecycle-expired-" + suffix;
+        store.enqueueLifecycle(expiredMessageId, "case.created", tenantId, "case", "case-" + suffix,
+                occurredAt, "lifecycle-topic", "expired-key-" + suffix, "{\"case\":{}}");
+        Map<String, Object> expiredInitial = store.claimLifecycleBatch("lifecycle-expired-owner",
+                Instant.now().plusSeconds(60), 10).stream()
+                .filter(row -> expiredMessageId.equals(row.get("messageId"))).findFirst().orElseThrow();
+        assertEquals(1, ((Number) expiredInitial.get("attempts")).intValue());
+        jdbc.update("UPDATE lifecycle_outbox SET locked_until = CURRENT_TIMESTAMP - INTERVAL '1' SECOND "
+                + "WHERE message_id = ?", expiredMessageId);
+
+        Map<String, Object> reclaimed = store.claimLifecycleBatch("lifecycle-new-owner",
+                Instant.now().plusSeconds(60), 10).stream()
+                .filter(row -> expiredMessageId.equals(row.get("messageId"))).findFirst().orElseThrow();
+        assertEquals(2, ((Number) reclaimed.get("attempts")).intValue());
+        assertTrue(store.completeLifecycle(expiredMessageId, "lifecycle-new-owner", true,
+                null, Instant.now()));
     }
 }

@@ -1,13 +1,10 @@
 package com.xscsiem.hsiem_platform.soar;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.xscsiem.hsiem_platform.control.ControlPlaneStore;
 import com.xscsiem.hsiem_platform.lifecycle.LifecycleEventPort;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
-import jakarta.annotation.PreDestroy;
-import org.apache.kafka.clients.producer.KafkaProducer;
-import org.apache.kafka.clients.producer.ProducerRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -23,20 +20,22 @@ public class LifecycleEventPublisher implements LifecycleEventPort {
     private final ObjectMapper objectMapper;
     private final SoarKafkaProperties properties;
     private final LifecycleEventFactory factory;
+    private final ControlPlaneStore store;
     private final boolean enabled;
-    private final Counter published;
-    private final Counter failed;
-    private volatile KafkaProducer<String, String> producer;
+    private final Counter enqueued;
+    private final Counter enqueueFailed;
 
     public LifecycleEventPublisher(ObjectMapper objectMapper, SoarKafkaProperties properties,
                                    LifecycleEventFactory factory, MeterRegistry registry,
+                                   ControlPlaneStore store,
                                    @Value("${app.soar.runtime-enabled:true}") boolean enabled) {
         this.objectMapper = objectMapper;
         this.properties = properties;
         this.factory = factory;
+        this.store = store;
         this.enabled = enabled;
-        this.published = registry.counter("siem.soar.lifecycle.published");
-        this.failed = registry.counter("siem.soar.lifecycle.publish.failed");
+        this.enqueued = registry.counter("siem.soar.lifecycle.outbox.enqueued");
+        this.enqueueFailed = registry.counter("siem.soar.lifecycle.outbox.enqueue.failed");
     }
 
     public void publishAlert(String eventType, Map<String, Object> source, String tenantId) {
@@ -50,37 +49,26 @@ public class LifecycleEventPublisher implements LifecycleEventPort {
     public void publish(LifecycleEvent event) {
         if (!enabled) return;
         event.validate();
+        String body;
         try {
-            String body = objectMapper.writeValueAsString(event);
-            producer().send(new ProducerRecord<>(properties.topicFor(event.objectType()),
-                    event.objectId(), body), (metadata, error) -> {
-                if (error == null) {
-                    published.increment();
-                } else {
-                    failed.increment();
-                    LOG.error("SOAR lifecycle publish failed type={} object={} message={}",
-                            event.eventType(), event.objectId(), event.messageId(), error);
-                }
-            });
-        } catch (RuntimeException | JsonProcessingException e) {
-            failed.increment();
-            LOG.error("SOAR lifecycle publish could not be scheduled type={} object={} message={}",
+            body = objectMapper.writeValueAsString(event);
+        } catch (Exception e) {
+            enqueueFailed.increment();
+            LOG.error("SOAR lifecycle serialization failed type={} object={} message={}",
                     event.eventType(), event.objectId(), event.messageId(), e);
+            throw e instanceof RuntimeException runtime
+                    ? runtime : new IllegalStateException("SOAR lifecycle serialization failed", e);
         }
-    }
-
-    private KafkaProducer<String, String> producer() {
-        KafkaProducer<String, String> current = producer;
-        if (current != null) return current;
-        synchronized (this) {
-            if (producer == null) producer = new KafkaProducer<>(properties.producer());
-            return producer;
+        try {
+            store.enqueueLifecycle(event.messageId(), event.eventType(), event.effectiveTenantId(),
+                    event.objectType(), event.objectId(), event.occurredAt(),
+                    properties.topicFor(event.objectType()), event.objectId(), body);
+            enqueued.increment();
+        } catch (RuntimeException e) {
+            enqueueFailed.increment();
+            LOG.error("SOAR lifecycle outbox enqueue failed type={} object={} message={}",
+                    event.eventType(), event.objectId(), event.messageId(), e);
+            throw e;
         }
-    }
-
-    @PreDestroy
-    public void close() {
-        KafkaProducer<String, String> current = producer;
-        if (current != null) current.close(java.time.Duration.ofSeconds(3));
     }
 }

@@ -10,10 +10,10 @@
 
 | 仓库 | 分支 | 最新提交 |
 |---|---|---|
-| SIEM | `add_frame` | `7affc44` feat(detection): converge DetectionPlan into Flink runtime contract |
+| SIEM | `add_frame` | `ca0e292` docs(detection): record DetectionPlan runtime contract convergence status |
 | HISIEM-Agent | `main` | `01e2d49` fix(runtime): harden durable queue atomicity and lease safety |
 
-两者均与远端同步，工作区清洁。
+SIEM 工作区包含尚未提交的 #13 Runtime Contract 验收测试与本状态更新；HISIEM-Agent 工作区清洁。当前未创建新提交或推送。
 
 ---
 
@@ -146,7 +146,7 @@
 | #10 设计 canonical DetectionPlan Runtime Contract（v2，bounded 类别化 IR） | ✅ 完成 |
 | #11 DetectionPlan → Flink artifact 单向编译（`FlinkArtifactCompiler`） | ✅ 完成 |
 | #12 收敛 Desired State 与 generation 语义（plan-hash 幂等 no-op） | ✅ 完成 |
-| #13 Runtime Contract 验收测试（四类 plan/hash/后端/幂等/Flink 消费） | ⬜ 待办 |
+| #13 Runtime Contract 验收测试（四类 plan/hash/后端/幂等/Flink 消费） | ✅ 完成 |
 
 关键语义：
 
@@ -159,15 +159,14 @@
 
 验证：
 
-- 控制面 reactor（14 模块）与独立 Flink 工程 `-DskipTests compile` 均 BUILD SUCCESS。
-- `git diff --check` 通过；改动文件无 NUL 字节。
+- 定向 Runtime Contract 验收：控制面 30 项、Flink 行为 32 项，全部通过。
+- SIEM 根 reactor（17 模块）共 288 项测试，0 失败 / 0 错误 / 0 跳过；独立 Flink `clean package` 共 56 项测试并完成 Shade 打包。
+- `git diff --check` 通过；11 个改动文件无 NUL 字节；HISIEM-Agent 工作区保持清洁。
 
 遗留边界（明确未完成）：
 
-- #13 验收测试未编写；既有测试仍断言 v1 计划形状（`DetectionPlanCompilerTest`），`DetectionArtifactBuilderTest` fixture 缺 `compiler_version`/`plan_json` 列。
 - `detection_plan` 唯一约束为 `(revision_id, compiler_version, plan_hash)`，未保证每 revision/compiler 只有一份 plan；`findDesiredRunning` 理论可返回重复行，未加迁移收紧。
-- 文档（`managed-detection-runtime.md`）与前端 Desired/Observed 展示未随本轮同步更新。
-- 未执行完整回归测试。
+- `managed-detection-runtime.md` 与前端 Desired/Observed 展示尚未随本轮同步更新。
 
 ---
 
@@ -184,9 +183,9 @@
 
 ## 十、测试基线（提交时已验证）
 
-SIEM（268 项，0 失败 / 0 错误 / 0 跳过）：
+SIEM（288 项，0 失败 / 0 错误 / 0 跳过）：
 
-- control-api 153；detection-runtime 27；detection-controller 17；soar-core 17；soar-adapters 4；soar-worker-runtime 3；soar-worker 1；Flink 46。
+- control-api 156；detection-runtime 34；detection-controller 17；soar-core 17；soar-adapters 4；soar-worker-runtime 3；soar-worker 1；Flink 56。
 - 迁移：V1–V18 全部在 H2 与 PostgreSQL Testcontainer 通过。
 
 HISIEM-Agent（152 passed / 3 skipped）：
@@ -203,3 +202,8 @@ HISIEM-Agent（152 passed / 3 skipped）：
   → 阶段八 多租户 / TLS / HA / 灾备
   → 性能、前端、容量与故障演练
 ```
+
+### Lifecycle outbox residual crash gap
+
+- Alert Elasticsearch updates and PostgreSQL lifecycle enqueue are not atomic; the outbox does not replace alert truth.
+- Kafka ACK and PostgreSQL completion are not atomic, so an ACK followed by a completion crash can redeliver after lease expiry.

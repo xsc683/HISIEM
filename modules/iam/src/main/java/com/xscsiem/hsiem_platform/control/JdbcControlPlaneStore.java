@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.xscsiem.hsiem_platform.auth.AuthUser;
 import com.xscsiem.hsiem_platform.onboarding.NotFoundException;
+import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.context.annotation.DependsOn;
 import org.springframework.stereotype.Repository;
@@ -29,11 +30,14 @@ public class JdbcControlPlaneStore implements ControlPlaneStore {
     private static final TypeReference<List<Map<String, Object>>> MAP_LIST = new TypeReference<>() {};
 
     private final JdbcTemplate jdbc;
+    private final boolean h2;
     private final ObjectMapper mapper = new ObjectMapper().findAndRegisterModules()
             .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
 
     public JdbcControlPlaneStore(JdbcTemplate jdbc) {
         this.jdbc = jdbc;
+        this.h2 = Boolean.TRUE.equals(jdbc.execute((ConnectionCallback<Boolean>) connection ->
+                "H2".equals(connection.getMetaData().getDatabaseProductName())));
     }
 
     @Override
@@ -482,6 +486,87 @@ public class JdbcControlPlaneStore implements ControlPlaneStore {
                     WHERE id = ? AND lease_owner = ?
                     """, error, timestamp(nextAttemptAt.toString()), id, owner);
         }
+    }
+
+    @Override
+    public void enqueueLifecycle(String messageId, String eventType, String tenantId, String objectType,
+                                 String objectId, Instant occurredAt, String topic, String messageKey, String payload) {
+        if (h2) {
+            jdbc.update("""
+                    INSERT INTO lifecycle_outbox(message_id, event_type, tenant_id, object_type, object_id,
+                        occurred_at, topic, message_key, payload_json)
+                    SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    WHERE NOT EXISTS (SELECT 1 FROM lifecycle_outbox WHERE message_id = ?)
+                    """, messageId, eventType, tenantId, objectType, objectId,
+                    timestamp(occurredAt.toString()), topic, messageKey, payload, messageId);
+            return;
+        }
+        jdbc.update("""
+                INSERT INTO lifecycle_outbox(message_id, event_type, tenant_id, object_type, object_id,
+                    occurred_at, topic, message_key, payload_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (message_id) DO NOTHING
+                """, messageId, eventType, tenantId, objectType, objectId, timestamp(occurredAt.toString()),
+                topic, messageKey, payload);
+    }
+
+    @Override
+    @Transactional
+    public List<Map<String, Object>> claimLifecycleBatch(String owner, Instant leaseUntil, int size) {
+        int limit = Math.min(Math.max(size, 1), 100);
+        List<Map<String, Object>> rows = jdbc.query("""
+                SELECT message_id, event_type, tenant_id, object_type, object_id, occurred_at,
+                       topic, message_key, payload_json, attempts
+                FROM lifecycle_outbox
+                WHERE (status IN ('pending', 'failed') AND available_at <= CURRENT_TIMESTAMP)
+                   OR (status = 'in_flight' AND locked_until < CURRENT_TIMESTAMP)
+                ORDER BY available_at, created_at
+                LIMIT ? FOR UPDATE SKIP LOCKED
+                """, (rs, rowNum) -> {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("messageId", rs.getString("message_id"));
+            row.put("eventType", rs.getString("event_type"));
+            row.put("tenantId", rs.getString("tenant_id"));
+            row.put("objectType", rs.getString("object_type"));
+            row.put("objectId", rs.getString("object_id"));
+            row.put("occurredAt", rs.getTimestamp("occurred_at").toInstant());
+            row.put("topic", rs.getString("topic"));
+            row.put("messageKey", rs.getString("message_key"));
+            row.put("payload", rs.getString("payload_json"));
+            row.put("attempts", rs.getInt("attempts"));
+            return row;
+        }, limit);
+        for (Map<String, Object> row : rows) {
+            int changed = jdbc.update("""
+                    UPDATE lifecycle_outbox SET status = 'in_flight', lease_owner = ?,
+                        locked_until = ?, attempts = attempts + 1, updated_at = CURRENT_TIMESTAMP
+                    WHERE message_id = ?
+                    """, owner, timestamp(leaseUntil.toString()), row.get("messageId"));
+            if (changed == 1) {
+                row.put("attempts", ((Number) row.get("attempts")).intValue() + 1);
+            }
+        }
+        return rows;
+    }
+
+    @Override
+    public boolean completeLifecycle(String messageId, String owner, boolean success, String error,
+                                     Instant nextAttemptAt) {
+        int changed;
+        if (success) {
+            changed = jdbc.update("""
+                    UPDATE lifecycle_outbox SET status = 'succeeded', lease_owner = NULL,
+                        locked_until = NULL, last_error = NULL, updated_at = CURRENT_TIMESTAMP
+                    WHERE message_id = ? AND status = 'in_flight' AND lease_owner = ?
+                    """, messageId, owner);
+        } else {
+            changed = jdbc.update("""
+                    UPDATE lifecycle_outbox SET status = 'failed', available_at = ?,
+                        lease_owner = NULL, locked_until = NULL, last_error = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE message_id = ? AND status = 'in_flight' AND lease_owner = ?
+                    """, timestamp(nextAttemptAt.toString()), error, messageId, owner);
+        }
+        return changed == 1;
     }
 
     @Override

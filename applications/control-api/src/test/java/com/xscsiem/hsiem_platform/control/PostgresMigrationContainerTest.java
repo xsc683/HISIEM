@@ -4,12 +4,23 @@ import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.time.Instant;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 /** 用真实 PostgreSQL 容器校验 Flyway 从空库迁移到当前版本。 */
 @Testcontainers(disabledWithoutDocker = true)
@@ -31,8 +42,12 @@ class PostgresMigrationContainerTest {
         Flyway.configure().dataSource(dataSource).locations("classpath:db/migration").load().migrate();
 
         JdbcTemplate jdbc = new JdbcTemplate(dataSource);
-        assertEquals(18, jdbc.queryForObject(
+        assertEquals(19, jdbc.queryForObject(
                 "SELECT COUNT(*) FROM flyway_schema_history WHERE success = TRUE", Integer.class));
+        assertEquals(1, jdbc.queryForObject("""
+                SELECT COUNT(*) FROM information_schema.tables
+                WHERE table_schema = 'public' AND table_name = 'lifecycle_outbox'
+                """, Integer.class));
         assertTrue(jdbc.queryForObject("""
                 SELECT COUNT(*) FROM information_schema.tables
                 WHERE table_schema = 'public' AND table_name IN ('auth_sessions', 'login_attempts')
@@ -133,5 +148,58 @@ class PostgresMigrationContainerTest {
                 WHERE table_schema = 'public' AND table_name = 'rule_job_assignment'
                   AND constraint_name = 'rule_job_assignment_group_fk'
                 """, Integer.class));
+    }
+
+    @Test
+    void concurrentLifecycleClaimsSkipTheRowLockedByFirstTransaction() throws Exception {
+        DriverManagerDataSource dataSource = dataSource();
+        Flyway.configure().dataSource(dataSource).locations("classpath:db/migration").load().migrate();
+        JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+        JdbcControlPlaneStore store = new JdbcControlPlaneStore(jdbc);
+        String messageId = "lifecycle-concurrent-" + System.nanoTime();
+        store.enqueueLifecycle(messageId, "alert.created", "tenant-a", "alert", "alert-a",
+                Instant.now(), "alerts", "alert-a", "{}");
+
+        TransactionTemplate transaction = new TransactionTemplate(new DataSourceTransactionManager(dataSource));
+        CountDownLatch firstClaimed = new CountDownLatch(1);
+        CountDownLatch secondFinished = new CountDownLatch(1);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            Future<?> first = executor.submit(() -> transaction.executeWithoutResult(status -> {
+                List<Map<String, Object>> rows = store.claimLifecycleBatch("owner-a",
+                        Instant.now().plusSeconds(60), 1);
+                assertEquals(1, rows.size());
+                firstClaimed.countDown();
+                try {
+                    assertTrue(secondFinished.await(10, TimeUnit.SECONDS));
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException(e);
+                }
+            }));
+            Future<List<Map<String, Object>>> second = executor.submit(() -> {
+                assertTrue(firstClaimed.await(10, TimeUnit.SECONDS));
+                try {
+                    return transaction.execute(status -> store.claimLifecycleBatch("owner-b",
+                            Instant.now().plusSeconds(60), 1));
+                } finally {
+                    secondFinished.countDown();
+                }
+            });
+
+            assertTrue(second.get(15, TimeUnit.SECONDS).isEmpty());
+            first.get(15, TimeUnit.SECONDS);
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    private static DriverManagerDataSource dataSource() {
+        DriverManagerDataSource dataSource = new DriverManagerDataSource();
+        dataSource.setDriverClassName("org.postgresql.Driver");
+        dataSource.setUrl(postgres.getJdbcUrl());
+        dataSource.setUsername(postgres.getUsername());
+        dataSource.setPassword(postgres.getPassword());
+        return dataSource;
     }
 }
