@@ -13,6 +13,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -53,6 +54,7 @@ class RuleConfigLoaderTest {
         assertEquals("ssh_auth", d.type);
         assertTrue(d.enabled);
         assertEquals(40, d.riskScore);
+        assertNull(d.alertSuppressionMinutes);
         assertEquals("field_equals", d.condition.type);
         assertEquals("event.action", d.condition.field);
         assertEquals("authentication_failure", d.condition.value);
@@ -242,6 +244,8 @@ class RuleConfigLoaderTest {
         RuleDecl cep = decls.stream().filter(d -> "rule-cep".equals(d.id)).findFirst().orElseThrow();
         assertEquals("cep", cep.category);
         assertEquals(10, cep.cep.withinMinutes);
+        assertNull(cep.cep.failureStep);
+        assertNull(cep.cep.successStep);
         assertEquals(2, cep.cep.pattern.size());
         assertEquals("failures", cep.cep.pattern.get(0).name);
         assertEquals(5, cep.cep.pattern.get(0).timesMin);
@@ -249,6 +253,8 @@ class RuleConfigLoaderTest {
         RuleDecl base = decls.stream().filter(d -> "rule-base".equals(d.id)).findFirst().orElseThrow();
         assertEquals(24, base.baseline.baselineHours);
         assertEquals(3, base.baseline.minBaselineHours);
+        assertNull(base.condition);
+        assertEquals(3.0, base.baseline.sigmaMultiplier);
         assertEquals("host.name", base.baseline.keyField);
     }
 

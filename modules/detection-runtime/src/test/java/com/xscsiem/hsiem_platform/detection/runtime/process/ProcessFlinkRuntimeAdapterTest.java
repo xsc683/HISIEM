@@ -4,6 +4,7 @@ import com.xscsiem.hsiem_platform.detection.runtime.DetectionArtifactBuilder;
 import com.xscsiem.hsiem_platform.detection.runtime.DetectionJobNameCodec;
 import com.xscsiem.hsiem_platform.detection.runtime.DetectionRuntimeTarget;
 import com.xscsiem.hsiem_platform.detection.runtime.RuntimeObservation;
+import com.xscsiem.hsiem_platform.rules.DetectionPlanCompiler;
 import com.xscsiem.hsiem_platform.rules.runtime.RuntimeManifest;
 import com.xscsiem.hsiem_platform.rules.runtime.RuntimeManifestCodec;
 import org.junit.jupiter.api.AfterEach;
@@ -26,6 +27,13 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ProcessFlinkRuntimeAdapterTest {
+
+    private static final String PLAN_JSON = "{\"alert\":{\"description\":\"canonical fixture\",\"name\":\"rule-a detection\",\"risk_score\":75,\"severity\":\"high\",\"status\":\"stable\",\"tags\":[\"runtime\",\"contract\"],\"type\":\"test_detection\",\"version\":\"1.0\"},\"compiler_version\":\"hisiem-detection-plan-2\",\"detection\":{\"condition\":{\"field\":\"event.action\",\"operator\":\"eq\",\"value\":\"login\"},\"suppression\":{\"duration_minutes\":60,\"emission\":\"first_and_final_count\",\"fallback_entity\":\"unknown\",\"fallback_entity_fields\":[\"source.ip\",\"user.name\"],\"primary_entity_field\":null,\"time_basis\":\"processing_time\"},\"type\":\"single_event\"},\"input\":{\"source\":\"siem-events\"},\"rule_key\":\"rule-a\",\"schema_version\":\"2\"}";
+    private static final String PLAN_HASH =
+            "f9796d6e28d8cff1f3bdc06a00118a255e056c0eadb7c57436ba5df4aa2b0021";
+    private static final String NEW_PLAN_JSON =
+            PLAN_JSON.replace("\"value\":\"login\"", "\"value\":\"logout\"");
+    private static final String NEW_PLAN_HASH = sha256(NEW_PLAN_JSON);
 
     @TempDir
     Path temp;
@@ -87,7 +95,7 @@ class ProcessFlinkRuntimeAdapterTest {
     void rejectsUnconfiguredClusterBeforeRunningDocker() {
         RuntimeManifestCodec codec = new RuntimeManifestCodec();
         RuntimeManifest manifest = new RuntimeManifest(RuntimeManifest.SCHEMA_VERSION, "tenant-a", "other",
-                "group-a", 3L, List.of(new RuntimeManifest.Member("rule-a", 1L, "plan-hash")));
+                "group-a", 3L, List.of(new RuntimeManifest.Member("rule-a", 1L, PLAN_HASH)));
         DetectionRuntimeTarget target = new DetectionRuntimeTarget("tenant-a", "group-a", "other", 3L,
                 codec.canonicalSpecJson(manifest), codec.specHash(manifest));
         FakeRunner runner = new FakeRunner(List.of());
@@ -168,7 +176,7 @@ class ProcessFlinkRuntimeAdapterTest {
         RuntimeManifestCodec codec = new RuntimeManifestCodec();
         RuntimeManifest oldManifest = manifest("group-update", 2L);
         RuntimeManifest newManifest = new RuntimeManifest(RuntimeManifest.SCHEMA_VERSION, "tenant-a", "default",
-                "group-update", 3L, List.of(new RuntimeManifest.Member("rule-a", 2L, "new-plan")));
+                "group-update", 3L, List.of(new RuntimeManifest.Member("rule-a", 2L, NEW_PLAN_HASH)));
         DetectionRuntimeTarget target = target(newManifest, codec);
         JdbcTemplate jdbc = populatedJdbc(oldManifest);
         DetectionArtifactBuilder artifacts = new DetectionArtifactBuilder(jdbc, codec, temp);
@@ -208,7 +216,7 @@ class ProcessFlinkRuntimeAdapterTest {
         RuntimeManifestCodec codec = new RuntimeManifestCodec();
         RuntimeManifest oldManifest = manifest("group-missing-old", 2L);
         RuntimeManifest newManifest = new RuntimeManifest(RuntimeManifest.SCHEMA_VERSION, "tenant-a", "default",
-                "group-missing-old", 3L, List.of(new RuntimeManifest.Member("rule-a", 2L, "new-plan")));
+                "group-missing-old", 3L, List.of(new RuntimeManifest.Member("rule-a", 2L, NEW_PLAN_HASH)));
         DetectionRuntimeTarget target = target(newManifest, codec);
         JdbcTemplate jdbc = populatedJdbc(oldManifest);
         DetectionArtifactBuilder artifacts = new DetectionArtifactBuilder(jdbc, codec, temp);
@@ -231,7 +239,7 @@ class ProcessFlinkRuntimeAdapterTest {
         RuntimeManifestCodec codec = new RuntimeManifestCodec();
         RuntimeManifest oldManifest = manifest("group-copy-failure", 2L);
         RuntimeManifest newManifest = new RuntimeManifest(RuntimeManifest.SCHEMA_VERSION, "tenant-a", "default",
-                "group-copy-failure", 3L, List.of(new RuntimeManifest.Member("rule-a", 2L, "new-plan")));
+                "group-copy-failure", 3L, List.of(new RuntimeManifest.Member("rule-a", 2L, NEW_PLAN_HASH)));
         DetectionRuntimeTarget oldTarget = target(oldManifest, codec);
         DetectionRuntimeTarget target = target(newManifest, codec);
         JdbcTemplate jdbc = populatedJdbc(oldManifest);
@@ -352,7 +360,7 @@ class ProcessFlinkRuntimeAdapterTest {
         RuntimeManifestCodec codec = new RuntimeManifestCodec();
         RuntimeManifest oldManifest = manifest("group-rollback", 2L);
         RuntimeManifest newManifest = new RuntimeManifest(RuntimeManifest.SCHEMA_VERSION, "tenant-a", "default",
-                "group-rollback", 3L, List.of(new RuntimeManifest.Member("rule-a", 2L, "new-plan")));
+                "group-rollback", 3L, List.of(new RuntimeManifest.Member("rule-a", 2L, NEW_PLAN_HASH)));
         DetectionRuntimeTarget oldTarget = target(oldManifest, codec);
         DetectionRuntimeTarget target = target(newManifest, codec);
         JdbcTemplate jdbc = populatedJdbc(oldManifest);
@@ -393,7 +401,7 @@ class ProcessFlinkRuntimeAdapterTest {
         RuntimeManifestCodec codec = new RuntimeManifestCodec();
         RuntimeManifest oldManifest = manifest("group-rollback-fail", 2L);
         RuntimeManifest newManifest = new RuntimeManifest(RuntimeManifest.SCHEMA_VERSION, "tenant-a", "default",
-                "group-rollback-fail", 3L, List.of(new RuntimeManifest.Member("rule-a", 2L, "new-plan")));
+                "group-rollback-fail", 3L, List.of(new RuntimeManifest.Member("rule-a", 2L, NEW_PLAN_HASH)));
         DetectionRuntimeTarget oldTarget = target(oldManifest, codec);
         DetectionRuntimeTarget target = target(newManifest, codec);
         JdbcTemplate jdbc = populatedJdbc(oldManifest);
@@ -481,12 +489,22 @@ class ProcessFlinkRuntimeAdapterTest {
 
     private static RuntimeManifest manifest(String group, long generation) {
         return new RuntimeManifest(RuntimeManifest.SCHEMA_VERSION, "tenant-a", "default", group,
-                generation, List.of(new RuntimeManifest.Member("rule-a", 1L, "plan-hash")));
+                generation, List.of(new RuntimeManifest.Member("rule-a", 1L, PLAN_HASH)));
     }
 
     private static DetectionRuntimeTarget target(RuntimeManifest manifest, RuntimeManifestCodec codec) {
         return new DetectionRuntimeTarget(manifest.tenantId(), manifest.jobGroupKey(), manifest.targetCluster(),
                 manifest.generation(), codec.canonicalSpecJson(manifest), codec.specHash(manifest));
+    }
+
+    private static String sha256(String value) {
+        try {
+            return java.util.HexFormat.of().formatHex(
+                    java.security.MessageDigest.getInstance("SHA-256")
+                            .digest(value.getBytes(StandardCharsets.UTF_8)));
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is unavailable", e);
+        }
     }
 
     private JdbcTemplate emptyJdbc() {
@@ -498,7 +516,8 @@ class ProcessFlinkRuntimeAdapterTest {
         dataSources.add(dataSource);
         JdbcTemplate jdbc = new JdbcTemplate(dataSource);
         jdbc.execute("CREATE TABLE rule_revision (revision_id UUID, rule_key VARCHAR(128), revision BIGINT, definition_json TEXT)");
-        jdbc.execute("CREATE TABLE detection_plan (plan_id UUID, revision_id UUID, plan_hash VARCHAR(128))");
+        jdbc.execute("CREATE TABLE detection_plan (plan_id UUID, revision_id UUID, "
+                + "compiler_version VARCHAR(128), plan_json TEXT, plan_hash VARCHAR(128))");
         jdbc.execute("CREATE TABLE rule_job_assignment (tenant_id VARCHAR(64), rule_key VARCHAR(128), revision BIGINT, plan_id UUID, plan_hash VARCHAR(128), group_key VARCHAR(512), generation BIGINT)");
         return jdbc;
     }
@@ -518,10 +537,18 @@ class ProcessFlinkRuntimeAdapterTest {
             UUID planId = UUID.randomUUID();
             String definition = "{\"id\":\"" + member.ruleKey().replace("\\\"", "")
                     + "\",\"enabled\":true}";
+            String planJson;
+            if (PLAN_HASH.equals(member.planHash())) {
+                planJson = PLAN_JSON;
+            } else if (NEW_PLAN_HASH.equals(member.planHash())) {
+                planJson = NEW_PLAN_JSON;
+            } else {
+                throw new IllegalArgumentException("unknown fixture plan hash: " + member.planHash());
+            }
             jdbc.update("INSERT INTO rule_revision VALUES (?, ?, ?, ?)", revisionId,
                     member.ruleKey(), member.revision(), definition);
-            jdbc.update("INSERT INTO detection_plan VALUES (?, ?, ?)", planId, revisionId,
-                    member.planHash());
+            jdbc.update("INSERT INTO detection_plan VALUES (?, ?, ?, ?, ?)", planId, revisionId,
+                    DetectionPlanCompiler.VERSION, planJson, member.planHash());
             jdbc.update("INSERT INTO rule_job_assignment VALUES (?, ?, ?, ?, ?, ?, ?)",
                     manifest.tenantId(), member.ruleKey(), member.revision(), planId,
                     member.planHash(), manifest.jobGroupKey(), manifest.generation());

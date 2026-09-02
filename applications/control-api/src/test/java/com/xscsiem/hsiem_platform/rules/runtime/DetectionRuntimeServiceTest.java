@@ -143,6 +143,83 @@ class DetectionRuntimeServiceTest {
     }
 
     @Test
+    void identicalDeployPreservesAssignmentObservedAndControllerState() throws Exception {
+        Files.writeString(rulesDir.resolve("rule-runtime-test.yaml"), rule("runtime test", "login"));
+        JdbcTemplate jdbc = jdbc();
+        DetectionRuntimeService runtime = new DetectionRuntimeService(jdbc, 1);
+        ManagedDetectionService managed = new ManagedDetectionService(jdbc,
+                new RuleService(rulesDir.toString(), "http://localhost:9200"), "test-commit", runtime);
+        TenantContext.set("default");
+
+        Map<String, Object> first = managed.deploy("default", "rule-runtime-test",
+                Map.of("targetCluster", "cluster-a"), "tester");
+        RuntimeManifest expected = expected(jdbc);
+        RuntimeManifest observed = new RuntimeManifest(expected.schemaVersion(), expected.tenantId(),
+                expected.targetCluster(), expected.jobGroupKey(), expected.generation(),
+                "job-stable", "key-stable", expected.members());
+        runtime.observe(observed, RuntimeJobState.RUNNING);
+
+        jdbc.update("""
+                UPDATE detection_job_group
+                SET last_error = 'stable error', reconcile_state = 'FAILED', reconcile_attempts = 3,
+                    controller_fencing_token = 7, controller_lease_owner = 'controller-a',
+                    controller_lease_until = CURRENT_TIMESTAMP, last_reconciled_at = CURRENT_TIMESTAMP
+                """);
+
+        Map<String, Object> assignmentBefore = jdbc.queryForMap("""
+                SELECT deployment_id, revision, plan_id, plan_hash, group_key, generation
+                FROM rule_job_assignment
+                """);
+        Map<String, Object> groupBefore = jdbc.queryForMap("""
+                SELECT desired_generation, expected_manifest_json, expected_manifest_hash, status,
+                       job_id, job_key, last_error, reconcile_state, reconcile_available_at,
+                       controller_lease_owner, controller_lease_until, controller_fencing_token,
+                       reconcile_attempts, last_reconciled_at
+                FROM detection_job_group
+                """);
+        Map<String, Object> statusBefore = jdbc.queryForMap("""
+                SELECT group_key, target_cluster, job_id, job_key, observed_revision,
+                       observed_generation, observed_plan_hash, runtime_state, error_code, error_message
+                FROM rule_runtime_status
+                """);
+        long deploymentGenerationBefore = ((Number) jdbc.queryForObject(
+                "SELECT generation FROM rule_deployment", Number.class)).longValue();
+        int historyCountBefore = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM rule_deployment_history", Integer.class);
+
+        Map<String, Object> repeated = managed.deploy("default", "rule-runtime-test",
+                Map.of("targetCluster", "cluster-a"), "tester");
+
+        long deploymentGenerationAfter = ((Number) jdbc.queryForObject(
+                "SELECT generation FROM rule_deployment", Number.class)).longValue();
+        int historyCountAfter = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM rule_deployment_history", Integer.class);
+        Map<String, Object> assignmentAfter = jdbc.queryForMap("""
+                SELECT deployment_id, revision, plan_id, plan_hash, group_key, generation
+                FROM rule_job_assignment
+                """);
+        Map<String, Object> groupAfter = jdbc.queryForMap("""
+                SELECT desired_generation, expected_manifest_json, expected_manifest_hash, status,
+                       job_id, job_key, last_error, reconcile_state, reconcile_available_at,
+                       controller_lease_owner, controller_lease_until, controller_fencing_token,
+                       reconcile_attempts, last_reconciled_at
+                FROM detection_job_group
+                """);
+        Map<String, Object> statusAfter = jdbc.queryForMap("""
+                SELECT group_key, target_cluster, job_id, job_key, observed_revision,
+                       observed_generation, observed_plan_hash, runtime_state, error_code, error_message
+                FROM rule_runtime_status
+                """);
+
+        assertEquals(first.get("generation"), repeated.get("generation"));
+        assertEquals(deploymentGenerationBefore, deploymentGenerationAfter);
+        assertEquals(historyCountBefore, historyCountAfter);
+        assertEquals(assignmentBefore, assignmentAfter);
+        assertEquals(groupBefore, groupAfter);
+        assertEquals(statusBefore, statusAfter);
+    }
+
+    @Test
     void changingOneRuleLeavesAnotherGroupAssignmentAndObservedJobUntouched() throws Exception {
         JdbcTemplate jdbc = jdbc();
         DetectionRuntimeService runtime = new DetectionRuntimeService(jdbc, 2);
@@ -306,20 +383,20 @@ class DetectionRuntimeServiceTest {
         JdbcTemplate jdbc = jdbc();
         ManagedDetectionService managed = managed(jdbc);
         TenantContext.set("default");
-        Map<String, Object> first = managed.inspect("rule-runtime-test", "tester");
-        @SuppressWarnings("unchecked")
-        Map<String, Object> firstRevision = (Map<String, Object>) first.get("revision");
-        managed.deploy("default", "rule-runtime-test", Map.of(), "tester");
+        Map<String, Object> first = managed.deploy("default", "rule-runtime-test", Map.of(), "tester");
+        Object firstDesiredRevisionId = first.get("desired_revision_id");
+        assertNotNull(firstDesiredRevisionId);
+
         Files.writeString(file, rule("runtime test changed", "logout"));
-        Map<String, Object> second = managed.inspect("rule-runtime-test", "tester");
-        @SuppressWarnings("unchecked")
-        Map<String, Object> secondRevision = (Map<String, Object>) second.get("revision");
-        managed.deploy("default", "rule-runtime-test", Map.of("revisionId", secondRevision.get("revisionId")), "tester");
+        Map<String, Object> second = managed.deploy("default", "rule-runtime-test", Map.of(), "tester");
+        Object secondDesiredRevisionId = second.get("desired_revision_id");
+        assertNotNull(secondDesiredRevisionId);
+        assertNotEquals(firstDesiredRevisionId, secondDesiredRevisionId);
         long before = ((Number) jdbc.queryForObject(
                 "SELECT desired_generation FROM detection_job_group", Long.class)).longValue();
 
         managed.rollback("default", "rule-runtime-test",
-                Map.of("revisionId", firstRevision.get("revisionId")), "tester");
+                Map.of("revisionId", firstDesiredRevisionId), "tester");
         long after = ((Number) jdbc.queryForObject(
                 "SELECT desired_generation FROM detection_job_group", Long.class)).longValue();
         assertTrue(after > before);

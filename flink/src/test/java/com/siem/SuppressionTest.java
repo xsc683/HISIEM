@@ -1,6 +1,7 @@
 package com.siem;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.siem.config.RuleDecl;
 import org.apache.flink.api.common.typeinfo.BasicTypeInfo;
 import org.apache.flink.streaming.api.operators.KeyedProcessOperator;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
@@ -12,6 +13,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class SuppressionTest {
@@ -108,5 +110,65 @@ public class SuppressionTest {
             assertEquals("T2", parse(out.get(out.size() - 1).getValue()).get("@timestamp"),
                     "新窗口告警使用新事件时间");
         }
+    }
+
+    @Test
+    void singleEventSuppressionKeepsLegacyDefaultForUnmanagedDeclarations() {
+        RuleDecl first = new RuleDecl();
+        first.category = "single_event";
+        RuleDecl second = new RuleDecl();
+        second.category = "single_event";
+
+        assertEquals(60L, DetectionJob.singleEventSuppressionMinutes(List.of(first, second)));
+    }
+
+    @Test
+    void singleEventSuppressionUsesExplicitPhysicalDeclarationValue() {
+        RuleDecl declaration = new RuleDecl();
+        declaration.category = "single_event";
+        declaration.alertSuppressionMinutes = 15L;
+
+        assertEquals(15L, DetectionJob.singleEventSuppressionMinutes(List.of(declaration)));
+    }
+
+    @Test
+    void singleEventSuppressionAcceptsMatchingExplicitValues() {
+        RuleDecl first = new RuleDecl();
+        first.category = "single_event";
+        first.alertSuppressionMinutes = 30L;
+        RuleDecl second = new RuleDecl();
+        second.category = "single_event";
+        second.alertSuppressionMinutes = 30L;
+
+        assertEquals(30L, DetectionJob.singleEventSuppressionMinutes(List.of(first, second)));
+    }
+
+    @Test
+    void singleEventSuppressionRejectsConflictingExplicitValues() {
+        RuleDecl first = new RuleDecl();
+        first.alertSuppressionMinutes = 15L;
+        RuleDecl second = new RuleDecl();
+        second.alertSuppressionMinutes = 30L;
+
+        assertThrows(IllegalArgumentException.class,
+                () -> DetectionJob.singleEventSuppressionMinutes(List.of(first, second)));
+    }
+
+    @Test
+    void singleEventSuppressionRejectsZeroValue() {
+        RuleDecl declaration = new RuleDecl();
+        declaration.alertSuppressionMinutes = 0L;
+
+        assertThrows(IllegalArgumentException.class,
+                () -> DetectionJob.singleEventSuppressionMinutes(List.of(declaration)));
+    }
+
+    @Test
+    void singleEventSuppressionRejectsNegativeValue() {
+        RuleDecl declaration = new RuleDecl();
+        declaration.alertSuppressionMinutes = -1L;
+
+        assertThrows(IllegalArgumentException.class,
+                () -> DetectionJob.singleEventSuppressionMinutes(List.of(declaration)));
     }
 }
