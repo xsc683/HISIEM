@@ -2,18 +2,12 @@ package com.xscsiem.hsiem_platform.rules.runtime;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -22,10 +16,14 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Desired/observed boundary for managed detection jobs.  It persists intent and observations;
- * it deliberately does not start, stop, or otherwise call a physical Flink controller.
+ * Desired/observed boundary for managed detection jobs. It persists intent and observations; it
+ * deliberately does not start, stop, or otherwise call a physical Flink controller.
  */
 @Service
 public class DetectionRuntimeService {
@@ -39,29 +37,21 @@ public class DetectionRuntimeService {
     private final ObjectMapper mapper = new ObjectMapper();
 
     @Autowired
-    public DetectionRuntimeService(JdbcTemplate jdbc,
-                                   @Value("${app.detection.group-buckets:1}") int groupBuckets) {
-        this(new DetectionRuntimeRepository(jdbc), groupBuckets);
-    }
-
-    public DetectionRuntimeService(JdbcTemplate jdbc) {
-        this(jdbc, 1);
-    }
-
-    public DetectionRuntimeService(DetectionRuntimeRepository repository, int groupBuckets) {
+    public DetectionRuntimeService(
+            DetectionRuntimeRepository repository,
+            @Value("${app.detection.group-buckets:1}") int groupBuckets) {
         this.repository = Objects.requireNonNull(repository, "repository must not be null");
         if (groupBuckets <= 0) {
-            throw new IllegalArgumentException("app.detection.group-buckets must be greater than zero");
+            throw new IllegalArgumentException(
+                    "app.detection.group-buckets must be greater than zero");
         }
         this.groupBuckets = groupBuckets;
     }
 
-    /**
-     * Reconciles one desired-state mutation without rewriting unrelated assignments or groups.
-     */
+    /** Reconciles one desired-state mutation without rewriting unrelated assignments or groups. */
     @Transactional
-    public Map<String, Object> reconcileDesiredState(String tenantId, String ruleKey,
-                                                      String targetCluster, String desiredState) {
+    public Map<String, Object> reconcileDesiredState(
+            String tenantId, String ruleKey, String targetCluster, String desiredState) {
         tenant(tenantId);
         required(ruleKey, "ruleKey");
         if (targetCluster == null || targetCluster.isBlank()) {
@@ -76,45 +66,57 @@ public class DetectionRuntimeService {
     }
 
     /**
-     * Applies a batch of already-persisted desired deployments in one transaction.  The caller
+     * Applies a batch of already-persisted desired deployments in one transaction. The caller
      * writes all desired rows first; this method only rebuilds groups touched by those rules.
      */
     @Transactional
-    public List<Map<String, Object>> reconcileDesiredStates(String tenantId,
-                                                              Collection<String> ruleKeys) {
+    public List<Map<String, Object>> reconcileDesiredStates(
+            String tenantId, Collection<String> ruleKeys) {
         tenant(tenantId);
         if (ruleKeys == null || ruleKeys.isEmpty()) {
             return List.of();
         }
-        List<String> orderedRuleKeys = ruleKeys.stream()
-                .map(key -> required(key, "ruleKey"))
-                .distinct().sorted().toList();
+        List<String> orderedRuleKeys =
+                ruleKeys.stream().map(key -> required(key, "ruleKey")).distinct().sorted().toList();
         Set<String> affectedGroups = new HashSet<>();
-        Map<String, Map<String, Object>> oldStatuses = new HashMap<>();
+        Map<String, DetectionRuntimeRepository.RuleRuntimeStatusRow> oldStatuses = new HashMap<>();
         for (String ruleKey : orderedRuleKeys) {
             affectedGroups.addAll(repository.findAssignmentGroups(tenantId, ruleKey));
-            Map<String, Object> oldStatus = repository.findRuntimeStatus(tenantId, ruleKey);
+            DetectionRuntimeRepository.RuleRuntimeStatusRow oldStatus =
+                    repository.findRuntimeStatusRow(tenantId, ruleKey);
             oldStatuses.put(ruleKey, oldStatus);
-            if (oldStatus != null && text(oldStatus, "group_key") != null) {
-                affectedGroups.add(text(oldStatus, "group_key"));
+            if (oldStatus != null && oldStatus.groupKey() != null) {
+                affectedGroups.add(oldStatus.groupKey());
             }
         }
 
-        List<DesiredRule> desiredRules = repository.findDesiredRunning(
-                tenantId, com.xscsiem.hsiem_platform.rules.DetectionPlanCompiler.VERSION)
-                .stream().map(this::desiredRule).toList();
-        Map<String, DesiredRule> desiredByRule = desiredRules.stream().collect(
-                java.util.stream.Collectors.toMap(DesiredRule::ruleKey, rule -> rule,
-                        (left, right) -> right, LinkedHashMap::new));
+        List<DesiredRule> desiredRules =
+                repository
+                        .findDesiredRunningRows(
+                                tenantId,
+                                com.xscsiem.hsiem_platform.rules.DetectionPlanCompiler.VERSION)
+                        .stream()
+                        .map(this::desiredRule)
+                        .toList();
+        Map<String, DesiredRule> desiredByRule =
+                desiredRules.stream()
+                        .collect(
+                                java.util.stream.Collectors.toMap(
+                                        DesiredRule::ruleKey,
+                                        rule -> rule,
+                                        (left, right) -> right,
+                                        LinkedHashMap::new));
         for (DesiredRule desired : desiredRules) {
             if (orderedRuleKeys.contains(desired.ruleKey())) {
                 affectedGroups.add(desired.groupKey());
             }
         }
 
-        Map<String, Map<String, Object>> existingGroups = new LinkedHashMap<>();
+        Map<String, DetectionRuntimeRepository.DetectionJobGroupRow> existingGroups =
+                new LinkedHashMap<>();
         for (String groupKey : affectedGroups.stream().sorted().toList()) {
-            Map<String, Object> group = repository.findGroup(tenantId, groupKey);
+            DetectionRuntimeRepository.DetectionJobGroupRow group =
+                    repository.findGroupRow(tenantId, groupKey);
             if (group != null) {
                 existingGroups.put(groupKey, group);
             }
@@ -122,30 +124,50 @@ public class DetectionRuntimeService {
         Map<String, List<DesiredRule>> grouped = new HashMap<>();
         for (DesiredRule desired : desiredRules) {
             if (affectedGroups.contains(desired.groupKey())) {
-                grouped.computeIfAbsent(desired.groupKey(), ignored -> new ArrayList<>()).add(desired);
+                grouped.computeIfAbsent(desired.groupKey(), ignored -> new ArrayList<>())
+                        .add(desired);
             }
         }
 
         Map<String, Long> generations = new HashMap<>();
         Map<String, Boolean> changedGroups = new HashMap<>();
         for (String groupKey : affectedGroups.stream().sorted().toList()) {
-            Map<String, Object> existing = existingGroups.get(groupKey);
+            DetectionRuntimeRepository.DetectionJobGroupRow existing = existingGroups.get(groupKey);
             List<DesiredRule> members = grouped.getOrDefault(groupKey, List.of());
             if (existing == null && members.isEmpty()) {
                 continue;
             }
             GroupMetadata metadata = metadata(groupKey, existing, members, DEFAULT_CLUSTER);
-            List<RuntimeManifest.Member> manifestMembers = members.stream()
-                    .sorted(Comparator.comparing(DesiredRule::ruleKey))
-                    .map(rule -> new RuntimeManifest.Member(rule.ruleKey(), rule.revision(), rule.planHash()))
-                    .toList();
+            List<RuntimeManifest.Member> manifestMembers =
+                    members.stream()
+                            .sorted(Comparator.comparing(DesiredRule::ruleKey))
+                            .map(
+                                    rule ->
+                                            new RuntimeManifest.Member(
+                                                    rule.ruleKey(),
+                                                    rule.revision(),
+                                                    rule.planHash()))
+                            .toList();
             boolean changed = groupSpecChanged(existing, metadata, manifestMembers);
             long generation = nextGeneration(existing, changed);
-            RuntimeManifest expected = new RuntimeManifest(RuntimeManifest.SCHEMA_VERSION, tenantId,
-                    metadata.targetCluster(), groupKey, generation, manifestMembers);
+            RuntimeManifest expected =
+                    new RuntimeManifest(
+                            RuntimeManifest.SCHEMA_VERSION,
+                            tenantId,
+                            metadata.targetCluster(),
+                            groupKey,
+                            generation,
+                            manifestMembers);
             if (changed) {
-                repository.upsertGroup(tenantId, groupKey, metadata.targetCluster(), metadata.sourceFamily(),
-                        metadata.category(), metadata.bucket(), generation, codec.encode(expected),
+                repository.upsertGroup(
+                        tenantId,
+                        groupKey,
+                        metadata.targetCluster(),
+                        metadata.sourceFamily(),
+                        metadata.category(),
+                        metadata.bucket(),
+                        generation,
+                        codec.encode(expected),
                         codec.specHash(expected));
                 repository.updateAssignmentGenerations(tenantId, groupKey, generation);
             }
@@ -161,17 +183,26 @@ public class DetectionRuntimeService {
             }
             Long generation = generations.get(desired.groupKey());
             if (generation == null) {
-                throw new IllegalStateException("missing group generation for " + desired.groupKey());
+                throw new IllegalStateException(
+                        "missing group generation for " + desired.groupKey());
             }
-            Map<String, Object> assignment = repository.findAssignment(tenantId, desired.ruleKey());
+            DetectionRuntimeRepository.RuntimeAssignmentRow assignment =
+                    repository.findAssignmentRow(tenantId, desired.ruleKey());
             if (!assignmentEquivalent(assignment, desired, generation)) {
-                repository.upsertAssignment(tenantId, desired.ruleKey(), desired.deploymentId(),
-                        desired.revision(), desired.planId(), desired.planHash(), desired.groupKey(), generation);
+                repository.upsertAssignment(
+                        tenantId,
+                        desired.ruleKey(),
+                        desired.deploymentId(),
+                        desired.revision(),
+                        desired.planId(),
+                        desired.planHash(),
+                        desired.groupKey(),
+                        generation);
             }
         }
         for (String ruleKey : orderedRuleKeys) {
             if (!desiredByRule.containsKey(ruleKey)
-                    && repository.findAssignment(tenantId, ruleKey) != null) {
+                    && repository.findAssignmentRow(tenantId, ruleKey) != null) {
                 repository.deleteAssignment(tenantId, ruleKey);
             }
         }
@@ -182,20 +213,26 @@ public class DetectionRuntimeService {
             if (!affectedGroups.contains(desired.groupKey())) {
                 continue;
             }
-            Map<String, Object> memberDeployment = repository.findDeployment(tenantId, desired.ruleKey());
+            DetectionRuntimeRepository.RuleDeploymentRow memberDeployment =
+                    repository.findDeploymentRow(tenantId, desired.ruleKey());
             if (memberDeployment == null) {
                 continue;
             }
-            Map<String, Object> status = repository.findRuntimeStatus(tenantId, desired.ruleKey());
-            boolean statusNeedsRepair = status == null
-                    || !Objects.equals(desired.groupKey(), text(status, "group_key"))
-                    || !Objects.equals(desired.targetCluster(), text(status, "target_cluster"));
+            DetectionRuntimeRepository.RuleRuntimeStatusRow status =
+                    repository.findRuntimeStatusRow(tenantId, desired.ruleKey());
+            boolean statusNeedsRepair =
+                    status == null
+                            || !Objects.equals(desired.groupKey(), status.groupKey())
+                            || !Objects.equals(desired.targetCluster(), status.targetCluster());
             if (changedGroups.getOrDefault(desired.groupKey(), false) || statusNeedsRepair) {
-                repository.upsertPendingStatus(tenantId, desired.ruleKey(),
-                        uuid(memberDeployment, "deployment_id"), desired.groupKey(),
-                        text(memberDeployment, "target_cluster"));
-                repository.updateDeploymentRuntimeState(tenantId, desired.ruleKey(),
-                        RuleRuntimeState.PENDING, null, null);
+                repository.upsertPendingStatus(
+                        tenantId,
+                        desired.ruleKey(),
+                        memberDeployment.deploymentId(),
+                        desired.groupKey(),
+                        memberDeployment.targetCluster());
+                repository.updateDeploymentRuntimeState(
+                        tenantId, desired.ruleKey(), RuleRuntimeState.PENDING, null, null);
             }
         }
 
@@ -204,41 +241,48 @@ public class DetectionRuntimeService {
             if (desiredByRule.containsKey(ruleKey)) {
                 continue;
             }
-            Map<String, Object> deployment = repository.findDeployment(tenantId, ruleKey);
+            DetectionRuntimeRepository.RuleDeploymentRow deployment =
+                    repository.findDeploymentRow(tenantId, ruleKey);
             if (deployment == null) {
                 continue;
             }
-            Map<String, Object> oldStatus = oldStatuses.get(ruleKey);
-            String statusGroup = oldStatus == null ? null : text(oldStatus, "group_key");
-            boolean statusNeedsRepair = oldStatus == null
-                    || !Objects.equals(uuid(deployment, "deployment_id"), uuid(oldStatus, "deployment_id"))
-                    || !Objects.equals(text(deployment, "target_cluster"), text(oldStatus, "target_cluster"));
+            DetectionRuntimeRepository.RuleRuntimeStatusRow oldStatus = oldStatuses.get(ruleKey);
+            String statusGroup = oldStatus == null ? null : oldStatus.groupKey();
+            boolean statusNeedsRepair =
+                    oldStatus == null
+                            || !Objects.equals(deployment.deploymentId(), oldStatus.deploymentId())
+                            || !Objects.equals(
+                                    deployment.targetCluster(), oldStatus.targetCluster());
             if (changedGroups.getOrDefault(statusGroup, false) || statusNeedsRepair) {
-                repository.upsertPendingStatus(tenantId, ruleKey, uuid(deployment, "deployment_id"),
-                        statusGroup, text(deployment, "target_cluster"));
+                repository.upsertPendingStatus(
+                        tenantId,
+                        ruleKey,
+                        deployment.deploymentId(),
+                        statusGroup,
+                        deployment.targetCluster());
             }
         }
 
         return orderedRuleKeys.stream().map(ruleKey -> inspect(tenantId, ruleKey)).toList();
     }
 
-    public List<Map<String, Object>> reconcileDesiredStateBatch(String tenantId,
-                                                                  Collection<String> ruleKeys) {
+    public List<Map<String, Object>> reconcileDesiredStateBatch(
+            String tenantId, Collection<String> ruleKeys) {
         return reconcileDesiredStates(tenantId, ruleKeys);
     }
 
-    public List<Map<String, Object>> synchronizeDesiredStates(String tenantId,
-                                                                Collection<String> ruleKeys) {
+    public List<Map<String, Object>> synchronizeDesiredStates(
+            String tenantId, Collection<String> ruleKeys) {
         return reconcileDesiredStates(tenantId, ruleKeys);
     }
 
-    public Map<String, Object> synchronizeDesiredState(String tenantId, String ruleKey,
-                                                        String targetCluster, String desiredState) {
+    public Map<String, Object> synchronizeDesiredState(
+            String tenantId, String ruleKey, String targetCluster, String desiredState) {
         return reconcileDesiredState(tenantId, ruleKey, targetCluster, desiredState);
     }
 
-    public Map<String, Object> applyDesiredState(String tenantId, String ruleKey,
-                                                  String targetCluster, String desiredState) {
+    public Map<String, Object> applyDesiredState(
+            String tenantId, String ruleKey, String targetCluster, String desiredState) {
         return reconcileDesiredState(tenantId, ruleKey, targetCluster, desiredState);
     }
 
@@ -247,50 +291,61 @@ public class DetectionRuntimeService {
     public Map<String, Object> inspect(String tenantId, String ruleKey) {
         tenant(tenantId);
         required(ruleKey, "ruleKey");
-        Map<String, Object> deployment = repository.findDeployment(tenantId, ruleKey);
-        Map<String, Object> assignment = repository.findAssignment(tenantId, ruleKey);
-        Map<String, Object> status = repository.findRuntimeStatus(tenantId, ruleKey);
-        String groupKey = assignment == null ? text(status, "group_key") : text(assignment, "group_key");
-        Map<String, Object> group = groupKey == null ? null : repository.findGroup(tenantId, groupKey);
-        Map<String, Object> latestObserved = group == null ? null
-                : repository.findLatestObservedManifest(tenantId, groupKey, text(group, "target_cluster"));
+        DetectionRuntimeRepository.RuleDeploymentRow deployment =
+                repository.findDeploymentRow(tenantId, ruleKey);
+        DetectionRuntimeRepository.RuntimeAssignmentRow assignment =
+                repository.findAssignmentRow(tenantId, ruleKey);
+        DetectionRuntimeRepository.RuleRuntimeStatusRow status =
+                repository.findRuntimeStatusRow(tenantId, ruleKey);
+        String groupKey =
+                assignment == null
+                        ? status == null ? null : status.groupKey()
+                        : assignment.groupKey();
+        DetectionRuntimeRepository.DetectionJobGroupRow group =
+                groupKey == null ? null : repository.findGroupRow(tenantId, groupKey);
+        DetectionRuntimeRepository.RuntimeManifestRow latestObserved =
+                group == null
+                        ? null
+                        : repository.findLatestObservedManifestRow(
+                                tenantId, groupKey, group.targetCluster());
 
         Map<String, Object> desired = new LinkedHashMap<>();
         if (deployment != null) {
-            desired.put("state", deployment.get("desired_state"));
-            desired.put("generation", deployment.get("generation"));
-            desired.put("targetCluster", deployment.get("target_cluster"));
+            desired.put("state", deployment.desiredState());
+            desired.put("generation", deployment.generation());
+            desired.put("targetCluster", deployment.targetCluster());
         }
         if (group != null) {
-            desired.put("jobGroupKey", group.get("group_key"));
-            desired.put("desiredGeneration", group.get("desired_generation"));
-            desired.put("expectedManifestJson", group.get("expected_manifest_json"));
-            desired.put("expectedManifestHash", group.get("expected_manifest_hash"));
+            desired.put("jobGroupKey", group.groupKey());
+            desired.put("desiredGeneration", group.desiredGeneration());
+            desired.put("expectedManifestJson", group.expectedManifestJson());
+            desired.put("expectedManifestHash", group.expectedManifestHash());
         }
         Map<String, Object> observed = new LinkedHashMap<>();
         if (latestObserved != null) {
-            observed.put("jobId", latestObserved.get("job_id"));
-            observed.put("jobKey", latestObserved.get("job_key"));
-            observed.put("generation", latestObserved.get("generation"));
-            observed.put("manifestJson", latestObserved.get("manifest_json"));
-            observed.put("manifestHash", latestObserved.get("manifest_hash"));
-            observed.put("observedAt", latestObserved.get("observed_at"));
+            observed.put("jobId", latestObserved.jobId());
+            observed.put("jobKey", latestObserved.jobKey());
+            observed.put("generation", latestObserved.generation());
+            observed.put("manifestJson", latestObserved.manifestJson());
+            observed.put("manifestHash", latestObserved.manifestHash());
+            observed.put("observedAt", latestObserved.observedAt());
         }
         Map<String, Object> desiredVsObserved = new LinkedHashMap<>();
         desiredVsObserved.put("desired", desired);
         desiredVsObserved.put("observed", observed);
-        String desiredState = deployment == null ? null : text(deployment, "desired_state");
-        String runtimeState = status == null ? null : text(status, "runtime_state");
-        boolean inSync = ("RUNNING".equalsIgnoreCase(desiredState)
-                && RuleRuntimeState.RUNNING.name().equals(runtimeState))
-                || ("STOPPED".equalsIgnoreCase(desiredState)
-                && RuleRuntimeState.DISABLED.name().equals(runtimeState));
+        String desiredState = deployment == null ? null : deployment.desiredState();
+        String runtimeState = status == null ? null : status.runtimeState();
+        boolean inSync =
+                ("RUNNING".equalsIgnoreCase(desiredState)
+                                && RuleRuntimeState.RUNNING.name().equals(runtimeState))
+                        || ("STOPPED".equalsIgnoreCase(desiredState)
+                                && RuleRuntimeState.DISABLED.name().equals(runtimeState));
         desiredVsObserved.put("inSync", inSync);
 
         Map<String, Object> response = new LinkedHashMap<>();
-        response.put("assignment", assignment);
-        response.put("jobGroup", group);
-        response.put("runtimeStatus", status);
+        response.put("assignment", assignment == null ? null : assignmentMap(assignment));
+        response.put("jobGroup", group == null ? null : groupMap(group));
+        response.put("runtimeStatus", status == null ? null : statusMap(status));
         response.put("desiredVsObserved", desiredVsObserved);
         return response;
     }
@@ -299,121 +354,334 @@ public class DetectionRuntimeService {
         return observe(observedManifest, runtimeJobState, null, null);
     }
 
-    public RuntimeDiff observe(RuntimeManifest observedManifest, RuntimeJobState runtimeJobState,
-                               String errorMessage) {
+    public RuntimeDiff observe(
+            RuntimeManifest observedManifest,
+            RuntimeJobState runtimeJobState,
+            String errorMessage) {
         return observe(observedManifest, runtimeJobState, null, errorMessage);
     }
 
-    public RuntimeDiff observe(RuntimeManifest observedManifest, String runtimeJobState,
-                               String errorMessage) {
+    public RuntimeDiff observe(
+            RuntimeManifest observedManifest, String runtimeJobState, String errorMessage) {
         return observe(observedManifest, RuntimeJobState.from(runtimeJobState), null, errorMessage);
     }
 
-    public RuntimeDiff observe(RuntimeManifest observedManifest, String runtimeJobState,
-                               String errorCode, String errorMessage) {
-        return observe(observedManifest, RuntimeJobState.from(runtimeJobState), errorCode, errorMessage);
+    public RuntimeDiff observe(
+            RuntimeManifest observedManifest,
+            String runtimeJobState,
+            String errorCode,
+            String errorMessage) {
+        return observe(
+                observedManifest, RuntimeJobState.from(runtimeJobState), errorCode, errorMessage);
     }
 
     /**
      * Records one observation and reconciles only the exact tenant/group/cluster scope carried by
-     * that manifest.  No observation can update another tenant, cluster, or job group.
+     * that manifest. No observation can update another tenant, cluster, or job group.
      */
     @Transactional
-    public RuntimeDiff observe(RuntimeManifest observedManifest, RuntimeJobState runtimeJobState,
-                               String errorCode, String errorMessage) {
+    public RuntimeDiff observe(
+            RuntimeManifest observedManifest,
+            RuntimeJobState runtimeJobState,
+            String errorCode,
+            String errorMessage) {
+        return observeInternal(observedManifest, runtimeJobState, errorCode, errorMessage, null);
+    }
+
+    /**
+     * Records an observation only for the controller ownership epoch that claimed the group. The
+     * group is locked and validated before any append or observed-state mutation; a stale
+     * controller therefore cannot leave a partial observation behind.
+     */
+    @Transactional
+    public RuntimeDiff observeFenced(
+            RuntimeManifest observedManifest,
+            RuntimeJobState runtimeJobState,
+            String errorCode,
+            String errorMessage,
+            ObservationFence fence) {
+        Objects.requireNonNull(fence, "fence must not be null");
+        return observeInternal(observedManifest, runtimeJobState, errorCode, errorMessage, fence);
+    }
+
+    private RuntimeDiff observeInternal(
+            RuntimeManifest observedManifest,
+            RuntimeJobState runtimeJobState,
+            String errorCode,
+            String errorMessage,
+            ObservationFence fence) {
         codec.validateSchemaVersion(observedManifest);
         Objects.requireNonNull(runtimeJobState, "runtimeJobState must not be null");
         String tenantId = tenant(observedManifest.tenantId());
+        if (fence != null && !repository.lockCurrentObservation(fence)) {
+            throw new StaleObservationException(
+                    "controller observation fence is no longer current");
+        }
+        if (fence != null
+                && (!fence.tenantId().equals(observedManifest.tenantId())
+                        || !fence.groupKey().equals(observedManifest.jobGroupKey())
+                        || !fence.targetCluster().equals(observedManifest.targetCluster())
+                        || fence.desiredGeneration() != observedManifest.generation())) {
+            throw new StaleObservationException("controller observation is outside fenced scope");
+        }
         String error = firstNonBlank(errorMessage, errorCode);
         String json = codec.encode(observedManifest);
         String hash = codec.specHash(observedManifest);
-        repository.insertObservedManifest(tenantId, observedManifest.jobGroupKey(),
-                observedManifest.targetCluster(), observedManifest.jobId(), observedManifest.jobKey(),
-                observedManifest.generation(), json, hash);
 
-        Map<String, Object> group = repository.findGroup(tenantId, observedManifest.jobGroupKey(),
-                observedManifest.targetCluster());
+        DetectionRuntimeRepository.DetectionJobGroupRow group =
+                repository.findGroupRow(
+                        tenantId, observedManifest.jobGroupKey(), observedManifest.targetCluster());
         RuntimeManifest expected;
         if (group == null) {
             // Unknown scope is persisted for audit but cannot mutate any desired/status row.
-            expected = new RuntimeManifest(observedManifest.schemaVersion(), tenantId,
-                    observedManifest.targetCluster(), observedManifest.jobGroupKey(),
-                    observedManifest.generation(), List.of());
+            expected =
+                    new RuntimeManifest(
+                            observedManifest.schemaVersion(),
+                            tenantId,
+                            observedManifest.targetCluster(),
+                            observedManifest.jobGroupKey(),
+                            observedManifest.generation(),
+                            List.of());
         } else {
-            expected = codec.decode(text(group, "expected_manifest_json"));
+            expected = codec.decode(group.expectedManifestJson());
         }
         RuntimeDiff diff = RuntimeDiff.compare(expected, observedManifest);
-        boolean failed = runtimeJobState == RuntimeJobState.FAILED
-                || errorCode != null && !errorCode.isBlank()
-                || errorMessage != null && !errorMessage.isBlank();
+        boolean failed =
+                runtimeJobState == RuntimeJobState.FAILED
+                        || errorCode != null && !errorCode.isBlank()
+                        || errorMessage != null && !errorMessage.isBlank();
         RuleRuntimeState groupState = groupState(expected, diff, runtimeJobState, failed);
         if (group != null) {
-            repository.updateGroupObserved(tenantId, observedManifest.jobGroupKey(),
-                    observedManifest.targetCluster(), groupState, observedManifest.jobId(),
-                    observedManifest.jobKey(), error);
+            if (fence == null) {
+                repository.updateGroupObserved(
+                        tenantId,
+                        observedManifest.jobGroupKey(),
+                        observedManifest.targetCluster(),
+                        groupState,
+                        observedManifest.jobId(),
+                        observedManifest.jobKey(),
+                        error);
+            } else if (repository.updateGroupObservedFenced(
+                            fence,
+                            groupState,
+                            observedManifest.jobId(),
+                            observedManifest.jobKey(),
+                            error)
+                    != 1) {
+                throw new StaleObservationException(
+                        "controller observation fence expired before commit");
+            }
         }
 
-        Map<String, RuntimeManifest.Member> observedMembers = observedManifest.members().stream()
-                .collect(java.util.stream.Collectors.toMap(RuntimeManifest.Member::ruleKey,
-                        member -> member, (left, right) -> left, LinkedHashMap::new));
-        List<Map<String, Object>> statuses = group == null ? List.of()
-                : repository.findStatusesInScope(tenantId, observedManifest.jobGroupKey(),
-                observedManifest.targetCluster());
-        Map<String, Map<String, Object>> statusByRule = new HashMap<>();
-        for (Map<String, Object> status : statuses) {
-            statusByRule.put(text(status, "rule_key"), status);
+        if (fence == null) {
+            repository.insertObservedManifest(
+                    tenantId,
+                    observedManifest.jobGroupKey(),
+                    observedManifest.targetCluster(),
+                    observedManifest.jobId(),
+                    observedManifest.jobKey(),
+                    observedManifest.generation(),
+                    json,
+                    hash);
+        } else if (repository.insertObservedManifestFenced(
+                        fence, observedManifest.jobId(), observedManifest.jobKey(), json, hash)
+                != 1) {
+            throw new StaleObservationException(
+                    "controller observation fence expired before manifest append");
+        }
+
+        Map<String, RuntimeManifest.Member> observedMembers =
+                observedManifest.members().stream()
+                        .collect(
+                                java.util.stream.Collectors.toMap(
+                                        RuntimeManifest.Member::ruleKey,
+                                        member -> member,
+                                        (left, right) -> left,
+                                        LinkedHashMap::new));
+        List<DetectionRuntimeRepository.RuntimeStatusScopeRow> statuses =
+                group == null
+                        ? List.of()
+                        : repository.findStatusesInScopeRows(
+                                tenantId,
+                                observedManifest.jobGroupKey(),
+                                observedManifest.targetCluster());
+        Map<String, DetectionRuntimeRepository.RuntimeStatusScopeRow> statusByRule =
+                new HashMap<>();
+        for (DetectionRuntimeRepository.RuntimeStatusScopeRow status : statuses) {
+            statusByRule.put(status.ruleKey(), status);
         }
 
         for (RuntimeManifest.Member expectedMember : expected.members()) {
-            Map<String, Object> deployment = repository.findDeployment(tenantId, expectedMember.ruleKey());
-            if (deployment == null || !observedManifest.targetCluster().equals(text(deployment, "target_cluster"))) {
+            DetectionRuntimeRepository.RuleDeploymentRow deployment =
+                    repository.findDeploymentRow(tenantId, expectedMember.ruleKey());
+            if (deployment == null
+                    || !observedManifest.targetCluster().equals(deployment.targetCluster())) {
                 continue;
             }
-            Map<String, Object> status = statusByRule.get(expectedMember.ruleKey());
+            DetectionRuntimeRepository.RuntimeStatusScopeRow status =
+                    statusByRule.get(expectedMember.ruleKey());
             if (status == null) {
                 // This only repairs rows created before the runtime status foundation; it remains
                 // tenant and exact cluster scoped.
-                repository.upsertPendingStatus(tenantId, expectedMember.ruleKey(),
-                        uuid(deployment, "deployment_id"), observedManifest.jobGroupKey(),
+                if (fence != null && !repository.lockCurrentObservation(fence)) {
+                    throw new StaleObservationException(
+                            "controller observation fence expired before status repair");
+                }
+                repository.upsertPendingStatus(
+                        tenantId,
+                        expectedMember.ruleKey(),
+                        deployment.deploymentId(),
+                        observedManifest.jobGroupKey(),
                         observedManifest.targetCluster());
-                status = repository.findRuntimeStatus(tenantId, expectedMember.ruleKey());
+                DetectionRuntimeRepository.RuleRuntimeStatusRow repaired =
+                        repository.findRuntimeStatusRow(tenantId, expectedMember.ruleKey());
+                status =
+                        repaired == null
+                                ? null
+                                : new DetectionRuntimeRepository.RuntimeStatusScopeRow(
+                                        repaired.tenantId(),
+                                        repaired.ruleKey(),
+                                        repaired.deploymentId(),
+                                        repaired.groupKey(),
+                                        repaired.targetCluster(),
+                                        repaired.jobId(),
+                                        repaired.jobKey(),
+                                        repaired.observedRevision(),
+                                        repaired.observedGeneration(),
+                                        repaired.observedPlanHash(),
+                                        repaired.runtimeState(),
+                                        repaired.errorCode(),
+                                        repaired.errorMessage(),
+                                        deployment.desiredState(),
+                                        deployment.desiredRevisionId(),
+                                        deployment.generation(),
+                                        deployment.status());
                 statusByRule.put(expectedMember.ruleKey(), status);
             }
             RuntimeManifest.Member actual = observedMembers.get(expectedMember.ruleKey());
-            RuleRuntimeState state = memberState(expected, expectedMember, actual, diff,
-                    text(deployment, "desired_state"), runtimeJobState, failed);
-            repository.updateRuntimeStatusObserved(tenantId, expectedMember.ruleKey(),
-                    observedManifest.jobGroupKey(), observedManifest.targetCluster(),
-                    observedManifest.jobId(), observedManifest.jobKey(),
-                    actual == null ? null : actual.revision(), observedManifest.generation(),
-                    actual == null ? null : actual.planHash(), state,
-                    failed ? errorCode : null, failed ? errorMessage : null);
-            repository.updateDeploymentRuntimeState(tenantId, expectedMember.ruleKey(), state,
-                    observedManifest.generation(), failed ? error : null);
+            RuleRuntimeState state =
+                    memberState(
+                            expected,
+                            expectedMember,
+                            actual,
+                            diff,
+                            deployment.desiredState(),
+                            runtimeJobState,
+                            failed);
+            if (fence == null) {
+                repository.updateRuntimeStatusObserved(
+                        tenantId,
+                        expectedMember.ruleKey(),
+                        observedManifest.jobGroupKey(),
+                        observedManifest.targetCluster(),
+                        observedManifest.jobId(),
+                        observedManifest.jobKey(),
+                        actual == null ? null : actual.revision(),
+                        observedManifest.generation(),
+                        actual == null ? null : actual.planHash(),
+                        state,
+                        failed ? errorCode : null,
+                        failed ? errorMessage : null);
+                repository.updateDeploymentRuntimeState(
+                        tenantId,
+                        expectedMember.ruleKey(),
+                        state,
+                        observedManifest.generation(),
+                        failed ? error : null);
+            } else {
+                if (repository.updateRuntimeStatusObservedFenced(
+                                fence,
+                                expectedMember.ruleKey(),
+                                observedManifest.jobId(),
+                                observedManifest.jobKey(),
+                                actual == null ? null : actual.revision(),
+                                observedManifest.generation(),
+                                actual == null ? null : actual.planHash(),
+                                state,
+                                failed ? errorCode : null,
+                                failed ? errorMessage : null)
+                        != 1) {
+                    throw new StaleObservationException(
+                            "controller observation fence expired before status commit");
+                }
+                if (repository.updateDeploymentRuntimeStateFenced(
+                                fence,
+                                expectedMember.ruleKey(),
+                                state,
+                                observedManifest.generation(),
+                                failed ? error : null)
+                        != 1) {
+                    throw new StaleObservationException(
+                            "controller observation fence expired before deployment commit");
+                }
+            }
         }
 
         // A stopped rule has no expected member by design.  Its old group/status row is retained
         // and only this exact observed scope may transition it to DISABLED.
-        for (Map<String, Object> status : statuses) {
-            String ruleKey = text(status, "rule_key");
+        for (DetectionRuntimeRepository.RuntimeStatusScopeRow status : statuses) {
+            String ruleKey = status.ruleKey();
             if (expected.containsRule(ruleKey)) {
                 continue;
             }
-            Map<String, Object> deployment = repository.findDeployment(tenantId, ruleKey);
-            if (deployment == null || !observedManifest.targetCluster().equals(text(deployment, "target_cluster"))) {
+            DetectionRuntimeRepository.RuleDeploymentRow deployment =
+                    repository.findDeploymentRow(tenantId, ruleKey);
+            if (deployment == null
+                    || !observedManifest.targetCluster().equals(deployment.targetCluster())) {
                 continue;
             }
-            String desiredState = text(deployment, "desired_state");
+            String desiredState = deployment.desiredState();
             RuntimeManifest.Member actual = observedMembers.get(ruleKey);
-            RuleRuntimeState state = memberState(expected, null, actual, diff, desiredState,
-                    runtimeJobState, failed);
-            repository.updateRuntimeStatusObserved(tenantId, ruleKey, observedManifest.jobGroupKey(),
-                    observedManifest.targetCluster(), observedManifest.jobId(), observedManifest.jobKey(),
-                    actual == null ? null : actual.revision(), observedManifest.generation(),
-                    actual == null ? null : actual.planHash(), state,
-                    failed ? errorCode : null, failed ? errorMessage : null);
-            repository.updateDeploymentRuntimeState(tenantId, ruleKey, state,
-                    observedManifest.generation(), failed ? error : null);
+            RuleRuntimeState state =
+                    memberState(
+                            expected, null, actual, diff, desiredState, runtimeJobState, failed);
+            if (fence == null) {
+                repository.updateRuntimeStatusObserved(
+                        tenantId,
+                        ruleKey,
+                        observedManifest.jobGroupKey(),
+                        observedManifest.targetCluster(),
+                        observedManifest.jobId(),
+                        observedManifest.jobKey(),
+                        actual == null ? null : actual.revision(),
+                        observedManifest.generation(),
+                        actual == null ? null : actual.planHash(),
+                        state,
+                        failed ? errorCode : null,
+                        failed ? errorMessage : null);
+                repository.updateDeploymentRuntimeState(
+                        tenantId,
+                        ruleKey,
+                        state,
+                        observedManifest.generation(),
+                        failed ? error : null);
+            } else {
+                if (repository.updateRuntimeStatusObservedFenced(
+                                fence,
+                                ruleKey,
+                                observedManifest.jobId(),
+                                observedManifest.jobKey(),
+                                actual == null ? null : actual.revision(),
+                                observedManifest.generation(),
+                                actual == null ? null : actual.planHash(),
+                                state,
+                                failed ? errorCode : null,
+                                failed ? errorMessage : null)
+                        != 1) {
+                    throw new StaleObservationException(
+                            "controller observation fence expired before status commit");
+                }
+                if (repository.updateDeploymentRuntimeStateFenced(
+                                fence,
+                                ruleKey,
+                                state,
+                                observedManifest.generation(),
+                                failed ? error : null)
+                        != 1) {
+                    throw new StaleObservationException(
+                            "controller observation fence expired before deployment commit");
+                }
+            }
         }
 
         // If a known rule appears unexpectedly but has no status row in this scope, do not create
@@ -421,12 +689,24 @@ public class DetectionRuntimeService {
         return diff;
     }
 
-    public String groupKey(String tenantId, String targetCluster, String sourceFamily,
-                           String category, String ruleKey) {
+    public static final class StaleObservationException extends RuntimeException {
+        public StaleObservationException(String message) {
+            super(message);
+        }
+    }
+
+    public String groupKey(
+            String tenantId,
+            String targetCluster,
+            String sourceFamily,
+            String category,
+            String ruleKey) {
         tenant(tenantId);
         targetCluster = required(targetCluster, "targetCluster");
-        sourceFamily = sourceFamily == null || sourceFamily.isBlank()
-                ? DEFAULT_SOURCE_FAMILY : sourceFamily;
+        sourceFamily =
+                sourceFamily == null || sourceFamily.isBlank()
+                        ? DEFAULT_SOURCE_FAMILY
+                        : sourceFamily;
         category = required(category, "category");
         ruleKey = required(ruleKey, "ruleKey");
         int bucket = bucket(tenantId, sourceFamily, category, ruleKey);
@@ -434,15 +714,20 @@ public class DetectionRuntimeService {
     }
 
     public int bucket(String tenantId, String sourceFamily, String category, String ruleKey) {
-        String value = hashPart(tenant(tenantId)) + hashPart(required(sourceFamily, "sourceFamily"))
-                + hashPart(required(category, "category")) + hashPart(required(ruleKey, "ruleKey"));
+        String value =
+                hashPart(tenant(tenantId))
+                        + hashPart(required(sourceFamily, "sourceFamily"))
+                        + hashPart(required(category, "category"))
+                        + hashPart(required(ruleKey, "ruleKey"));
         try {
-            byte[] digest = MessageDigest.getInstance("SHA-256")
-                    .digest(value.getBytes(StandardCharsets.UTF_8));
-            long unsigned = ((long) (digest[0] & 0xff) << 24)
-                    | ((long) (digest[1] & 0xff) << 16)
-                    | ((long) (digest[2] & 0xff) << 8)
-                    | (digest[3] & 0xffL);
+            byte[] digest =
+                    MessageDigest.getInstance("SHA-256")
+                            .digest(value.getBytes(StandardCharsets.UTF_8));
+            long unsigned =
+                    ((long) (digest[0] & 0xff) << 24)
+                            | ((long) (digest[1] & 0xff) << 16)
+                            | ((long) (digest[2] & 0xff) << 8)
+                            | (digest[3] & 0xffL);
             return (int) (unsigned % groupBuckets);
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 is unavailable", e);
@@ -453,34 +738,42 @@ public class DetectionRuntimeService {
         return value.length() + ":" + value + "|";
     }
 
-    private RuleRuntimeState groupState(RuntimeManifest expected, RuntimeDiff diff,
-                                        RuntimeJobState jobState, boolean failed) {
+    private RuleRuntimeState groupState(
+            RuntimeManifest expected, RuntimeDiff diff, RuntimeJobState jobState, boolean failed) {
         if (failed) return RuleRuntimeState.FAILED;
         return switch (jobState) {
             case UNKNOWN -> RuleRuntimeState.UNKNOWN;
             case PENDING -> RuleRuntimeState.PENDING;
             case DEPLOYING -> RuleRuntimeState.DEPLOYING;
-            case STOPPED -> expected.members().isEmpty() ? RuleRuntimeState.DISABLED
-                    : RuleRuntimeState.DEGRADED;
+            case STOPPED ->
+                    expected.members().isEmpty()
+                            ? RuleRuntimeState.DISABLED
+                            : RuleRuntimeState.DEGRADED;
             case RUNNING -> diff.isEmpty() ? RuleRuntimeState.RUNNING : RuleRuntimeState.DEGRADED;
             case FAILED -> RuleRuntimeState.FAILED;
         };
     }
 
-    private RuleRuntimeState memberState(RuntimeManifest expected,
-                                         RuntimeManifest.Member expectedMember,
-                                         RuntimeManifest.Member actual,
-                                         RuntimeDiff diff, String desiredState,
-                                         RuntimeJobState jobState, boolean failed) {
+    private RuleRuntimeState memberState(
+            RuntimeManifest expected,
+            RuntimeManifest.Member expectedMember,
+            RuntimeManifest.Member actual,
+            RuntimeDiff diff,
+            String desiredState,
+            RuntimeJobState jobState,
+            boolean failed) {
         if (failed || jobState == RuntimeJobState.FAILED) return RuleRuntimeState.FAILED;
         if (jobState == RuntimeJobState.UNKNOWN) return RuleRuntimeState.UNKNOWN;
         if (jobState == RuntimeJobState.PENDING) return RuleRuntimeState.PENDING;
         if (jobState == RuntimeJobState.DEPLOYING) return RuleRuntimeState.DEPLOYING;
-        if ("STOPPED".equalsIgnoreCase(desiredState) && actual == null
+        if ("STOPPED".equalsIgnoreCase(desiredState)
+                && actual == null
                 && jobState == RuntimeJobState.STOPPED) {
             return RuleRuntimeState.DISABLED;
         }
-        if (expectedMember != null && actual != null && jobState == RuntimeJobState.RUNNING
+        if (expectedMember != null
+                && actual != null
+                && jobState == RuntimeJobState.RUNNING
                 && !diff.generationMismatch()
                 && expectedMember.revision() == actual.revision()
                 && expectedMember.planHash().equals(actual.planHash())) {
@@ -489,52 +782,67 @@ public class DetectionRuntimeService {
         return RuleRuntimeState.OUT_OF_SYNC;
     }
 
-    private DesiredRule desiredRule(Map<String, Object> row) {
-        String tenantId = text(row, "tenant_id");
-        String ruleKey = text(row, "rule_key");
-        String planJson = text(row, "plan_json");
-        String planHash = text(row, "plan_hash");
+    private DesiredRule desiredRule(DetectionRuntimeRepository.DesiredDetectionRow row) {
+        String tenantId = row.tenantId();
+        String ruleKey = row.ruleKey();
+        String planJson = row.planJson();
+        String planHash = row.planHash();
         if (!sha256(planJson).equals(planHash)) {
             throw new IllegalStateException("detection plan hash mismatch for " + ruleKey);
         }
         PlanMetadata plan = planMetadata(planJson);
-        String targetCluster = required(text(row, "target_cluster"), "target_cluster");
+        String targetCluster = required(row.targetCluster(), "target_cluster");
         int bucket = bucket(tenantId, plan.sourceFamily(), plan.category(), ruleKey);
-        return new DesiredRule(ruleKey, uuid(row, "deployment_id"), number(row, "revision"),
-                uuid(row, "plan_id"), planHash, planJson, targetCluster, plan.sourceFamily(),
-                plan.category(), bucket, groupKey(tenantId, targetCluster, plan.sourceFamily(),
-                plan.category(), bucket));
+        return new DesiredRule(
+                ruleKey,
+                row.deploymentId(),
+                row.revision(),
+                row.planId(),
+                planHash,
+                planJson,
+                targetCluster,
+                plan.sourceFamily(),
+                plan.category(),
+                bucket,
+                groupKey(tenantId, targetCluster, plan.sourceFamily(), plan.category(), bucket));
     }
 
-    private GroupMetadata metadata(String groupKey, Map<String, Object> existing,
-                                   List<DesiredRule> members, String fallbackCluster) {
+    private GroupMetadata metadata(
+            String groupKey,
+            DetectionRuntimeRepository.DetectionJobGroupRow existing,
+            List<DesiredRule> members,
+            String fallbackCluster) {
         if (!members.isEmpty()) {
             DesiredRule first = members.getFirst();
-            return new GroupMetadata(first.targetCluster(), first.sourceFamily(), first.category(), first.bucket());
+            return new GroupMetadata(
+                    first.targetCluster(), first.sourceFamily(), first.category(), first.bucket());
         }
         if (existing != null) {
-            return new GroupMetadata(required(text(existing, "target_cluster"), "target_cluster"),
-                    required(text(existing, "source_family"), "source_family"),
-                    required(text(existing, "category"), "category"),
-                    intNumber(existing, "bucket"));
+            return new GroupMetadata(
+                    required(existing.targetCluster(), "target_cluster"),
+                    required(existing.sourceFamily(), "source_family"),
+                    required(existing.category(), "category"),
+                    existing.bucket());
         }
-        throw new IllegalStateException("cannot derive metadata for group " + groupKey
-                + " on cluster " + fallbackCluster);
+        throw new IllegalStateException(
+                "cannot derive metadata for group " + groupKey + " on cluster " + fallbackCluster);
     }
 
-    private boolean groupSpecChanged(Map<String, Object> existing, GroupMetadata metadata,
-                                     List<RuntimeManifest.Member> desiredMembers) {
+    private boolean groupSpecChanged(
+            DetectionRuntimeRepository.DetectionJobGroupRow existing,
+            GroupMetadata metadata,
+            List<RuntimeManifest.Member> desiredMembers) {
         if (existing == null) {
             return true;
         }
-        if (!metadata.targetCluster().equals(text(existing, "target_cluster"))
-                || !metadata.sourceFamily().equals(text(existing, "source_family"))
-                || !metadata.category().equals(text(existing, "category"))
-                || metadata.bucket() != intNumber(existing, "bucket")) {
+        if (!metadata.targetCluster().equals(existing.targetCluster())
+                || !metadata.sourceFamily().equals(existing.sourceFamily())
+                || !metadata.category().equals(existing.category())
+                || metadata.bucket() != existing.bucket()) {
             return true;
         }
         try {
-            RuntimeManifest old = codec.decode(text(existing, "expected_manifest_json"));
+            RuntimeManifest old = codec.decode(existing.expectedManifestJson());
             return !physicalMembers(old.members()).equals(physicalMembers(desiredMembers));
         } catch (RuntimeException ignored) {
             return true;
@@ -544,24 +852,29 @@ public class DetectionRuntimeService {
     private static List<String> physicalMembers(List<RuntimeManifest.Member> members) {
         return members.stream()
                 .map(member -> member.ruleKey() + "|" + member.planHash())
-                .sorted().toList();
+                .sorted()
+                .toList();
     }
 
-    private long nextGeneration(Map<String, Object> existing, boolean changed) {
+    private long nextGeneration(
+            DetectionRuntimeRepository.DetectionJobGroupRow existing, boolean changed) {
         if (existing == null) return 1L;
-        long oldGeneration = number(existing, "desired_generation");
+        long oldGeneration = existing.desiredGeneration();
         return changed ? oldGeneration + 1 : oldGeneration;
     }
 
-    private boolean assignmentEquivalent(Map<String, Object> assignment, DesiredRule desired,
-                                         long generation) {
+    private boolean assignmentEquivalent(
+            DetectionRuntimeRepository.RuntimeAssignmentRow assignment,
+            DesiredRule desired,
+            long generation) {
+        // Revision and plan_id are provenance of the logical deployment.  The assignment is the
+        // physical artifact input, whose identity is the immutable plan hash; equivalent plans
+        // must not rewrite an assignment or force a new runtime generation.
         return assignment != null
-                && desired.deploymentId().equals(uuid(assignment, "deployment_id"))
-                && desired.revision() == number(assignment, "revision")
-                && desired.planId().equals(uuid(assignment, "plan_id"))
-                && desired.planHash().equals(text(assignment, "plan_hash"))
-                && desired.groupKey().equals(text(assignment, "group_key"))
-                && generation == number(assignment, "generation");
+                && desired.deploymentId().equals(assignment.deploymentId())
+                && desired.planHash().equals(assignment.planHash())
+                && desired.groupKey().equals(assignment.groupKey())
+                && generation == assignment.generation();
     }
 
     private PlanMetadata planMetadata(String planJson) {
@@ -570,17 +883,18 @@ public class DetectionRuntimeService {
         }
         try {
             JsonNode root = mapper.readTree(planJson);
-            if (root == null || !root.isObject()
+            if (root == null
+                    || !root.isObject()
                     || !com.xscsiem.hsiem_platform.rules.DetectionPlanCompiler.SCHEMA_VERSION
-                    .equals(root.path("schema_version").textValue())
-                    || !com.xscsiem.hsiem_platform.rules.DetectionPlanCompiler.VERSION
-                    .equals(root.path("compiler_version").textValue())) {
+                            .equals(root.path("schema_version").textValue())
+                    || !com.xscsiem.hsiem_platform.rules.DetectionPlanCompiler.VERSION.equals(
+                            root.path("compiler_version").textValue())) {
                 throw new IllegalStateException("unsupported detection plan contract");
             }
             String source = root.path("input").path("source").textValue();
             String category = root.path("detection").path("type").textValue();
-            return new PlanMetadata(required(source, "input.source"),
-                    required(category, "detection.type"));
+            return new PlanMetadata(
+                    required(source, "input.source"), required(category, "detection.type"));
         } catch (IllegalStateException e) {
             throw e;
         } catch (Exception e) {
@@ -591,17 +905,31 @@ public class DetectionRuntimeService {
     private static String sha256(String value) {
         if (value == null) throw new IllegalStateException("detection plan JSON must not be null");
         try {
-            return java.util.HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
-                    .digest(value.getBytes(StandardCharsets.UTF_8)));
+            return java.util.HexFormat.of()
+                    .formatHex(
+                            MessageDigest.getInstance("SHA-256")
+                                    .digest(value.getBytes(StandardCharsets.UTF_8)));
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 is unavailable", e);
         }
     }
 
-    private static String groupKey(String tenantId, String targetCluster, String sourceFamily,
-                                   String category, int bucket) {
-        return "tenant=" + tenantId + "|cluster=" + targetCluster + "|source=" + sourceFamily
-                + "|category=" + category + "|bucket=" + bucket;
+    private static String groupKey(
+            String tenantId,
+            String targetCluster,
+            String sourceFamily,
+            String category,
+            int bucket) {
+        return "tenant="
+                + tenantId
+                + "|cluster="
+                + targetCluster
+                + "|source="
+                + sourceFamily
+                + "|category="
+                + category
+                + "|bucket="
+                + bucket;
     }
 
     private static String tenant(String tenantId) {
@@ -615,51 +943,86 @@ public class DetectionRuntimeService {
         return value;
     }
 
-    private static String text(Map<String, Object> row, String key) {
-        if (row == null) return null;
-        Object value = row.get(key);
-        return value == null ? null : String.valueOf(value);
+    /** Converts typed persistence rows to the legacy JSON response shape at the API boundary. */
+    private static Map<String, Object> assignmentMap(
+            DetectionRuntimeRepository.RuntimeAssignmentRow row) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("tenant_id", row.tenantId());
+        result.put("rule_key", row.ruleKey());
+        result.put("deployment_id", row.deploymentId());
+        result.put("revision", row.revision());
+        result.put("plan_id", row.planId());
+        result.put("plan_hash", row.planHash());
+        result.put("group_key", row.groupKey());
+        result.put("generation", row.generation());
+        result.put("created_at", row.createdAt());
+        result.put("updated_at", row.updatedAt());
+        return result;
     }
 
-    private static long number(Map<String, Object> row, String key) {
-        Object value = row.get(key);
-        if (!(value instanceof Number number)) {
-            try {
-                return Long.parseLong(String.valueOf(value));
-            } catch (RuntimeException e) {
-                throw new IllegalStateException("expected numeric " + key + ": " + value, e);
-            }
-        }
-        return number.longValue();
+    private static Map<String, Object> groupMap(
+            DetectionRuntimeRepository.DetectionJobGroupRow row) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("tenant_id", row.tenantId());
+        result.put("group_key", row.groupKey());
+        result.put("target_cluster", row.targetCluster());
+        result.put("source_family", row.sourceFamily());
+        result.put("category", row.category());
+        result.put("bucket", row.bucket());
+        result.put("desired_generation", row.desiredGeneration());
+        result.put("expected_manifest_json", row.expectedManifestJson());
+        result.put("expected_manifest_hash", row.expectedManifestHash());
+        result.put("status", row.status());
+        result.put("job_id", row.jobId());
+        result.put("job_key", row.jobKey());
+        result.put("last_error", row.lastError());
+        result.put("created_at", row.createdAt());
+        result.put("updated_at", row.updatedAt());
+        return result;
     }
 
-    private static int intNumber(Map<String, Object> row, String key) {
-        long value = number(row, key);
-        if (value < Integer.MIN_VALUE || value > Integer.MAX_VALUE) {
-            throw new IllegalStateException("numeric " + key + " is outside integer range");
-        }
-        return (int) value;
-    }
-
-    private static UUID uuid(Map<String, Object> row, String key) {
-        Object value = row.get(key);
-        if (value instanceof UUID uuid) return uuid;
-        try {
-            return UUID.fromString(String.valueOf(value));
-        } catch (RuntimeException e) {
-            throw new IllegalStateException("expected UUID " + key + ": " + value, e);
-        }
+    private static Map<String, Object> statusMap(
+            DetectionRuntimeRepository.RuleRuntimeStatusRow row) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("tenant_id", row.tenantId());
+        result.put("rule_key", row.ruleKey());
+        result.put("deployment_id", row.deploymentId());
+        result.put("group_key", row.groupKey());
+        result.put("target_cluster", row.targetCluster());
+        result.put("job_id", row.jobId());
+        result.put("job_key", row.jobKey());
+        result.put("observed_revision", row.observedRevision());
+        result.put("observed_generation", row.observedGeneration());
+        result.put("observed_plan_hash", row.observedPlanHash());
+        result.put("runtime_state", row.runtimeState());
+        result.put("error_code", row.errorCode());
+        result.put("error_message", row.errorMessage());
+        result.put("created_at", row.createdAt());
+        result.put("updated_at", row.updatedAt());
+        return result;
     }
 
     private static String firstNonBlank(String first, String second) {
-        return first != null && !first.isBlank() ? first : second != null && !second.isBlank() ? second : null;
+        return first != null && !first.isBlank()
+                ? first
+                : second != null && !second.isBlank() ? second : null;
     }
 
-    private record PlanMetadata(String sourceFamily, String category) { }
+    private record PlanMetadata(String sourceFamily, String category) {}
 
-    private record DesiredRule(String ruleKey, UUID deploymentId, long revision, UUID planId,
-                               String planHash, String planJson, String targetCluster, String sourceFamily,
-                               String category, int bucket, String groupKey) { }
+    private record DesiredRule(
+            String ruleKey,
+            UUID deploymentId,
+            long revision,
+            UUID planId,
+            String planHash,
+            String planJson,
+            String targetCluster,
+            String sourceFamily,
+            String category,
+            int bucket,
+            String groupKey) {}
 
-    private record GroupMetadata(String targetCluster, String sourceFamily, String category, int bucket) { }
+    private record GroupMetadata(
+            String targetCluster, String sourceFamily, String category, int bucket) {}
 }

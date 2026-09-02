@@ -1,13 +1,11 @@
 package com.xscsiem.hsiem_platform.detection.runtime;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.xscsiem.hsiem_platform.rules.runtime.RuntimeManifest;
 import com.xscsiem.hsiem_platform.rules.runtime.RuntimeManifestCodec;
-import org.springframework.jdbc.core.JdbcTemplate;
-
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
@@ -38,33 +36,37 @@ public final class DetectionArtifactBuilder {
     private static final String METADATA_FILE = "artifact-metadata.json";
     private static final String DEFAULT_CONTAINER_ROOT = "/opt/flink/detection-artifacts";
 
-    private final JdbcTemplate jdbc;
+    private final DetectionArtifactRepository repository;
     private final RuntimeManifestCodec codec;
-    private final ObjectMapper mapper = new ObjectMapper()
-            .configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true)
-            .configure(DeserializationFeature.FAIL_ON_TRAILING_TOKENS, true);
+    private final ObjectMapper mapper =
+            new ObjectMapper()
+                    .configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true)
+                    .configure(DeserializationFeature.FAIL_ON_TRAILING_TOKENS, true);
     private final Path artifactRoot;
     private final String containerArtifactRoot;
     private final DetectionJobNameCodec names;
     private final FlinkArtifactCompiler flinkArtifacts;
 
-    public DetectionArtifactBuilder(JdbcTemplate jdbc, RuntimeManifestCodec codec,
-                                    Path artifactRoot, String containerArtifactRoot) {
-        this.jdbc = java.util.Objects.requireNonNull(jdbc, "jdbc must not be null");
+    public DetectionArtifactBuilder(
+            DetectionArtifactRepository repository,
+            RuntimeManifestCodec codec,
+            Path artifactRoot,
+            String containerArtifactRoot) {
+        this.repository =
+                java.util.Objects.requireNonNull(repository, "repository must not be null");
         this.codec = java.util.Objects.requireNonNull(codec, "codec must not be null");
-        this.artifactRoot = java.util.Objects.requireNonNull(artifactRoot, "artifactRoot must not be null")
-                .toAbsolutePath().normalize();
+        this.artifactRoot =
+                java.util.Objects.requireNonNull(artifactRoot, "artifactRoot must not be null")
+                        .toAbsolutePath()
+                        .normalize();
         this.containerArtifactRoot = requiredContainerRoot(containerArtifactRoot);
         this.names = new DetectionJobNameCodec();
         this.flinkArtifacts = new FlinkArtifactCompiler();
     }
 
-    public DetectionArtifactBuilder(JdbcTemplate jdbc, RuntimeManifestCodec codec, Path artifactRoot) {
-        this(jdbc, codec, artifactRoot, DEFAULT_CONTAINER_ROOT);
-    }
-
-    public DetectionArtifactBuilder(JdbcTemplate jdbc, RuntimeManifestCodec codec, String artifactRoot) {
-        this(jdbc, codec, Path.of(artifactRoot), DEFAULT_CONTAINER_ROOT);
+    public DetectionArtifactBuilder(
+            DetectionArtifactRepository repository, RuntimeManifestCodec codec, Path artifactRoot) {
+        this(repository, codec, artifactRoot, DEFAULT_CONTAINER_ROOT);
     }
 
     /** Return the safe local directory name for an already observed immutable artifact. */
@@ -72,7 +74,8 @@ public final class DetectionArtifactBuilder {
         DetectionJobNameCodec.validateJobKey(jobKey);
         if (generation < 0) throw new IllegalArgumentException("generation must be non-negative");
         DetectionJobNameCodec.validateHash(manifestHash);
-        return safeResolve(safeResolve(artifactRoot, jobKey),
+        return safeResolve(
+                safeResolve(artifactRoot, jobKey),
                 generation + "-" + manifestHash.toLowerCase(Locale.ROOT));
     }
 
@@ -89,7 +92,8 @@ public final class DetectionArtifactBuilder {
         if (expected.members().isEmpty()) {
             throw new IllegalArgumentException("cannot apply an empty expected manifest");
         }
-        List<RuleRow> rows = loadRows(target, expected);
+        List<DetectionArtifactRepository.DetectionArtifactRuleRow> rows =
+                loadRows(target, expected);
         validateRows(expected, rows);
         String jobKey = names.jobKey(target.tenantId(), target.targetCluster(), target.groupKey());
         String hash = codec.specHash(expected);
@@ -97,9 +101,13 @@ public final class DetectionArtifactBuilder {
         Path finalPath = safeResolve(jobRoot, expected.generation() + "-" + hash);
         List<ArtifactFile> files = files(rows);
         String canonical = codec.canonicalSpecJson(expected);
-        DetectionArtifact artifact = new DetectionArtifact(finalPath,
-                containerPath(jobKey, expected.generation(), hash), jobKey,
-                expected.generation(), hash);
+        DetectionArtifact artifact =
+                new DetectionArtifact(
+                        finalPath,
+                        containerPath(jobKey, expected.generation(), hash),
+                        jobKey,
+                        expected.generation(),
+                        hash);
 
         if (Files.exists(finalPath)) {
             verifyExisting(artifact, expected, canonical, files);
@@ -133,7 +141,8 @@ public final class DetectionArtifactBuilder {
                 || !target.groupKey().equals(expected.jobGroupKey())
                 || !target.targetCluster().equals(expected.targetCluster())
                 || target.desiredGeneration() != expected.generation()) {
-            throw new IllegalArgumentException("expected manifest scope or generation does not match target");
+            throw new IllegalArgumentException(
+                    "expected manifest scope or generation does not match target");
         }
         String actual = codec.specHash(expected);
         if (!actual.equalsIgnoreCase(target.expectedManifestHash())) {
@@ -142,35 +151,26 @@ public final class DetectionArtifactBuilder {
         return expected;
     }
 
-    private List<RuleRow> loadRows(DetectionRuntimeTarget target, RuntimeManifest expected) {
+    private List<DetectionArtifactRepository.DetectionArtifactRuleRow> loadRows(
+            DetectionRuntimeTarget target, RuntimeManifest expected) {
         // The tenant and group predicates are deliberately present on the assignment table; a
         // rule key alone is not a sufficient scope and must never select another tenant's revision.
-        return jdbc.query("""
-                SELECT a.rule_key, a.revision, a.plan_id, a.plan_hash, a.generation,
-                       p.compiler_version, p.plan_json
-                FROM rule_job_assignment a
-                JOIN detection_plan p
-                  ON p.plan_id = a.plan_id AND p.plan_hash = a.plan_hash
-                JOIN rule_revision r
-                  ON r.revision_id = p.revision_id
-                 AND r.rule_key = a.rule_key AND r.revision = a.revision
-                WHERE a.tenant_id = ? AND a.group_key = ?
-                ORDER BY a.rule_key
-                """, (rs, rowNum) -> new RuleRow(
-                rs.getString("rule_key"), rs.getLong("revision"),
-                rs.getObject("plan_id", java.util.UUID.class), rs.getString("plan_hash"),
-                rs.getLong("generation"), rs.getString("compiler_version"),
-                rs.getString("plan_json")),
-                target.tenantId(), target.groupKey());
+        return repository.findRules(target.tenantId(), target.groupKey());
     }
 
-    private void validateRows(RuntimeManifest expected, List<RuleRow> rows) {
+    private void validateRows(
+            RuntimeManifest expected,
+            List<DetectionArtifactRepository.DetectionArtifactRuleRow> rows) {
         if (rows.size() != expected.members().size()) {
-            throw new IllegalStateException("assignment members do not exactly match expected manifest: expected "
-                    + expected.members().size() + ", actual " + rows.size());
+            throw new IllegalStateException(
+                    "assignment members do not exactly match expected manifest: expected "
+                            + expected.members().size()
+                            + ", actual "
+                            + rows.size());
         }
-        Map<String, RuleRow> byKey = new LinkedHashMap<>();
-        for (RuleRow row : rows) {
+        Map<String, DetectionArtifactRepository.DetectionArtifactRuleRow> byKey =
+                new LinkedHashMap<>();
+        for (DetectionArtifactRepository.DetectionArtifactRuleRow row : rows) {
             if (byKey.put(row.ruleKey(), row) != null) {
                 throw new IllegalStateException("duplicate assignment ruleKey: " + row.ruleKey());
             }
@@ -182,24 +182,38 @@ public final class DetectionArtifactBuilder {
                 throw new IllegalStateException("plan_json hash mismatch for " + row.ruleKey());
             }
             if (row.generation() != expected.generation()) {
-                throw new IllegalStateException("assignment generation mismatch for " + row.ruleKey());
+                throw new IllegalStateException(
+                        "assignment generation mismatch for " + row.ruleKey());
             }
         }
         for (RuntimeManifest.Member member : expected.members()) {
-            RuleRow row = byKey.get(member.ruleKey());
-            if (row == null || row.revision() != member.revision()
+            DetectionArtifactRepository.DetectionArtifactRuleRow row = byKey.get(member.ruleKey());
+            if (row == null
+                    || row.revision() != member.revision()
                     || !member.planHash().equals(row.planHash())) {
-                throw new IllegalStateException("assignment does not match expected member: " + member.ruleKey());
+                throw new IllegalStateException(
+                        "assignment does not match expected member: " + member.ruleKey());
             }
         }
     }
 
-    private List<ArtifactFile> files(List<RuleRow> rows) {
+    private List<ArtifactFile> files(
+            List<DetectionArtifactRepository.DetectionArtifactRuleRow> rows) {
         List<ArtifactFile> result = new ArrayList<>();
         int index = 1;
-        for (RuleRow row : rows.stream().sorted(Comparator.comparing(RuleRow::ruleKey)).toList()) {
-            result.add(new ArtifactFile(String.format(Locale.ROOT, "%04d-%s.yaml", index++, safeSlug(row.ruleKey())),
-                    row.ruleKey(), runtimeDefinition(row.planJson(), row.compilerVersion())));
+        for (DetectionArtifactRepository.DetectionArtifactRuleRow row :
+                rows.stream()
+                        .sorted(
+                                Comparator.comparing(
+                                        DetectionArtifactRepository.DetectionArtifactRuleRow
+                                                ::ruleKey))
+                        .toList()) {
+            result.add(
+                    new ArtifactFile(
+                            String.format(
+                                    Locale.ROOT, "%04d-%s.yaml", index++, safeSlug(row.ruleKey())),
+                            row.ruleKey(),
+                            runtimeDefinition(row.planJson(), row.compilerVersion())));
         }
         return List.copyOf(result);
     }
@@ -208,8 +222,13 @@ public final class DetectionArtifactBuilder {
         return flinkArtifacts.compile(planJson, compilerVersion);
     }
 
-    private void writeFiles(Path directory, String canonical, RuntimeManifest expected,
-                            List<ArtifactFile> files, String jobKey, DetectionRuntimeTarget target)
+    private void writeFiles(
+            Path directory,
+            String canonical,
+            RuntimeManifest expected,
+            List<ArtifactFile> files,
+            String jobKey,
+            DetectionRuntimeTarget target)
             throws IOException {
         Files.writeString(directory.resolve(MANIFEST_FILE), canonical, StandardCharsets.UTF_8);
         Map<String, Object> metadata = new LinkedHashMap<>();
@@ -221,16 +240,21 @@ public final class DetectionArtifactBuilder {
         metadata.put("generation", expected.generation());
         metadata.put("manifestHash", codec.specHash(expected));
         metadata.put("files", files.stream().map(ArtifactFile::fileName).toList());
-        Files.writeString(directory.resolve(METADATA_FILE), mapper.writeValueAsString(metadata),
+        Files.writeString(
+                directory.resolve(METADATA_FILE),
+                mapper.writeValueAsString(metadata),
                 StandardCharsets.UTF_8);
         for (ArtifactFile file : files) {
-            Files.writeString(directory.resolve(file.fileName()), file.definitionJson(), StandardCharsets.UTF_8);
+            Files.writeString(
+                    directory.resolve(file.fileName()),
+                    file.definitionJson(),
+                    StandardCharsets.UTF_8);
         }
     }
 
     /**
-     * Validate an already materialized artifact without consulting mutable assignment rows.  This
-     * is used before replacing a running job: the old artifact must remain available for rollback
+     * Validate an already materialized artifact without consulting mutable assignment rows. This is
+     * used before replacing a running job: the old artifact must remain available for rollback
      * after its job has been cancelled.
      */
     public RuntimeManifest verifyArtifact(DetectionArtifact artifact) {
@@ -253,7 +277,8 @@ public final class DetectionArtifactBuilder {
 
             byte[] rawMetadata = Files.readAllBytes(directory.resolve(METADATA_FILE));
             JsonNode metadata = mapper.readTree(decodeUtf8(rawMetadata));
-            if (metadata == null || !metadata.isObject()
+            if (metadata == null
+                    || !metadata.isObject()
                     || !value(metadata, "jobKey").equals(artifact.jobKey())
                     || !value(metadata, "generation").equals(Long.toString(artifact.generation()))
                     || !value(metadata, "manifestHash").equalsIgnoreCase(artifact.manifestHash())
@@ -270,39 +295,47 @@ public final class DetectionArtifactBuilder {
             expectedNames.add(MANIFEST_FILE);
             expectedNames.add(METADATA_FILE);
             for (JsonNode entry : listed) {
-                if (!entry.isTextual() || entry.textValue().isBlank()
+                if (!entry.isTextual()
+                        || entry.textValue().isBlank()
                         || !expectedNames.add(entry.textValue())) {
                     throw new IllegalStateException("artifact metadata file list is invalid");
                 }
                 Path file = directory.resolve(entry.textValue()).normalize();
                 ensureChild(directory, file);
                 if (!Files.isRegularFile(file)) {
-                    throw new IllegalStateException("artifact definition is missing: " + entry.textValue());
+                    throw new IllegalStateException(
+                            "artifact definition is missing: " + entry.textValue());
                 }
             }
             try (DirectoryStream<Path> stream = Files.newDirectoryStream(directory)) {
                 for (Path path : stream) {
                     if (!expectedNames.contains(path.getFileName().toString())) {
-                        throw new IllegalStateException("unexpected file in immutable artifact: "
-                                + path.getFileName());
+                        throw new IllegalStateException(
+                                "unexpected file in immutable artifact: " + path.getFileName());
                     }
                 }
             }
             return manifest;
         } catch (IOException e) {
-            throw new IllegalStateException("cannot verify detection artifact: " + artifact.localPath(), e);
+            throw new IllegalStateException(
+                    "cannot verify detection artifact: " + artifact.localPath(), e);
         }
     }
 
-    private void verifyExisting(DetectionArtifact artifact, RuntimeManifest expected,
-                                String canonical, List<ArtifactFile> files) {
+    private void verifyExisting(
+            DetectionArtifact artifact,
+            RuntimeManifest expected,
+            String canonical,
+            List<ArtifactFile> files) {
         try {
             if (!Files.isDirectory(artifact.localPath())) {
-                throw new IllegalStateException("artifact path is not a directory: " + artifact.localPath());
+                throw new IllegalStateException(
+                        "artifact path is not a directory: " + artifact.localPath());
             }
             byte[] raw = Files.readAllBytes(artifact.localPath().resolve(MANIFEST_FILE));
             if (!java.util.Arrays.equals(raw, canonical.getBytes(StandardCharsets.UTF_8))) {
-                throw new IllegalStateException("artifact manifest bytes differ from canonical expected manifest");
+                throw new IllegalStateException(
+                        "artifact manifest bytes differ from canonical expected manifest");
             }
             if (!sha256(raw).equals(artifact.manifestHash())) {
                 throw new IllegalStateException("artifact manifest hash is corrupt");
@@ -311,8 +344,11 @@ public final class DetectionArtifactBuilder {
             if (!codec.canonicalSpecJson(decoded).equals(canonical)) {
                 throw new IllegalStateException("artifact manifest is not canonical");
             }
-            JsonNode metadata = mapper.readTree(Files.readString(
-                    artifact.localPath().resolve(METADATA_FILE), StandardCharsets.UTF_8));
+            JsonNode metadata =
+                    mapper.readTree(
+                            Files.readString(
+                                    artifact.localPath().resolve(METADATA_FILE),
+                                    StandardCharsets.UTF_8));
             requireMetadata(metadata, expected, artifact, files);
             Set<String> expectedNames = new HashSet<>();
             expectedNames.add(MANIFEST_FILE);
@@ -322,26 +358,34 @@ public final class DetectionArtifactBuilder {
                 Path path = artifact.localPath().resolve(file.fileName()).normalize();
                 ensureChild(artifact.localPath(), path);
                 if (!Files.isRegularFile(path)
-                        || !java.util.Arrays.equals(Files.readAllBytes(path),
-                        file.definitionJson().getBytes(StandardCharsets.UTF_8))) {
-                    throw new IllegalStateException("artifact definition is corrupt: " + file.fileName());
+                        || !java.util.Arrays.equals(
+                                Files.readAllBytes(path),
+                                file.definitionJson().getBytes(StandardCharsets.UTF_8))) {
+                    throw new IllegalStateException(
+                            "artifact definition is corrupt: " + file.fileName());
                 }
             }
             try (DirectoryStream<Path> stream = Files.newDirectoryStream(artifact.localPath())) {
                 for (Path path : stream) {
                     if (!expectedNames.contains(path.getFileName().toString())) {
-                        throw new IllegalStateException("unexpected file in immutable artifact: " + path.getFileName());
+                        throw new IllegalStateException(
+                                "unexpected file in immutable artifact: " + path.getFileName());
                     }
                 }
             }
         } catch (IOException e) {
-            throw new IllegalStateException("cannot verify detection artifact: " + artifact.localPath(), e);
+            throw new IllegalStateException(
+                    "cannot verify detection artifact: " + artifact.localPath(), e);
         }
     }
 
-    private void requireMetadata(JsonNode metadata, RuntimeManifest expected,
-                                 DetectionArtifact artifact, List<ArtifactFile> files) {
-        if (metadata == null || !metadata.isObject()
+    private void requireMetadata(
+            JsonNode metadata,
+            RuntimeManifest expected,
+            DetectionArtifact artifact,
+            List<ArtifactFile> files) {
+        if (metadata == null
+                || !metadata.isObject()
                 || !value(metadata, "jobKey").equals(artifact.jobKey())
                 || !value(metadata, "generation").equals(Long.toString(artifact.generation()))
                 || !value(metadata, "manifestHash").equals(artifact.manifestHash())
@@ -411,9 +455,14 @@ public final class DetectionArtifactBuilder {
     private static void deleteTree(Path root) {
         if (root == null || !Files.exists(root)) return;
         try (var paths = Files.walk(root)) {
-            paths.sorted(Comparator.reverseOrder()).forEach(path -> {
-                try { Files.deleteIfExists(path); } catch (IOException ignored) { }
-            });
+            paths.sorted(Comparator.reverseOrder())
+                    .forEach(
+                            path -> {
+                                try {
+                                    Files.deleteIfExists(path);
+                                } catch (IOException ignored) {
+                                }
+                            });
         } catch (IOException ignored) {
             // The original materialization failure is more useful to the caller.
         }
@@ -421,7 +470,8 @@ public final class DetectionArtifactBuilder {
 
     private static String decodeUtf8(byte[] raw) {
         try {
-            return StandardCharsets.UTF_8.newDecoder()
+            return StandardCharsets.UTF_8
+                    .newDecoder()
                     .onMalformedInput(CodingErrorAction.REPORT)
                     .onUnmappableCharacter(CodingErrorAction.REPORT)
                     .decode(ByteBuffer.wrap(raw))
@@ -433,15 +483,12 @@ public final class DetectionArtifactBuilder {
 
     private static String sha256(byte[] bytes) {
         try {
-            return java.util.HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
+            return java.util.HexFormat.of()
+                    .formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 is unavailable", e);
         }
     }
 
-    private record RuleRow(String ruleKey, long revision, java.util.UUID planId,
-                           String planHash, long generation, String compilerVersion,
-                           String planJson) { }
-
-    private record ArtifactFile(String fileName, String ruleKey, String definitionJson) { }
+    private record ArtifactFile(String fileName, String ruleKey, String definitionJson) {}
 }

@@ -5,18 +5,18 @@ import com.xscsiem.hsiem_platform.detection.runtime.DetectionRuntimeTarget;
 import com.xscsiem.hsiem_platform.detection.runtime.FlinkRuntimePort;
 import com.xscsiem.hsiem_platform.detection.runtime.RuntimeObservation;
 import com.xscsiem.hsiem_platform.rules.runtime.DetectionRuntimeService;
+import com.xscsiem.hsiem_platform.rules.runtime.ObservationFence;
 import com.xscsiem.hsiem_platform.rules.runtime.RuntimeDiff;
 import com.xscsiem.hsiem_platform.rules.runtime.RuntimeJobState;
 import com.xscsiem.hsiem_platform.rules.runtime.RuntimeManifest;
 import com.xscsiem.hsiem_platform.rules.runtime.RuntimeManifestCodec;
-import org.springframework.stereotype.Service;
-
 import java.util.List;
 import java.util.Objects;
 import java.util.function.BooleanSupplier;
+import org.springframework.stereotype.Service;
 
 /**
- * One fenced reconciliation attempt.  The adapter is the only component allowed to perform an
+ * One fenced reconciliation attempt. The adapter is the only component allowed to perform an
  * external action; observed rows are written exclusively through DetectionRuntimeService.observe.
  */
 @Service
@@ -27,16 +27,18 @@ public class DetectionReconciler {
     private final DetectionRuntimeService runtime;
     private final RuntimeManifestCodec codec;
 
-    public DetectionReconciler(DetectionControllerRepository repository,
-                               FlinkRuntimePort port,
-                               DetectionRuntimeService runtime) {
+    public DetectionReconciler(
+            DetectionControllerRepository repository,
+            FlinkRuntimePort port,
+            DetectionRuntimeService runtime) {
         this(repository, port, runtime, new RuntimeManifestCodec());
     }
 
-    public DetectionReconciler(DetectionControllerRepository repository,
-                               FlinkRuntimePort port,
-                               DetectionRuntimeService runtime,
-                               RuntimeManifestCodec codec) {
+    public DetectionReconciler(
+            DetectionControllerRepository repository,
+            FlinkRuntimePort port,
+            DetectionRuntimeService runtime,
+            RuntimeManifestCodec codec) {
         this.repository = Objects.requireNonNull(repository, "repository must not be null");
         this.port = Objects.requireNonNull(port, "port must not be null");
         this.runtime = Objects.requireNonNull(runtime, "runtime must not be null");
@@ -48,7 +50,7 @@ public class DetectionReconciler {
     }
 
     /**
-     * Worker supplies a heartbeat health gate in addition to the DB fence.  A false gate prevents
+     * Worker supplies a heartbeat health gate in addition to the DB fence. A false gate prevents
      * all later phase, observe, release, and failure writes for this attempt.
      */
     public void reconcile(DetectionGroupLease lease, BooleanSupplier canContinue) {
@@ -66,10 +68,12 @@ public class DetectionReconciler {
 
             RuntimeObservation verified = inspected;
             if (expected.members().isEmpty()) {
-                boolean alreadyStopped = "STOPPED".equalsIgnoreCase(inspected.runtimeState())
-                        && inspected.members().isEmpty();
+                boolean alreadyStopped =
+                        "STOPPED".equalsIgnoreCase(inspected.runtimeState())
+                                && inspected.members().isEmpty();
                 if (!alreadyStopped) {
-                    // Empty desired state is an explicit stop, even when an adapter reports UNKNOWN.
+                    // Empty desired state is an explicit stop, even when an adapter reports
+                    // UNKNOWN.
                     requirePhase(lease, ReconcileState.APPLYING, canContinue);
                     ensureCurrent(lease, canContinue);
                     port.stop(target, inspected);
@@ -99,14 +103,28 @@ public class DetectionReconciler {
             RuntimeManifest observed = toManifest(target, verified);
             requireExactVerification(expected, verified, observed);
             ensureCurrent(lease, canContinue);
-            runtime.observe(observed, RuntimeJobState.from(verified.runtimeState()),
-                    verified.errorCode(), verified.errorMessage());
+            runtime.observeFenced(
+                    observed,
+                    RuntimeJobState.from(verified.runtimeState()),
+                    verified.errorCode(),
+                    verified.errorMessage(),
+                    new ObservationFence(
+                            lease.tenantId(),
+                            lease.groupKey(),
+                            lease.targetCluster(),
+                            lease.owner(),
+                            lease.fencingToken(),
+                            lease.desiredGeneration()));
             ensureCurrent(lease, canContinue);
             if (!repository.release(lease)) {
                 throw new StaleLeaseException("lease was fenced before release");
             }
         } catch (StaleLeaseException stale) {
             // Stale work must stop without a success or failure write.
+            return;
+        } catch (DetectionRuntimeService.StaleObservationException stale) {
+            // The transactional observer owns the final fence; stale work must not be marked as
+            // a reconciliation failure after the lease has been stolen or expired.
             return;
         } catch (RuntimeException failure) {
             if (Thread.currentThread().isInterrupted()) {
@@ -129,7 +147,8 @@ public class DetectionReconciler {
                 || !lease.groupKey().equals(expected.jobGroupKey())
                 || !lease.targetCluster().equals(expected.targetCluster())
                 || lease.desiredGeneration() != expected.generation()) {
-            throw new IllegalArgumentException("expected manifest scope or generation does not match lease");
+            throw new IllegalArgumentException(
+                    "expected manifest scope or generation does not match lease");
         }
         String calculated = codec.specHash(expected);
         if (!calculated.equalsIgnoreCase(lease.expectedHash())) {
@@ -138,7 +157,8 @@ public class DetectionReconciler {
         return expected;
     }
 
-    private RuntimeManifest toManifest(DetectionRuntimeTarget target, RuntimeObservation observation) {
+    private RuntimeManifest toManifest(
+            DetectionRuntimeTarget target, RuntimeObservation observation) {
         if (observation == null) {
             observation = RuntimeObservation.unknown(target);
         }
@@ -147,16 +167,28 @@ public class DetectionReconciler {
                 || !target.targetCluster().equals(observation.targetCluster())) {
             throw new IllegalArgumentException("runtime observation is outside target scope");
         }
-        List<RuntimeManifest.Member> members = observation.members().stream()
-                .map(member -> new RuntimeManifest.Member(member.ruleKey(), member.revision(), member.planHash()))
-                .toList();
-        return new RuntimeManifest(RuntimeManifest.SCHEMA_VERSION, observation.tenantId(),
-                observation.targetCluster(), observation.groupKey(), observation.generation(),
-                observation.jobId(), observation.jobKey(), members);
+        List<RuntimeManifest.Member> members =
+                observation.members().stream()
+                        .map(
+                                member ->
+                                        new RuntimeManifest.Member(
+                                                member.ruleKey(),
+                                                member.revision(),
+                                                member.planHash()))
+                        .toList();
+        return new RuntimeManifest(
+                RuntimeManifest.SCHEMA_VERSION,
+                observation.tenantId(),
+                observation.targetCluster(),
+                observation.groupKey(),
+                observation.generation(),
+                observation.jobId(),
+                observation.jobKey(),
+                members);
     }
 
-    private void requireExactVerification(RuntimeManifest expected, RuntimeObservation observation,
-                                          RuntimeManifest actual) {
+    private void requireExactVerification(
+            RuntimeManifest expected, RuntimeObservation observation, RuntimeManifest actual) {
         if (observation == null) {
             throw new IllegalStateException("runtime verification returned no observation");
         }
@@ -174,8 +206,8 @@ public class DetectionReconciler {
         }
     }
 
-    private void requirePhase(DetectionGroupLease lease, ReconcileState phase,
-                              BooleanSupplier canContinue) {
+    private void requirePhase(
+            DetectionGroupLease lease, ReconcileState phase, BooleanSupplier canContinue) {
         ensureCurrent(lease, canContinue);
         if (!repository.transitionPhase(lease, phase)) {
             throw new StaleLeaseException("lease was fenced before phase " + phase);

@@ -17,6 +17,8 @@ jobs:
           distribution: temurin
           java-version: '21'
           cache: maven
+      - name: Java format check
+        run: bash ./mvnw --batch-mode spotless:check
       - name: Spring Boot tests
         run: bash ./mvnw --batch-mode test
 
@@ -29,6 +31,8 @@ jobs:
           distribution: temurin
           java-version: '21'
           cache: maven
+      - name: Flink Java format check
+        run: bash ./mvnw --batch-mode -f flink/pom.xml spotless:check
       - name: Flink tests and package
         run: bash ./mvnw --batch-mode -f flink/pom.xml clean package
 

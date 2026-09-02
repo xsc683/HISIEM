@@ -5,8 +5,9 @@ import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
+import com.xscsiem.hsiem_platform.rules.DetectionPlan;
+import com.xscsiem.hsiem_platform.rules.DetectionPlanCodec;
 import com.xscsiem.hsiem_platform.rules.DetectionPlanCompiler;
-
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -17,28 +18,39 @@ import java.util.Set;
 public final class FlinkArtifactCompiler {
 
     private static final String INPUT_SOURCE = "siem-events";
-    private static final Set<String> CATEGORIES = Set.of("single_event", "window", "cep", "baseline");
+    private static final Set<String> CATEGORIES =
+            Set.of("single_event", "window", "cep", "baseline");
 
-    private final ObjectMapper mapper = new ObjectMapper()
-            .configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true)
-            .configure(DeserializationFeature.FAIL_ON_TRAILING_TOKENS, true);
+    private final ObjectMapper mapper =
+            new ObjectMapper()
+                    .configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true)
+                    .configure(DeserializationFeature.FAIL_ON_TRAILING_TOKENS, true);
+    private final DetectionPlanCodec planCodec = new DetectionPlanCodec();
 
     /** Compile a stored plan, checking the compiler version stored beside it. */
     public String compile(String planJson, String compilerVersion) {
         if (!DetectionPlanCompiler.VERSION.equals(compilerVersion)) {
-            throw new IllegalArgumentException("unsupported detection plan compiler version: "
-                    + compilerVersion);
+            throw new IllegalArgumentException(
+                    "unsupported detection plan compiler version: " + compilerVersion);
         }
         JsonNode root = parse(planJson);
-        fields(root, "plan", "schema_version", "compiler_version", "rule_key", "input",
-                "detection", "alert");
+        fields(
+                root,
+                "plan",
+                "schema_version",
+                "compiler_version",
+                "rule_key",
+                "input",
+                "detection",
+                "alert");
         String schemaVersion = text(root, "schema_version", null, true);
         if (!DetectionPlanCompiler.SCHEMA_VERSION.equals(schemaVersion)) {
-            throw new IllegalArgumentException("unsupported detection plan schema_version: "
-                    + schemaVersion);
+            throw new IllegalArgumentException(
+                    "unsupported detection plan schema_version: " + schemaVersion);
         }
         if (!compilerVersion.equals(text(root, "compiler_version", null, true))) {
-            throw new IllegalArgumentException("detection plan compiler_version does not match stored version");
+            throw new IllegalArgumentException(
+                    "detection plan compiler_version does not match stored version");
         }
         String ruleKey = text(root, "rule_key", null, true);
         JsonNode input = object(root, "input");
@@ -52,30 +64,137 @@ public final class FlinkArtifactCompiler {
             throw new IllegalArgumentException("unsupported detection category: " + category);
         }
         JsonNode alert = object(root, "alert");
-        fields(alert, "alert", "name", "type", "severity", "description", "risk_score",
-                "tags", "status", "version");
+        fields(
+                alert,
+                "alert",
+                "name",
+                "type",
+                "severity",
+                "description",
+                "risk_score",
+                "tags",
+                "status",
+                "version");
 
-        Map<String, Object> declaration = new LinkedHashMap<>();
-        declaration.put("id", ruleKey);
-        declaration.put("name", text(alert, "name", null, true));
-        declaration.put("category", category);
-        declaration.put("type", text(alert, "type", null, true));
-        declaration.put("enabled", true);
-        declaration.put("severity", text(alert, "severity", null, true));
-        declaration.put("description", nullableText(alert, "description", ""));
-        declaration.put("riskScore", integer(alert, "risk_score", 0, true));
-        declaration.put("tags", strings(alert, "tags"));
-        declaration.put("status", text(alert, "status", null, true));
-        declaration.put("version", text(alert, "version", null, true));
-
+        // Decode once at the persistence boundary.  Lowering below is deliberately exhaustive
+        // over the sealed DetectionSpec/Condition hierarchies, while the JSON validation above
+        // keeps the established contract's strictness and diagnostics.
+        DetectionPlan typedPlan = planCodec.decode(planJson);
+        Map<String, Object> validationOnly = new LinkedHashMap<>();
         switch (category) {
-            case "single_event" -> compileSingleEvent(detection, declaration);
-            case "window" -> compileWindow(detection, declaration);
-            case "cep" -> compileCep(detection, declaration);
-            case "baseline" -> compileBaseline(detection, declaration);
-            default -> throw new IllegalArgumentException("unsupported detection category: " + category);
+            case "single_event" -> compileSingleEvent(detection, validationOnly);
+            case "window" -> compileWindow(detection, validationOnly);
+            case "cep" -> compileCep(detection, validationOnly);
+            case "baseline" -> compileBaseline(detection, validationOnly);
+            default ->
+                    throw new IllegalArgumentException(
+                            "unsupported detection category: " + category);
         }
-        return json(declaration);
+        return json(lower(typedPlan));
+    }
+
+    private Map<String, Object> lower(DetectionPlan plan) {
+        DetectionPlan.Alert alert = plan.alert();
+        Map<String, Object> declaration = new LinkedHashMap<>();
+        declaration.put("id", plan.ruleKey());
+        declaration.put("name", alert.name());
+        declaration.put("category", category(plan.detection()));
+        declaration.put("type", alert.type());
+        declaration.put("enabled", true);
+        declaration.put("severity", alert.severity());
+        declaration.put("description", alert.description() == null ? "" : alert.description());
+        declaration.put("riskScore", alert.riskScore());
+        declaration.put("tags", alert.tags());
+        declaration.put("status", alert.status());
+        declaration.put("version", alert.version());
+        switch (plan.detection()) {
+            case DetectionPlan.SingleEventDetection single -> {
+                declaration.put("condition", lower(single.condition()));
+                declaration.put(
+                        "alertSuppressionMinutes", (int) single.suppression().durationMinutes());
+            }
+            case DetectionPlan.WindowDetection window -> {
+                declaration.put("keyField", window.keyField());
+                declaration.put("condition", lower(window.condition()));
+                declaration.put("windowMinutes", (int) window.window().sizeMinutes());
+                if (window.window().slideMinutes() != null) {
+                    declaration.put("slidingMinutes", window.window().slideMinutes().intValue());
+                }
+                declaration.put(
+                        "alertSuppressionMinutes", (int) window.suppression().durationMinutes());
+                declaration.put("threshold", window.threshold());
+            }
+            case DetectionPlan.CepDetection cep -> {
+                declaration.put("keyField", cep.keyField());
+                Map<String, Object> output = new LinkedHashMap<>();
+                output.put("pattern", cep.cep().pattern().stream().map(this::lower).toList());
+                if (cep.cep().withinMinutes() != null)
+                    output.put("withinMinutes", cep.cep().withinMinutes());
+                output.put("failureStep", cep.cep().output().failureStep());
+                output.put("successStep", cep.cep().output().successStep());
+                declaration.put("cep", output);
+            }
+            case DetectionPlan.BaselineDetection baseline -> {
+                declaration.put("condition", lower(baseline.condition()));
+                DetectionPlan.Baseline value = baseline.baseline();
+                Map<String, Object> output = new LinkedHashMap<>();
+                output.put("keyField", value.keyField());
+                output.put("windowHours", (int) value.windowHours());
+                output.put("baselineHours", value.baselineHours());
+                output.put("minBaselineHours", value.minBaselineHours());
+                output.put("sigmaMultiplier", value.algorithm().sigmaMultiplier());
+                declaration.put("baseline", output);
+            }
+        }
+        return declaration;
+    }
+
+    private String category(DetectionPlan.DetectionSpec spec) {
+        return switch (spec) {
+            case DetectionPlan.SingleEventDetection ignored -> "single_event";
+            case DetectionPlan.WindowDetection ignored -> "window";
+            case DetectionPlan.CepDetection ignored -> "cep";
+            case DetectionPlan.BaselineDetection ignored -> "baseline";
+        };
+    }
+
+    private Map<String, Object> lower(DetectionPlan.CepStep step) {
+        Map<String, Object> output = new LinkedHashMap<>();
+        output.put("name", step.name());
+        output.put("type", step.type());
+        output.put("condition", lower(step.condition()));
+        if (step.timesMin() != null) output.put("timesMin", step.timesMin());
+        if (step.timesMax() != null) output.put("timesMax", step.timesMax());
+        return output;
+    }
+
+    private Map<String, Object> lower(DetectionPlan.Condition condition) {
+        Map<String, Object> output = new LinkedHashMap<>();
+        switch (condition) {
+            case DetectionPlan.Eq eq -> {
+                output.put("type", "field_equals");
+                output.put("field", eq.field());
+                output.put("value", eq.value());
+            }
+            case DetectionPlan.In in -> {
+                output.put("type", "field_in");
+                output.put("field", in.field());
+                output.put("values", in.values());
+            }
+            case DetectionPlan.All all -> {
+                output.put("type", "all");
+                output.put("conditions", all.conditions().stream().map(this::lower).toList());
+            }
+            case DetectionPlan.Any any -> {
+                output.put("type", "any");
+                output.put("conditions", any.conditions().stream().map(this::lower).toList());
+            }
+            case DetectionPlan.Not not -> {
+                output.put("type", "not");
+                output.put("conditions", List.of(lower(not.condition())));
+            }
+        }
+        return output;
     }
 
     /** Compile a v2 plan using the current compiler version. */
@@ -91,20 +210,32 @@ public final class FlinkArtifactCompiler {
     private void compileSingleEvent(JsonNode detection, Map<String, Object> declaration) {
         fields(detection, "detection", "type", "condition", "suppression");
         declaration.put("condition", condition(detection.get("condition"), "detection.condition"));
-        declaration.put("alertSuppressionMinutes", suppression(
-                object(detection, "suppression"), null));
+        declaration.put(
+                "alertSuppressionMinutes", suppression(object(detection, "suppression"), null));
     }
 
     private void compileWindow(JsonNode detection, Map<String, Object> declaration) {
-        fields(detection, "detection", "type", "key_field", "condition", "window",
-                "threshold", "suppression");
+        fields(
+                detection,
+                "detection",
+                "type",
+                "key_field",
+                "condition",
+                "window",
+                "threshold",
+                "suppression");
         String keyField = text(detection, "key_field", null, true);
         JsonNode window = object(detection, "window");
         String windowType = text(window, "type", null, true);
         if ("tumbling".equals(windowType)) {
             fields(window, "detection.window", "time_basis", "type", "size_minutes");
         } else if ("sliding".equals(windowType)) {
-            fields(window, "detection.window", "time_basis", "type", "size_minutes",
+            fields(
+                    window,
+                    "detection.window",
+                    "time_basis",
+                    "type",
+                    "size_minutes",
                     "slide_minutes");
         } else {
             throw new IllegalArgumentException("unsupported detection window type: " + windowType);
@@ -116,24 +247,33 @@ public final class FlinkArtifactCompiler {
         if ("sliding".equals(windowType)) {
             declaration.put("slidingMinutes", integer(window, "slide_minutes", 0, true));
         }
-        declaration.put("alertSuppressionMinutes", suppression(
-                object(detection, "suppression"), keyField));
+        declaration.put(
+                "alertSuppressionMinutes", suppression(object(detection, "suppression"), keyField));
         declaration.put("threshold", integer(detection, "threshold", 0, true));
     }
 
     private int suppression(JsonNode source, String expectedPrimaryField) {
-        fields(source, "detection.suppression", "duration_minutes", "time_basis",
-                "primary_entity_field", "fallback_entity_fields", "fallback_entity", "emission");
+        fields(
+                source,
+                "detection.suppression",
+                "duration_minutes",
+                "time_basis",
+                "primary_entity_field",
+                "fallback_entity_fields",
+                "fallback_entity",
+                "emission");
         requireText(source, "time_basis", "processing_time", "detection.suppression.time_basis");
         requireText(source, "fallback_entity", "unknown", "detection.suppression.fallback_entity");
         requireText(source, "emission", "first_and_final_count", "detection.suppression.emission");
         JsonNode primary = source.get("primary_entity_field");
         if (expectedPrimaryField == null) {
             if (primary != null && !primary.isNull()) {
-                throw new IllegalArgumentException("single-event suppression primary entity must be null");
+                throw new IllegalArgumentException(
+                        "single-event suppression primary entity must be null");
             }
         } else if (primary == null || !expectedPrimaryField.equals(primary.textValue())) {
-            throw new IllegalArgumentException("window suppression primary entity must match key_field");
+            throw new IllegalArgumentException(
+                    "window suppression primary entity must match key_field");
         }
         List<String> fallback = strings(source, "fallback_entity_fields");
         if (!fallback.equals(List.of("source.ip", "user.name"))) {
@@ -165,25 +305,33 @@ public final class FlinkArtifactCompiler {
         for (int i = 0; i < pattern.size(); i++) {
             JsonNode step = pattern.get(i);
             if (!step.isObject()) {
-                throw new IllegalArgumentException("detection.cep.pattern[" + i + "] must be an object");
+                throw new IllegalArgumentException(
+                        "detection.cep.pattern[" + i + "] must be an object");
             }
             JsonNode min = step.get("times_min");
             JsonNode max = step.get("times_max");
             if (min == null && max == null) {
                 fields(step, "detection.cep.pattern[" + i + "]", "name", "type", "condition");
             } else {
-                fields(step, "detection.cep.pattern[" + i + "]", "name", "type", "condition",
-                        "times_min", "times_max");
+                fields(
+                        step,
+                        "detection.cep.pattern[" + i + "]",
+                        "name",
+                        "type",
+                        "condition",
+                        "times_min",
+                        "times_max");
             }
             Map<String, Object> output = new LinkedHashMap<>();
             output.put("name", text(step, "name", null, true));
             output.put("type", text(step, "type", null, true));
-            output.put("condition", condition(step.get("condition"),
-                    "detection.cep.pattern[" + i + "].condition"));
-            if (min != null && !min.isNull()) output.put("timesMin",
-                    integer(min, "detection.cep.pattern[" + i + "].times_min"));
-            if (max != null && !max.isNull()) output.put("timesMax",
-                    integer(max, "detection.cep.pattern[" + i + "].times_max"));
+            output.put(
+                    "condition",
+                    condition(step.get("condition"), "detection.cep.pattern[" + i + "].condition"));
+            if (min != null && !min.isNull())
+                output.put("timesMin", integer(min, "detection.cep.pattern[" + i + "].times_min"));
+            if (max != null && !max.isNull())
+                output.put("timesMax", integer(max, "detection.cep.pattern[" + i + "].times_max"));
             steps.add(output);
         }
         cep.put("pattern", steps);
@@ -192,8 +340,10 @@ public final class FlinkArtifactCompiler {
         requireText(output, "type", "bruteforce_success", "detection.cep.output.type");
         String failureStep = text(output, "failure_step", null, true);
         String successStep = text(output, "success_step", null, true);
-        Set<String> names = steps.stream().map(step -> String.valueOf(step.get("name")))
-                .collect(java.util.stream.Collectors.toSet());
+        Set<String> names =
+                steps.stream()
+                        .map(step -> String.valueOf(step.get("name")))
+                        .collect(java.util.stream.Collectors.toSet());
         if (!names.contains(failureStep) || !names.contains(successStep)) {
             throw new IllegalArgumentException("CEP output steps must exist in the pattern");
         }
@@ -206,8 +356,15 @@ public final class FlinkArtifactCompiler {
         fields(detection, "detection", "type", "condition", "baseline");
         declaration.put("condition", condition(detection.get("condition"), "detection.condition"));
         JsonNode source = object(detection, "baseline");
-        fields(source, "detection.baseline", "key_field", "time_basis", "window_hours",
-                "baseline_hours", "min_baseline_hours", "algorithm");
+        fields(
+                source,
+                "detection.baseline",
+                "key_field",
+                "time_basis",
+                "window_hours",
+                "baseline_hours",
+                "min_baseline_hours",
+                "algorithm");
         requireText(source, "time_basis", "event_time", "detection.baseline.time_basis");
         Map<String, Object> baseline = new LinkedHashMap<>();
         baseline.put("keyField", text(source, "key_field", null, true));
@@ -215,19 +372,27 @@ public final class FlinkArtifactCompiler {
         baseline.put("baselineHours", integer(source, "baseline_hours", 0, true));
         baseline.put("minBaselineHours", integer(source, "min_baseline_hours", 0, true));
         JsonNode algorithm = object(source, "algorithm");
-        fields(algorithm, "detection.baseline.algorithm", "type", "sigma_multiplier",
-                "comparison", "require_positive_threshold");
+        fields(
+                algorithm,
+                "detection.baseline.algorithm",
+                "type",
+                "sigma_multiplier",
+                "comparison",
+                "require_positive_threshold");
         requireText(algorithm, "type", "mean_sigma", "detection.baseline.algorithm.type");
-        requireText(algorithm, "comparison", "greater_than",
-                "detection.baseline.algorithm.comparison");
+        requireText(
+                algorithm, "comparison", "greater_than", "detection.baseline.algorithm.comparison");
         JsonNode positive = algorithm.get("require_positive_threshold");
         if (positive == null || !positive.isBoolean() || !positive.booleanValue()) {
             throw new IllegalArgumentException("baseline algorithm requires a positive threshold");
         }
         JsonNode sigma = algorithm.get("sigma_multiplier");
-        if (sigma == null || !sigma.isNumber() || !Double.isFinite(sigma.doubleValue())
+        if (sigma == null
+                || !sigma.isNumber()
+                || !Double.isFinite(sigma.doubleValue())
                 || sigma.doubleValue() <= 0) {
-            throw new IllegalArgumentException("baseline sigma_multiplier must be finite and positive");
+            throw new IllegalArgumentException(
+                    "baseline sigma_multiplier must be finite and positive");
         }
         baseline.put("sigmaMultiplier", sigma.doubleValue());
         declaration.put("baseline", baseline);
@@ -264,7 +429,9 @@ public final class FlinkArtifactCompiler {
                 fields(node, path, "operator", "conditions");
                 result.put("type", operator);
                 JsonNode children = node.get("conditions");
-                if (children == null || !children.isArray() || children.isEmpty()
+                if (children == null
+                        || !children.isArray()
+                        || children.isEmpty()
                         || "not".equals(operator) && children.size() != 1) {
                     throw new IllegalArgumentException(path + ".conditions has an invalid size");
                 }
@@ -274,7 +441,9 @@ public final class FlinkArtifactCompiler {
                 }
                 result.put("conditions", output);
             }
-            default -> throw new IllegalArgumentException("unsupported normalized condition: " + operator);
+            default ->
+                    throw new IllegalArgumentException(
+                            "unsupported normalized condition: " + operator);
         }
         return result;
     }
@@ -293,10 +462,12 @@ public final class FlinkArtifactCompiler {
     private List<String> strings(JsonNode parent, String field) {
         JsonNode values = parent.get(field);
         if (values == null || values.isNull()) return List.of();
-        if (!values.isArray()) throw new IllegalArgumentException("alert." + field + " must be an array");
+        if (!values.isArray())
+            throw new IllegalArgumentException("alert." + field + " must be an array");
         List<String> result = new ArrayList<>();
         for (JsonNode value : values) {
-            if (!value.isTextual()) throw new IllegalArgumentException("alert." + field + " must contain strings");
+            if (!value.isTextual())
+                throw new IllegalArgumentException("alert." + field + " must contain strings");
             result.add(value.textValue());
         }
         return result;
@@ -324,11 +495,14 @@ public final class FlinkArtifactCompiler {
             throw new IllegalArgumentException(path + " must be an object");
         }
         Set<String> allowed = Set.of(allowedFields);
-        node.fieldNames().forEachRemaining(field -> {
-            if (!allowed.contains(field)) {
-                throw new IllegalArgumentException(path + " contains unsupported field: " + field);
-            }
-        });
+        node.fieldNames()
+                .forEachRemaining(
+                        field -> {
+                            if (!allowed.contains(field)) {
+                                throw new IllegalArgumentException(
+                                        path + " contains unsupported field: " + field);
+                            }
+                        });
         for (String field : allowedFields) {
             if (!node.has(field)) {
                 throw new IllegalArgumentException(path + " is missing field: " + field);

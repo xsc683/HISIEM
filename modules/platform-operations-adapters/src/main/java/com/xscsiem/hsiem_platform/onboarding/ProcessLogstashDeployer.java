@@ -1,80 +1,121 @@
 package com.xscsiem.hsiem_platform.onboarding;
 
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.stereotype.Component;
-
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.regex.Pattern;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.stereotype.Component;
 
-/**
- * 生产实现:通过进程调起外部命令完成生效链路。
- * - syncLogstash:  wsl rsync infra/logstash → ~/projects/mini-siem/logstash(只同步 logstash,
- *   不走 deploy.sh 全量,避免每次激活都触发 Flink 重建)。
- * - validateConfig: docker exec siem-logstash logstash --config.test_and_exit -f <conf>。
- * - restartLogstash: docker restart siem-logstash。
- * 命令路径(仓库 WSL 路径 / 部署目录 / 容器名)可由 application.properties 覆盖。
- */
+/** Process-backed Logstash deployer. */
 @Component
 @ConditionalOnProperty(name = "app.operations.process-adapters", havingValue = "enabled")
 public class ProcessLogstashDeployer implements LogstashDeployer {
 
     private static final long TIMEOUT_SECONDS = 120;
+    private static final String CONTAINER_PIPELINE_ROOT = "/usr/share/logstash/pipeline/";
+    private static final Pattern NAME = Pattern.compile("[A-Za-z0-9][A-Za-z0-9_.-]*");
+    private static final Pattern PATH_SEGMENT = Pattern.compile("[A-Za-z0-9][A-Za-z0-9_.-]*");
+
+    /* Inputs are positional arguments; never interpolate them into these scripts. */
+    private static final String SYNC_LOGSTASH_SCRIPT =
+            "set -e\n" + "rsync -a --delete -- \"$1/infra/logstash/\" \"$2/logstash/\"\n";
+    private static final String SYNC_COMPOSE_SCRIPT =
+            "set -e\n" + "cp -- \"$1/infra/$3\" \"$2/$3\"\n";
+    private static final String RESTART_SCRIPT =
+            "set -e\n"
+                    + "cd -- \"$1\"\n"
+                    + "COMPOSE_PROJECT_NAME=\"${COMPOSE_PROJECT_NAME:-infra}\" "
+                    + "docker compose -f \"$2\" up -d logstash\n";
 
     private final String wslRepoPath;
     private final String deployDir;
     private final String containerName;
     private final String composeName;
+    private final CommandExecutor commandExecutor;
 
     public ProcessLogstashDeployer(
             @Value("${app.logstash.wsl-repo-path:/mnt/d/Project/SIEM}") String wslRepoPath,
             @Value("${app.logstash.deploy-dir:~/projects/mini-siem}") String deployDir,
             @Value("${app.logstash.container-name:siem-logstash}") String containerName,
             @Value("${app.logstash.compose-name:docker-compose.yml}") String composeName) {
-        this.wslRepoPath = wslRepoPath;
-        this.deployDir = deployDir;
-        this.containerName = containerName;
-        this.composeName = composeName;
+        this(
+                wslRepoPath,
+                deployDir,
+                containerName,
+                composeName,
+                ProcessLogstashDeployer::executeProcess);
+    }
+
+    /** Constructor seam for tests and process-capture integrations. */
+    ProcessLogstashDeployer(
+            String wslRepoPath,
+            String deployDir,
+            String containerName,
+            String composeName,
+            CommandExecutor commandExecutor) {
+        this.wslRepoPath = normalizeConfiguredPath(wslRepoPath, "wslRepoPath", false);
+        this.deployDir = normalizeConfiguredPath(deployDir, "deployDir", true);
+        this.containerName = validateName(containerName, "containerName");
+        this.composeName = validateName(composeName, "composeName");
+        if (commandExecutor == null) {
+            throw new IllegalArgumentException("commandExecutor must not be null");
+        }
+        this.commandExecutor = commandExecutor;
     }
 
     @Override
     public void syncLogstash() {
-        // rsync -a --delete:原地同步,保留目录本身(避免 bind mount 失效)
-        if (!exitOk("wsl", "bash", "-c",
-                "rsync -a --delete " + wslRepoPath + "/infra/logstash/ " + deployDir + "/logstash/")) {
+        if (!exitOk("wsl", "bash", "-c", SYNC_LOGSTASH_SCRIPT, "--", wslRepoPath, deployDir)) {
             throw new IllegalStateException("同步 logstash 到 WSL 失败");
         }
-        // 同步 docker-compose.yml(数据源端口映射:生效时 coordinator 已更新 repo 侧 compose)
-        if (!exitOk("wsl", "bash", "-c",
-                "cp " + wslRepoPath + "/infra/" + composeName + " " + deployDir + "/" + composeName)) {
+        if (!exitOk(
+                "wsl",
+                "bash",
+                "-c",
+                SYNC_COMPOSE_SCRIPT,
+                "--",
+                wslRepoPath,
+                deployDir,
+                composeName)) {
             throw new IllegalStateException("同步 docker-compose.yml 到 WSL 失败");
         }
     }
 
     @Override
     public boolean validateConfig(String containerConfigPath) {
-        // --path.data 重定向到临时目录:运行中的 Logstash 实例已持有 data/queue/*.lock,
-        // 直接校验会因队列锁冲突而失败(配置本身是合法的)。每次用唯一后缀避免并发校验互相干扰。
-        String tmpData = "/tmp/ls-validate-" + java.util.UUID.randomUUID().toString().substring(0, 8);
-        return exitOk("docker", "exec", containerName, "logstash",
-                "--config.test_and_exit", "-f", containerConfigPath, "--path.data=" + tmpData);
+        String normalizedPath = normalizeContainerConfigPath(containerConfigPath);
+        if (normalizedPath == null) {
+            return false;
+        }
+        String tmpData =
+                "/tmp/ls-validate-" + java.util.UUID.randomUUID().toString().substring(0, 8);
+        return exitOk(
+                "docker",
+                "exec",
+                containerName,
+                "logstash",
+                "--config.test_and_exit",
+                "-f",
+                normalizedPath,
+                "--path.data=" + tmpData);
     }
 
     @Override
     public void restartLogstash() {
-        // 用 docker compose up -d 重建容器:生效时新增了数据源端口映射,需重建才生效。
-        // 部署目录里已有同步来的 compose(含最新 ports);compose 重建会保留命名卷与健康检查。
-        // 失败时回退 docker restart(至少让配置变更生效,端口映射缺失可后续 compose up 补)。
         String composeFile = deployDir + "/" + composeName;
-        if (!exitOk("wsl", "bash", "-c",
-                "cd " + deployDir + " && COMPOSE_PROJECT_NAME=\"${COMPOSE_PROJECT_NAME:-infra}\" "
-                        + "docker compose -f " + composeName + " up -d logstash")) {
-            throw new IllegalStateException("重建 Logstash 容器失败: " + composeFile
-                    + "(配置已同步,可手动 docker compose up -d logstash)");
+        if (!exitOk("wsl", "bash", "-c", RESTART_SCRIPT, "--", deployDir, composeName)) {
+            throw new IllegalStateException(
+                    "重建 Logstash 容器失败: "
+                            + composeFile
+                            + "(配置已同步，可手动执行 docker compose up -d logstash)");
         }
     }
 
@@ -86,16 +127,114 @@ public class ProcessLogstashDeployer implements LogstashDeployer {
     }
 
     private boolean exitOk(String... cmd) {
+        return commandExecutor.execute(List.copyOf(Arrays.asList(cmd)));
+    }
+
+    private static String normalizeConfiguredPath(String raw, String field, boolean allowHome) {
+        String value = checkedText(raw, field).trim().replace('\\', '/');
+        boolean homePath = value.equals("~") || value.startsWith("~/");
+        if ((!allowHome && homePath) || (!homePath && !value.startsWith("/"))) {
+            throw new IllegalArgumentException(field + " must be an absolute WSL path");
+        }
+        if (homePath && value.startsWith("~//")) {
+            value = "~/" + value.substring(3);
+        }
+        String prefix = homePath ? "~/" : "/";
+        String body = homePath ? value.substring(value.equals("~") ? 1 : 2) : value.substring(1);
+        List<String> segments = normalizedSegments(body, field);
+        if (segments.isEmpty()) {
+            if (homePath) {
+                return "~";
+            }
+            throw new IllegalArgumentException(field + " must contain a directory");
+        }
+        return prefix + String.join("/", segments);
+    }
+
+    private static List<String> normalizedSegments(String body, String field) {
+        List<String> result = new ArrayList<>();
+        for (String segment : body.split("/", -1)) {
+            if (segment.isEmpty()) {
+                continue;
+            }
+            if (segment.equals(".") || segment.equals("..")) {
+                throw new IllegalArgumentException(field + " must not contain traversal segments");
+            }
+            if (segment.indexOf('\u0000') >= 0
+                    || segment.indexOf('\r') >= 0
+                    || segment.indexOf('\n') >= 0) {
+                throw new IllegalArgumentException(field + " contains an unsafe control character");
+            }
+            result.add(segment);
+        }
+        return result;
+    }
+
+    private static String validateName(String raw, String field) {
+        String value = checkedText(raw, field).trim();
+        if (!NAME.matcher(value).matches() || value.equals(".") || value.equals("..")) {
+            throw new IllegalArgumentException(field + " must be a safe basename");
+        }
+        return value;
+    }
+
+    private static String normalizeContainerConfigPath(String raw) {
+        String value;
         try {
-            Process p = new ProcessBuilder(cmd).redirectErrorStream(true).start();
-            // 并发读取输出,避免子进程输出管道写满后导致 waitFor 永久阻塞。
-            CompletableFuture<String> output = CompletableFuture.supplyAsync(() -> {
-                try {
-                    return new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-                } catch (IOException e) {
-                    return "[读取外部命令输出失败] " + e.getMessage();
-                }
-            });
+            value = checkedText(raw, "containerConfigPath").trim();
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+        if (!value.startsWith(CONTAINER_PIPELINE_ROOT) || value.indexOf('\\') >= 0) {
+            return null;
+        }
+        List<String> segments;
+        try {
+            segments =
+                    normalizedSegments(
+                            value.substring(CONTAINER_PIPELINE_ROOT.length()),
+                            "containerConfigPath");
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+        if (segments.isEmpty()) {
+            return null;
+        }
+        if (segments.stream().anyMatch(segment -> !PATH_SEGMENT.matcher(segment).matches())) {
+            return null;
+        }
+        String basename = segments.get(segments.size() - 1);
+        if (!basename.endsWith(".conf") || !PATH_SEGMENT.matcher(basename).matches()) {
+            return null;
+        }
+        return CONTAINER_PIPELINE_ROOT + String.join("/", segments);
+    }
+
+    private static String checkedText(String raw, String field) {
+        if (raw == null
+                || raw.isBlank()
+                || raw.indexOf('\u0000') >= 0
+                || raw.indexOf('\r') >= 0
+                || raw.indexOf('\n') >= 0) {
+            throw new IllegalArgumentException(field + " must not be blank or contain NUL/CR/LF");
+        }
+        return raw;
+    }
+
+    private static boolean executeProcess(List<String> command) {
+        try {
+            Process p = new ProcessBuilder(command).redirectErrorStream(true).start();
+            CompletableFuture<String> output =
+                    CompletableFuture.supplyAsync(
+                            () -> {
+                                try {
+                                    return new String(
+                                            p.getInputStream().readAllBytes(),
+                                            StandardCharsets.UTF_8);
+                                } catch (IOException e) {
+                                    return "[读取外部命令输出失败] " + e.getMessage();
+                                }
+                            });
             if (!p.waitFor(TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
                 p.destroyForcibly();
                 output.cancel(true);
@@ -113,5 +252,10 @@ public class ProcessLogstashDeployer implements LogstashDeployer {
             Thread.currentThread().interrupt();
             return false;
         }
+    }
+
+    @FunctionalInterface
+    interface CommandExecutor {
+        boolean execute(List<String> command);
     }
 }
