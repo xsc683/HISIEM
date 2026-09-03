@@ -1,23 +1,22 @@
 package com.xscsiem.hsiem_platform.rules;
 
-import com.xscsiem.hsiem_platform.tenant.TenantContext;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.springframework.http.HttpStatus;
-import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
-import org.springframework.security.core.context.SecurityContextHolder;
-
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+
+import com.xscsiem.hsiem_platform.tenant.TenantContext;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpStatus;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
 
 /** 自定义检测规则写 API：操作者透传、201 语义和待部署标记。 */
 class RuleControllerTest {
@@ -29,8 +28,8 @@ class RuleControllerTest {
     void setUp() {
         service = mock(RuleService.class);
         controller = new RuleController(service);
-        SecurityContextHolder.getContext().setAuthentication(
-                new UsernamePasswordAuthenticationToken("rule-admin", "n/a"));
+        SecurityContextHolder.getContext()
+                .setAuthentication(new UsernamePasswordAuthenticationToken("rule-admin", "n/a"));
     }
 
     @AfterEach
@@ -70,19 +69,38 @@ class RuleControllerTest {
         ManagedDetectionService managed = mock(ManagedDetectionService.class);
         controller = new RuleController(service, managed);
         when(service.list()).thenReturn(List.of(Map.of("id", "rule-ui-api", "enabled", true)));
-        when(managed.deployAll("default",
-                List.of(Map.of("id", "rule-ui-api", "enabled", true)), "rule-admin"))
-                .thenReturn(List.of(Map.of("ruleKey", "rule-ui-api", "status", "PENDING")));
+        when(managed.deployAll(
+                        "default",
+                        List.of(Map.of("id", "rule-ui-api", "enabled", true)),
+                        "rule-admin"))
+                .thenReturn(
+                        List.of(
+                                new DeploymentSummary(
+                                        "rule-ui-api",
+                                        null,
+                                        DesiredState.RUNNING,
+                                        "default",
+                                        1,
+                                        "PENDING")));
         TenantContext.set("default");
 
         var response = controller.deploy();
 
         assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
         assertEquals("PENDING", response.getBody().get("status"));
-        assertEquals(List.of(Map.of("ruleKey", "rule-ui-api", "status", "PENDING")),
-                response.getBody().get("pendingSummaries"));
-        verify(managed).deployAll("default",
-                List.of(Map.of("id", "rule-ui-api", "enabled", true)), "rule-admin");
+        Map<String, Object> expectedSummary = new LinkedHashMap<>();
+        expectedSummary.put("ruleKey", "rule-ui-api");
+        expectedSummary.put("deploymentId", null);
+        expectedSummary.put("desiredState", "RUNNING");
+        expectedSummary.put("targetCluster", "default");
+        expectedSummary.put("generation", 1L);
+        expectedSummary.put("status", "PENDING");
+        assertEquals(List.of(expectedSummary), response.getBody().get("pendingSummaries"));
+        verify(managed)
+                .deployAll(
+                        "default",
+                        List.of(Map.of("id", "rule-ui-api", "enabled", true)),
+                        "rule-admin");
     }
 
     @AfterEach

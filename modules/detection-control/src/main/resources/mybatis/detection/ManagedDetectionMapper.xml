@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+  PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.xscsiem.hsiem_platform.rules.ManagedDetectionMapper">
+  <resultMap id="ruleRevision" type="com.xscsiem.hsiem_platform.rules.RuleRevision">
+    <constructor>
+      <arg column="revision_id" javaType="java.util.UUID" jdbcType="OTHER" typeHandler="com.xscsiem.hsiem_platform.rules.UuidTypeHandler"/>
+      <arg column="rule_key" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="revision" javaType="_int" jdbcType="INTEGER"/>
+      <arg column="definition_json" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="content_hash" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="source_commit" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="created_by" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="created_at" javaType="java.time.Instant" jdbcType="TIMESTAMP"/>
+    </constructor>
+  </resultMap>
+  <resultMap id="detectionPlan" type="com.xscsiem.hsiem_platform.rules.DetectionPlanArtifact">
+    <constructor>
+      <arg column="plan_id" javaType="java.util.UUID" jdbcType="OTHER" typeHandler="com.xscsiem.hsiem_platform.rules.UuidTypeHandler"/>
+      <arg column="revision_id" javaType="java.util.UUID" jdbcType="OTHER" typeHandler="com.xscsiem.hsiem_platform.rules.UuidTypeHandler"/>
+      <arg column="compiler_version" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="plan_json" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="plan_hash" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="created_at" javaType="java.time.Instant" jdbcType="TIMESTAMP"/>
+    </constructor>
+  </resultMap>
+  <resultMap id="ruleDeployment" type="com.xscsiem.hsiem_platform.rules.RuleDeployment">
+    <constructor>
+      <arg column="deployment_id" javaType="java.util.UUID" jdbcType="OTHER" typeHandler="com.xscsiem.hsiem_platform.rules.UuidTypeHandler"/>
+      <arg column="tenant_id" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="rule_key" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="desired_revision_id" javaType="java.util.UUID" jdbcType="OTHER" typeHandler="com.xscsiem.hsiem_platform.rules.UuidTypeHandler"/>
+      <arg column="desired_state" javaType="com.xscsiem.hsiem_platform.rules.DesiredState" jdbcType="VARCHAR"/>
+      <arg column="generation" javaType="_long" jdbcType="BIGINT"/>
+      <arg column="observed_generation" javaType="_long" jdbcType="BIGINT"/>
+      <arg column="target_cluster" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="status" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="last_error" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="created_at" javaType="java.time.Instant" jdbcType="TIMESTAMP"/>
+      <arg column="updated_at" javaType="java.time.Instant" jdbcType="TIMESTAMP"/>
+    </constructor>
+  </resultMap>
+  <select id="findRevisionByHash" resultMap="ruleRevision">
+    SELECT revision_id, rule_key, revision, definition_json, content_hash, source_commit, created_by, created_at
+    FROM rule_revision WHERE rule_key = #{ruleKey} AND content_hash = #{contentHash}
+  </select>
+  <select id="findRevision" resultMap="ruleRevision">
+    SELECT revision_id, rule_key, revision, definition_json, content_hash, source_commit, created_by, created_at
+    FROM rule_revision WHERE revision_id = #{revisionId,jdbcType=OTHER} AND rule_key = #{ruleKey}
+  </select>
+  <select id="findPlan" resultMap="detectionPlan">
+    SELECT plan_id, revision_id, compiler_version, plan_json, plan_hash, created_at
+    FROM detection_plan WHERE revision_id = #{revisionId,jdbcType=OTHER} AND compiler_version = #{compilerVersion}
+    ORDER BY created_at DESC, plan_id DESC
+    LIMIT 1
+  </select>
+  <update id="updateCatalog">
+    UPDATE detection_rule SET name = #{name}, description = #{description}, category = #{category}, updated_at = CURRENT_TIMESTAMP
+    WHERE rule_key = #{ruleKey}
+  </update>
+  <insert id="insertCatalog">
+    INSERT INTO detection_rule (rule_key, name, description, category, updated_at)
+    VALUES (#{ruleKey}, #{name}, #{description}, #{category}, CURRENT_TIMESTAMP)
+  </insert>
+  <select id="latestRevisionNumber" resultType="int">
+    SELECT COALESCE(MAX(revision), 0) FROM rule_revision WHERE rule_key = #{ruleKey}
+  </select>
+  <insert id="insertRevision">
+    INSERT INTO rule_revision (revision_id, rule_key, revision, definition_json, content_hash, source_commit, created_by)
+    VALUES (#{revisionId,jdbcType=OTHER}, #{ruleKey}, #{revision}, #{definitionJson}, #{contentHash}, #{sourceCommit,jdbcType=VARCHAR}, #{createdBy})
+  </insert>
+  <insert id="insertPlan">
+    INSERT INTO detection_plan (plan_id, revision_id, compiler_version, plan_json, plan_hash)
+    VALUES (#{planId,jdbcType=OTHER}, #{revisionId,jdbcType=OTHER}, #{compilerVersion}, #{planJson}, #{planHash})
+  </insert>
+  <select id="findDeployment" resultMap="ruleDeployment">
+    SELECT deployment_id, tenant_id, rule_key, desired_revision_id, desired_state, generation, observed_generation,
+           target_cluster, status, last_error, created_at, updated_at
+    FROM rule_deployment WHERE tenant_id = #{tenantId} AND rule_key = #{ruleKey}
+  </select>
+  <update id="updateDesiredState">
+    UPDATE rule_deployment SET desired_revision_id = #{revisionId,jdbcType=OTHER}, desired_state = #{desiredState},
+      generation = generation + 1, target_cluster = #{targetCluster}, status = 'PENDING', last_error = NULL,
+      updated_at = CURRENT_TIMESTAMP
+    WHERE tenant_id = #{tenantId} AND rule_key = #{ruleKey}
+  </update>
+  <insert id="insertDeployment">
+    INSERT INTO rule_deployment (deployment_id, tenant_id, rule_key, desired_revision_id, desired_state,
+      generation, observed_generation, target_cluster, status)
+    VALUES (#{deploymentId,jdbcType=OTHER}, #{tenantId}, #{ruleKey}, #{revisionId,jdbcType=OTHER}, #{desiredState}, 1, 0, #{targetCluster}, 'PENDING')
+  </insert>
+  <insert id="insertHistory">
+    INSERT INTO rule_deployment_history (deployment_id, tenant_id, rule_key, desired_revision_id, desired_state,
+      generation, status, actor)
+    VALUES (#{deployment.deploymentId,jdbcType=OTHER}, #{deployment.tenantId}, #{deployment.ruleKey},
+      #{deployment.desiredRevisionId,jdbcType=OTHER}, #{deployment.desiredState}, #{deployment.generation},
+      #{deployment.status}, #{actor})
+  </insert>
+</mapper>

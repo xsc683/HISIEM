@@ -31,14 +31,14 @@ public class DetectionRuntimeService {
     private static final String DEFAULT_SOURCE_FAMILY = "siem-events";
     private static final String DEFAULT_CLUSTER = "default";
 
-    private final DetectionRuntimeRepository repository;
+    private final DetectionRuntimeRepositoryPort repository;
     private final int groupBuckets;
     private final RuntimeManifestCodec codec = new RuntimeManifestCodec();
     private final ObjectMapper mapper = new ObjectMapper();
 
     @Autowired
     public DetectionRuntimeService(
-            DetectionRuntimeRepository repository,
+            DetectionRuntimeRepositoryPort repository,
             @Value("${app.detection.group-buckets:1}") int groupBuckets) {
         this.repository = Objects.requireNonNull(repository, "repository must not be null");
         if (groupBuckets <= 0) {

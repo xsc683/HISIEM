@@ -28,8 +28,9 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 /**
- * 检测规则管理(story-03):读 infra/rules/*.yaml(检测即代码单一来源,与 Flink 同一份)。 启停 = 改写 enabled 字段(生效需 deploy →
- * 重启检测 job,一次重部署成本)。
+ * Detection rule authoring boundary. YAML is normalized into an immutable RuleRevision and then
+ * compiled into a DetectionPlan. Deployment publishes desired state to the RuntimeManifest and
+ * Detection Controller; only the controller operates Flink.
  */
 @Service
 public class RuleService {
@@ -115,7 +116,9 @@ public class RuleService {
         return rule;
     }
 
-    /** 翻转 enabled 并写回 YAML(生效需 deploy → 重启检测 job)。 */
+    /**
+     * Toggle authoring state in YAML; reconciliation later flows through the controller to Flink.
+     */
     public Map<String, Object> toggle(String id) {
         return toggle(id, "system");
     }

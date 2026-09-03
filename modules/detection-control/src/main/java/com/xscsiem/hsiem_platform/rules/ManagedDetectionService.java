@@ -9,7 +9,6 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -23,7 +22,7 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class ManagedDetectionService {
 
-    private final ManagedDetectionRepository repository;
+    private final ManagedDetectionRepositoryPort repository;
     private final RuleService rules;
     private final ObjectMapper mapper =
             new ObjectMapper().configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true);
@@ -33,7 +32,7 @@ public class ManagedDetectionService {
 
     @Autowired
     public ManagedDetectionService(
-            ManagedDetectionRepository repository,
+            ManagedDetectionRepositoryPort repository,
             RuleService rules,
             @Value("${app.detection.source-commit:working-tree}") String sourceCommit,
             DetectionRuntimeService runtime) {
@@ -43,28 +42,29 @@ public class ManagedDetectionService {
         this.sourceCommit = sourceCommit;
     }
 
+    /** Compatibility constructor for direct JDBC-based test and migration callers. */
+    public ManagedDetectionService(
+            ManagedDetectionRepository repository,
+            RuleService rules,
+            String sourceCommit,
+            DetectionRuntimeService runtime) {
+        this((ManagedDetectionRepositoryPort) repository, rules, sourceCommit, runtime);
+    }
+
     @Transactional(readOnly = true)
-    public Map<String, Object> inspect(String ruleKey, String actor) {
+    public ManagedDetectionInspection inspect(String ruleKey, String actor) {
         Map<String, Object> rule = rules.get(ruleKey);
-        Revision revision = findCurrentRevision(rule);
-        Plan plan = revision == null ? null : findPlan(revision);
-        Map<String, Object> response = new LinkedHashMap<>();
-        response.put("rule", rule);
-        response.put("revision", revision == null ? null : revision.asMap());
-        response.put("plan", plan == null ? null : plan.asMap());
-        response.put("deployment", findDeployment(TenantContext.id(), ruleKey));
+        RuleRevision revision = findCurrentRevision(rule);
+        DetectionPlanArtifact plan = revision == null ? null : findPlan(revision);
+        RuleDeployment deployment = findDeployment(TenantContext.id(), ruleKey);
         Map<String, Object> runtimeView = runtime.inspect(TenantContext.id(), ruleKey);
-        response.put("assignment", runtimeView.get("assignment"));
-        response.put("jobGroup", runtimeView.get("jobGroup"));
-        response.put("runtimeStatus", runtimeView.get("runtimeStatus"));
-        response.put("desiredVsObserved", runtimeView.get("desiredVsObserved"));
-        return response;
+        return new ManagedDetectionInspection(rule, revision, plan, deployment, runtimeView);
     }
 
     @Transactional
-    public Map<String, Object> deploy(
-            String tenantId, String ruleKey, Map<String, Object> body, String actor) {
-        return setDesiredState(tenantId, ruleKey, body, "RUNNING", actor);
+    public RuleDeployment deploy(
+            String tenantId, String ruleKey, DeploymentCommand command, String actor) {
+        return setDesiredState(tenantId, ruleKey, command, DesiredState.RUNNING, actor);
     }
 
     /**
@@ -72,7 +72,7 @@ public class ManagedDetectionService {
      * touched rules once. The physical Flink controller is intentionally not involved.
      */
     @Transactional
-    public List<Map<String, Object>> deployAll(
+    public List<DeploymentSummary> deployAll(
             String tenantId, List<Map<String, Object>> ruleSnapshot, String actor) {
         if (tenantId == null || tenantId.isBlank()) {
             throw new IllegalArgumentException("tenantId must not be blank");
@@ -81,16 +81,25 @@ public class ManagedDetectionService {
             return List.of();
         }
         List<String> ruleKeys = new ArrayList<>();
-        List<Map<String, Object>> summaries = new ArrayList<>();
+        List<DeploymentSummary> summaries = new ArrayList<>();
         for (Map<String, Object> rule : ruleSnapshot) {
             if (rule == null || rule.get("id") == null) {
                 throw new IllegalArgumentException("rule snapshot contains a rule without id");
             }
             String ruleKey = String.valueOf(rule.get("id"));
-            String desiredState = Boolean.TRUE.equals(rule.get("enabled")) ? "RUNNING" : "STOPPED";
-            Map<String, Object> deployment =
+            DesiredState desiredState =
+                    Boolean.TRUE.equals(rule.get("enabled"))
+                            ? DesiredState.RUNNING
+                            : DesiredState.STOPPED;
+            RuleDeployment deployment =
                     setDesiredStateForRule(
-                            tenantId, ruleKey, rule, Map.of(), desiredState, actor, false);
+                            tenantId,
+                            ruleKey,
+                            rule,
+                            DeploymentCommand.empty(),
+                            desiredState,
+                            actor,
+                            false);
             ruleKeys.add(ruleKey);
             summaries.add(pendingSummary(deployment));
         }
@@ -99,161 +108,156 @@ public class ManagedDetectionService {
     }
 
     @Transactional
-    public Map<String, Object> stop(String tenantId, String ruleKey, String actor) {
-        return setDesiredState(tenantId, ruleKey, Map.of(), "STOPPED", actor);
+    public RuleDeployment stop(String tenantId, String ruleKey, String actor) {
+        return setDesiredState(
+                tenantId, ruleKey, DeploymentCommand.empty(), DesiredState.STOPPED, actor);
     }
 
     @Transactional
-    public Map<String, Object> rollback(
-            String tenantId, String ruleKey, Map<String, Object> body, String actor) {
-        Object revisionId = body == null ? null : body.get("revisionId");
-        if (revisionId == null) {
+    public RuleDeployment rollback(
+            String tenantId, String ruleKey, DeploymentCommand command, String actor) {
+        if (command == null || command.revisionId() == null) {
             throw new IllegalArgumentException("revisionId is required for rollback");
         }
-        return setDesiredState(tenantId, ruleKey, body, "RUNNING", actor);
+        return setDesiredState(tenantId, ruleKey, command, DesiredState.RUNNING, actor);
     }
 
-    private Map<String, Object> setDesiredState(
+    private RuleDeployment setDesiredState(
             String tenantId,
             String ruleKey,
-            Map<String, Object> body,
-            String desiredState,
+            DeploymentCommand command,
+            DesiredState desiredState,
             String actor) {
         Map<String, Object> rule = rules.get(ruleKey);
-        return setDesiredStateForRule(tenantId, ruleKey, rule, body, desiredState, actor, true);
+        return setDesiredStateForRule(
+                tenantId,
+                ruleKey,
+                rule,
+                command == null ? DeploymentCommand.empty() : command,
+                desiredState,
+                actor,
+                true);
     }
 
-    private Map<String, Object> setDesiredStateForRule(
+    private RuleDeployment setDesiredStateForRule(
             String tenantId,
             String ruleKey,
             Map<String, Object> rule,
-            Map<String, Object> body,
-            String desiredState,
+            DeploymentCommand command,
+            DesiredState desiredState,
             String actor,
             boolean reconcile) {
-        Map<String, Object> request = body == null ? Map.of() : body;
-        Revision revision = revisionFor(rule, request.get("revisionId"), actor);
-        Plan plan = ensurePlan(rule, revision);
+        RuleRevision revision = revisionFor(rule, command.revisionId(), actor);
+        DetectionPlanArtifact plan = ensurePlan(rule, revision);
         UUID deploymentId = UUID.randomUUID();
-        Map<String, Object> previous = findDeployment(tenantId, ruleKey);
-        Object requestedCluster = request.get("targetCluster");
+        RuleDeployment previous = findDeployment(tenantId, ruleKey);
+        String requestedCluster = command.targetCluster();
         String targetCluster =
-                requestedCluster == null || String.valueOf(requestedCluster).isBlank()
-                        ? previous == null || previous.get("target_cluster") == null
+                requestedCluster == null || requestedCluster.isBlank()
+                        ? previous == null || previous.targetCluster() == null
                                 ? "default"
-                                : String.valueOf(previous.get("target_cluster"))
-                        : String.valueOf(requestedCluster);
+                                : previous.targetCluster()
+                        : requestedCluster;
         if (sameDesiredState(previous, revision, plan, desiredState, targetCluster)) {
             if (reconcile) {
                 // Even an idempotent mutation reconciles so missing assignments/status can be
                 // repaired.
-                runtime.reconcileDesiredState(tenantId, ruleKey, targetCluster, desiredState);
+                runtime.reconcileDesiredState(
+                        tenantId, ruleKey, targetCluster, desiredState.name());
             }
             return previous;
         }
         int updated =
                 repository.updateDesiredState(
-                        revision.id(), desiredState, targetCluster, tenantId, ruleKey);
+                        new ManagedDetectionRepositoryPort.DesiredStateCommand(
+                                revision.revisionId(),
+                                desiredState,
+                                targetCluster,
+                                tenantId,
+                                ruleKey));
         if (updated == 0) {
             repository.insertDeployment(
-                    deploymentId, tenantId, ruleKey, revision.id(), desiredState, targetCluster);
-        } else {
-            deploymentId = repository.findDeploymentId(tenantId, ruleKey);
+                    new ManagedDetectionRepositoryPort.NewDeployment(
+                            deploymentId,
+                            tenantId,
+                            ruleKey,
+                            revision.revisionId(),
+                            desiredState,
+                            targetCluster));
         }
-        Map<String, Object> deployment = findDeployment(tenantId, ruleKey);
+        RuleDeployment deployment = findDeployment(tenantId, ruleKey);
         insertHistory(deployment, actor);
         if (reconcile) {
             // This call joins the surrounding transaction; no physical Flink operation is
             // performed.
-            runtime.reconcileDesiredState(tenantId, ruleKey, targetCluster, desiredState);
+            runtime.reconcileDesiredState(tenantId, ruleKey, targetCluster, desiredState.name());
         }
         return deployment;
     }
 
-    private Map<String, Object> pendingSummary(Map<String, Object> deployment) {
-        Map<String, Object> summary = new LinkedHashMap<>();
-        summary.put("ruleKey", deployment.get("rule_key"));
-        summary.put("deploymentId", deployment.get("deployment_id"));
-        summary.put("desiredState", deployment.get("desired_state"));
-        summary.put("targetCluster", deployment.get("target_cluster"));
-        summary.put("generation", deployment.get("generation"));
-        summary.put("status", deployment.get("status"));
-        return summary;
+    private DeploymentSummary pendingSummary(RuleDeployment deployment) {
+        return new DeploymentSummary(
+                deployment.ruleKey(),
+                deployment.deploymentId(),
+                deployment.desiredState(),
+                deployment.targetCluster(),
+                deployment.generation(),
+                deployment.status());
     }
 
-    private Revision findCurrentRevision(Map<String, Object> rule) {
+    private RuleRevision findCurrentRevision(Map<String, Object> rule) {
         String ruleKey = String.valueOf(rule.get("id"));
         String definition = json(rule);
         String hash = sha256(definition);
-        ManagedDetectionRepository.RuleRevisionRow row = repository.findRevision(ruleKey, hash);
-        return row == null ? null : revision(row);
+        RuleRevision row = repository.findRevision(ruleKey, hash);
+        return row;
     }
 
-    private Plan findPlan(Revision revision) {
-        ManagedDetectionRepository.DetectionPlanRow row =
-                repository.findPlan(revision.id(), DetectionPlanCompiler.VERSION);
-        return row == null ? null : plan(row);
+    private DetectionPlanArtifact findPlan(RuleRevision revision) {
+        return repository.findPlan(revision.revisionId(), DetectionPlanCompiler.VERSION);
     }
 
     private boolean sameDesiredState(
-            Map<String, Object> previous,
-            Revision requestedRevision,
-            Plan requestedPlan,
-            String desiredState,
+            RuleDeployment previous,
+            RuleRevision requestedRevision,
+            DetectionPlanArtifact requestedPlan,
+            DesiredState desiredState,
             String targetCluster) {
         if (previous == null
-                || !desiredState.equals(previous.get("desired_state"))
-                || !targetCluster.equals(previous.get("target_cluster"))) {
+                || desiredState != previous.desiredState()
+                || !targetCluster.equals(previous.targetCluster())) {
             return false;
         }
-        UUID previousRevisionId = uuid(previous.get("desired_revision_id"));
+        UUID previousRevisionId = previous.desiredRevisionId();
         // Revision provenance is part of logical desired state even when the compiled physical
         // plan hash is unchanged.  An explicit deploy of a newer equivalent revision must be
         // recorded, while the runtime layer can keep the existing physical generation.
-        if (!requestedRevision.id().equals(previousRevisionId)) {
+        if (!requestedRevision.revisionId().equals(previousRevisionId)) {
             return false;
         }
-        Plan previousPlan = previousRevisionId == null ? null : findPlan(previousRevisionId);
-        return previousPlan != null && previousPlan.hash().equals(requestedPlan.hash());
+        DetectionPlanArtifact previousPlan =
+                previousRevisionId == null ? null : findPlan(previousRevisionId);
+        return previousPlan != null && previousPlan.planHash().equals(requestedPlan.planHash());
     }
 
-    private Plan findPlan(UUID revisionId) {
-        ManagedDetectionRepository.DetectionPlanRow row =
-                repository.findPlan(revisionId, DetectionPlanCompiler.VERSION);
-        return row == null ? null : plan(row);
+    private DetectionPlanArtifact findPlan(UUID revisionId) {
+        return repository.findPlan(revisionId, DetectionPlanCompiler.VERSION);
     }
 
-    private static UUID uuid(Object value) {
-        if (value instanceof UUID uuid) return uuid;
-        try {
-            return UUID.fromString(String.valueOf(value));
-        } catch (RuntimeException e) {
-            return null;
-        }
-    }
-
-    private Revision revisionFor(Map<String, Object> rule, Object requestedId, String actor) {
+    private RuleRevision revisionFor(Map<String, Object> rule, UUID requestedId, String actor) {
         if (requestedId == null) return ensureRevision(rule, actor);
-        UUID id;
-        try {
-            id = UUID.fromString(String.valueOf(requestedId));
-        } catch (IllegalArgumentException e) {
-            throw new IllegalArgumentException("revisionId must be a UUID", e);
-        }
-        ManagedDetectionRepository.RuleRevisionRow row =
-                repository.findRevision(id, String.valueOf(rule.get("id")));
+        RuleRevision row = repository.findRevision(requestedId, String.valueOf(rule.get("id")));
         if (row == null)
             throw new NotFoundException("revision not found or does not belong to rule");
-        return revision(row);
+        return row;
     }
 
-    private Revision ensureRevision(Map<String, Object> rule, String actor) {
+    private RuleRevision ensureRevision(Map<String, Object> rule, String actor) {
         String ruleKey = String.valueOf(rule.get("id"));
         String definition = json(rule);
         String hash = sha256(definition);
-        ManagedDetectionRepository.RuleRevisionRow existing =
-                repository.findRevision(ruleKey, hash);
-        if (existing != null) return revision(existing);
+        RuleRevision existing = repository.findRevision(ruleKey, hash);
+        if (existing != null) return existing;
         int ruleUpdated =
                 repository.updateCatalog(
                         ruleKey,
@@ -272,9 +276,10 @@ public class ManagedDetectionService {
                 // source of truth.
             }
         }
-        Revision revision =
-                new Revision(
+        RuleRevision revision =
+                new RuleRevision(
                         UUID.randomUUID(),
+                        ruleKey,
                         repository.latestRevisionNumber(ruleKey) + 1,
                         definition,
                         hash,
@@ -282,109 +287,61 @@ public class ManagedDetectionService {
                         actor == null || actor.isBlank() ? "system" : actor,
                         Instant.now());
         try {
-            repository.insertRevision(
-                    new ManagedDetectionRepository.RuleRevisionRow(
-                            revision.id(),
-                            ruleKey,
-                            revision.number(),
-                            revision.definition(),
-                            revision.hash(),
-                            revision.sourceCommit(),
-                            revision.createdBy(),
-                            revision.createdAt()));
+            repository.insertRevision(revision);
         } catch (DuplicateKeyException e) {
             return ensureRevision(rule, actor);
         }
-        return revision(repository.findRevision(ruleKey, hash));
+        return repository.findRevision(ruleKey, hash);
     }
 
-    private Plan ensurePlan(Map<String, Object> rule, Revision revision) {
-        ManagedDetectionRepository.DetectionPlanRow existing =
-                repository.findPlan(revision.id(), DetectionPlanCompiler.VERSION);
+    private DetectionPlanArtifact ensurePlan(Map<String, Object> rule, RuleRevision revision) {
+        DetectionPlanArtifact existing =
+                repository.findPlan(revision.revisionId(), DetectionPlanCompiler.VERSION);
         // A revision is immutable: an existing artifact is authoritative and must not be recompiled
         // or rehashed merely because a caller inspects or deploys the rule again.
-        if (existing != null) return plan(existing);
+        if (existing != null) return existing;
 
         Map<String, Object> immutableRule;
         try {
-            immutableRule = mapper.readValue(revision.definition(), Map.class);
+            immutableRule = mapper.readValue(revision.definitionJson(), Map.class);
             if (immutableRule == null) {
                 throw new IllegalStateException("definition JSON root must be an object");
             }
         } catch (Exception failure) {
             throw new IllegalStateException(
-                    "invalid immutable RuleRevision definition for revision " + revision.id(),
+                    "invalid immutable RuleRevision definition for revision "
+                            + revision.revisionId(),
                     failure);
         }
         DetectionPlanCompiler.CompiledPlan compiled =
-                compiler.compile(immutableRule, revision.number());
+                compiler.compile(immutableRule, revision.revision());
         UUID planId = UUID.randomUUID();
         try {
             repository.insertPlan(
-                    new ManagedDetectionRepository.DetectionPlanRow(
+                    new DetectionPlanArtifact(
                             planId,
+                            revision.revisionId(),
                             DetectionPlanCompiler.VERSION,
                             compiled.json(),
                             compiled.hash(),
-                            Instant.now()),
-                    revision.id());
+                            Instant.now()));
         } catch (DuplicateKeyException ignored) {
             // Another request created the immutable artifact; return that canonical row below.
         }
-        ManagedDetectionRepository.DetectionPlanRow stored =
-                repository.findPlan(revision.id(), DetectionPlanCompiler.VERSION);
+        DetectionPlanArtifact stored =
+                repository.findPlan(revision.revisionId(), DetectionPlanCompiler.VERSION);
         if (stored == null)
             throw new IllegalStateException("detection plan artifact was not created");
-        return plan(stored);
+        return stored;
     }
 
-    private Map<String, Object> findDeployment(String tenantId, String ruleKey) {
-        ManagedDetectionRepository.RuleDeploymentRow row =
-                repository.findDeployment(tenantId, ruleKey);
-        if (row == null) return null;
-        Map<String, Object> result = new LinkedHashMap<>();
-        result.put("deployment_id", row.deploymentId());
-        result.put("tenant_id", row.tenantId());
-        result.put("rule_key", row.ruleKey());
-        result.put("desired_revision_id", row.desiredRevisionId());
-        result.put("desired_state", row.desiredState());
-        result.put("generation", row.generation());
-        result.put("observed_generation", row.observedGeneration());
-        result.put("target_cluster", row.targetCluster());
-        result.put("status", row.status());
-        result.put("last_error", row.lastError());
-        result.put("created_at", row.createdAt());
-        result.put("updated_at", row.updatedAt());
-        return result;
+    private RuleDeployment findDeployment(String tenantId, String ruleKey) {
+        return repository.findDeployment(tenantId, ruleKey);
     }
 
-    private void insertHistory(Map<String, Object> deployment, String actor) {
+    private void insertHistory(RuleDeployment deployment, String actor) {
         if (deployment == null) return;
-        repository.insertHistory(
-                repository.findDeployment(
-                        String.valueOf(deployment.get("tenant_id")),
-                        String.valueOf(deployment.get("rule_key"))),
-                actor);
-    }
-
-    private static Revision revision(ManagedDetectionRepository.RuleRevisionRow row) {
-        return new Revision(
-                row.revisionId(),
-                row.revision(),
-                row.definitionJson(),
-                row.contentHash(),
-                row.sourceCommit(),
-                row.createdBy(),
-                row.createdAt());
-    }
-
-    private static Plan plan(ManagedDetectionRepository.DetectionPlanRow row) {
-        return new Plan(
-                row.planId(),
-                row.compilerVersion(),
-                row.planJson(),
-                row.planHash(),
-                row.createdAt());
+        repository.insertHistory(deployment, actor);
     }
 
     private String json(Object value) {
@@ -403,48 +360,6 @@ public class ManagedDetectionService {
                                     .digest(value.getBytes(StandardCharsets.UTF_8)));
         } catch (Exception e) {
             throw new IllegalStateException("规则 hash 计算失败", e);
-        }
-    }
-
-    private record Revision(
-            UUID id,
-            int number,
-            String definition,
-            String hash,
-            String sourceCommit,
-            String createdBy,
-            Instant createdAt) {
-        Map<String, Object> asMap() {
-            return Map.of(
-                    "revisionId",
-                    id,
-                    "revision",
-                    number,
-                    "contentHash",
-                    hash,
-                    "sourceCommit",
-                    sourceCommit,
-                    "createdBy",
-                    createdBy,
-                    "createdAt",
-                    createdAt);
-        }
-    }
-
-    private record Plan(
-            UUID id, String compilerVersion, String json, String hash, Instant createdAt) {
-        Map<String, Object> asMap() {
-            return Map.of(
-                    "planId",
-                    id,
-                    "compilerVersion",
-                    compilerVersion,
-                    "planHash",
-                    hash,
-                    "plan",
-                    json,
-                    "createdAt",
-                    createdAt);
         }
     }
 }

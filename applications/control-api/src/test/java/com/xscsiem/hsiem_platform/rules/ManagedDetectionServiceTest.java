@@ -51,15 +51,15 @@ class ManagedDetectionServiceTest {
                         new DetectionRuntimeService(new DetectionRuntimeRepository(jdbc), 1));
         TenantContext.set("default");
 
-        Map<String, Object> inspected = managed.inspect("rule-managed-test", "tester");
+        ManagedDetectionInspection inspected = managed.inspect("rule-managed-test", "tester");
 
-        assertNotNull(inspected.get("rule"));
-        assertNull(inspected.get("revision"));
-        assertNull(inspected.get("plan"));
-        assertNull(inspected.get("deployment"));
-        assertNull(inspected.get("assignment"));
-        assertNull(inspected.get("jobGroup"));
-        assertNull(inspected.get("runtimeStatus"));
+        assertNotNull(inspected.rule());
+        assertNull(inspected.revision());
+        assertNull(inspected.plan());
+        assertNull(inspected.deployment());
+        assertNull(inspected.runtime().get("assignment"));
+        assertNull(inspected.runtime().get("jobGroup"));
+        assertNull(inspected.runtime().get("runtimeStatus"));
         assertNoManagedRows(jdbc);
     }
 
@@ -76,10 +76,10 @@ class ManagedDetectionServiceTest {
                         new DetectionRuntimeService(new DetectionRuntimeRepository(jdbc), 1));
         TenantContext.set("default");
 
-        Map<String, Object> first =
-                managed.deploy("default", "rule-managed-test", Map.of(), "tester");
-        assertEquals("RUNNING", first.get("desired_state"));
-        assertNotNull(first.get("desired_revision_id"));
+        RuleDeployment first =
+                managed.deploy("default", "rule-managed-test", DeploymentCommand.empty(), "tester");
+        assertEquals(DesiredState.RUNNING, first.desiredState());
+        assertNotNull(first.desiredRevisionId());
         assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM rule_revision", Integer.class));
         assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM detection_plan", Integer.class));
         assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM rule_deployment", Integer.class));
@@ -87,19 +87,19 @@ class ManagedDetectionServiceTest {
                 1,
                 jdbc.queryForObject("SELECT COUNT(*) FROM rule_deployment_history", Integer.class));
 
-        Map<String, Object> inspected = managed.inspect("rule-managed-test", "tester");
-        assertNotNull(inspected.get("revision"));
-        assertNotNull(inspected.get("plan"));
-        assertNotNull(inspected.get("deployment"));
-        assertNotNull(inspected.get("assignment"));
-        assertNotNull(inspected.get("jobGroup"));
-        assertNotNull(inspected.get("runtimeStatus"));
-        long generation = ((Number) first.get("generation")).longValue();
+        ManagedDetectionInspection inspected = managed.inspect("rule-managed-test", "tester");
+        assertNotNull(inspected.revision());
+        assertNotNull(inspected.plan());
+        assertNotNull(inspected.deployment());
+        assertNotNull(inspected.runtime().get("assignment"));
+        assertNotNull(inspected.runtime().get("jobGroup"));
+        assertNotNull(inspected.runtime().get("runtimeStatus"));
+        long generation = first.generation();
 
-        Map<String, Object> repeated =
-                managed.deploy("default", "rule-managed-test", Map.of(), "tester");
+        RuleDeployment repeated =
+                managed.deploy("default", "rule-managed-test", DeploymentCommand.empty(), "tester");
 
-        assertEquals(generation, ((Number) repeated.get("generation")).longValue());
+        assertEquals(generation, repeated.generation());
         assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM rule_revision", Integer.class));
         assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM detection_plan", Integer.class));
         assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM rule_deployment", Integer.class));
@@ -148,7 +148,7 @@ class ManagedDetectionServiceTest {
                                 managed.deploy(
                                         "default",
                                         "rule-managed-test",
-                                        Map.of("revisionId", revisionId),
+                                        DeploymentCommand.fromApi(Map.of("revisionId", revisionId)),
                                         "tester"));
         assertTrue(failure.getMessage().contains(revisionId.toString()));
         assertNotNull(failure.getCause());
@@ -172,13 +172,13 @@ class ManagedDetectionServiceTest {
                         new DetectionRuntimeService(new DetectionRuntimeRepository(jdbc), 1));
         TenantContext.set("default");
 
-        Map<String, Object> deployed =
-                managed.deploy("default", "rule-managed-test", Map.of(), "tester");
-        Object revisionId = deployed.get("desired_revision_id");
+        RuleDeployment deployed =
+                managed.deploy("default", "rule-managed-test", DeploymentCommand.empty(), "tester");
+        UUID revisionId = deployed.desiredRevisionId();
 
-        Map<String, Object> stopped = managed.stop("default", "rule-managed-test", "tester");
-        assertEquals("STOPPED", stopped.get("desired_state"));
-        assertEquals(2L, ((Number) stopped.get("generation")).longValue());
+        RuleDeployment stopped = managed.stop("default", "rule-managed-test", "tester");
+        assertEquals(DesiredState.STOPPED, stopped.desiredState());
+        assertEquals(2L, stopped.generation());
         assertEquals(
                 2,
                 jdbc.queryForObject("SELECT COUNT(*) FROM rule_deployment_history", Integer.class));
@@ -186,8 +186,8 @@ class ManagedDetectionServiceTest {
                 jdbc.queryForObject(
                         "SELECT desired_generation FROM detection_job_group", Long.class);
 
-        Map<String, Object> repeatedStop = managed.stop("default", "rule-managed-test", "tester");
-        assertEquals(2L, ((Number) repeatedStop.get("generation")).longValue());
+        RuleDeployment repeatedStop = managed.stop("default", "rule-managed-test", "tester");
+        assertEquals(2L, repeatedStop.generation());
         assertEquals(
                 2,
                 jdbc.queryForObject("SELECT COUNT(*) FROM rule_deployment_history", Integer.class));
@@ -196,11 +196,14 @@ class ManagedDetectionServiceTest {
                 jdbc.queryForObject(
                         "SELECT desired_generation FROM detection_job_group", Long.class));
 
-        Map<String, Object> rolledBack =
+        RuleDeployment rolledBack =
                 managed.rollback(
-                        "default", "rule-managed-test", Map.of("revisionId", revisionId), "tester");
-        assertEquals("RUNNING", rolledBack.get("desired_state"));
-        assertEquals(3L, ((Number) rolledBack.get("generation")).longValue());
+                        "default",
+                        "rule-managed-test",
+                        DeploymentCommand.fromApi(Map.of("revisionId", revisionId)),
+                        "tester");
+        assertEquals(DesiredState.RUNNING, rolledBack.desiredState());
+        assertEquals(3L, rolledBack.generation());
         assertEquals(
                 3,
                 jdbc.queryForObject("SELECT COUNT(*) FROM rule_deployment_history", Integer.class));
@@ -208,10 +211,13 @@ class ManagedDetectionServiceTest {
                 jdbc.queryForObject(
                         "SELECT desired_generation FROM detection_job_group", Long.class);
 
-        Map<String, Object> repeatedRollback =
+        RuleDeployment repeatedRollback =
                 managed.rollback(
-                        "default", "rule-managed-test", Map.of("revisionId", revisionId), "tester");
-        assertEquals(3L, ((Number) repeatedRollback.get("generation")).longValue());
+                        "default",
+                        "rule-managed-test",
+                        DeploymentCommand.fromApi(Map.of("revisionId", revisionId)),
+                        "tester");
+        assertEquals(3L, repeatedRollback.generation());
         assertEquals(
                 3,
                 jdbc.queryForObject("SELECT COUNT(*) FROM rule_deployment_history", Integer.class));
@@ -235,14 +241,11 @@ class ManagedDetectionServiceTest {
                         new DetectionRuntimeService(new DetectionRuntimeRepository(jdbc), 1));
         TenantContext.set("default");
 
-        managed.deploy("default", "rule-managed-test", Map.of(), "tester");
-        Map<String, Object> firstRevision = managed.inspect("rule-managed-test", "tester");
-        @SuppressWarnings("unchecked")
-        Map<String, Object> firstPlan = (Map<String, Object>) firstRevision.get("plan");
-        String firstContentHash =
-                String.valueOf(
-                        ((Map<String, Object>) firstRevision.get("revision")).get("contentHash"));
-        String firstPlanHash = String.valueOf(firstPlan.get("planHash"));
+        managed.deploy("default", "rule-managed-test", DeploymentCommand.empty(), "tester");
+        ManagedDetectionInspection firstRevision = managed.inspect("rule-managed-test", "tester");
+        DetectionPlanArtifact firstPlan = firstRevision.plan();
+        String firstContentHash = firstRevision.revision().contentHash();
+        String firstPlanHash = firstPlan.planHash();
         Map<String, Object> physicalBefore =
                 jdbc.queryForMap(
                         """
@@ -262,19 +265,13 @@ class ManagedDetectionServiceTest {
 
         Files.writeString(
                 ruleFile, rule("managed test", "login", false, "https://example.test/reference"));
-        managed.deploy("default", "rule-managed-test", Map.of(), "tester");
+        managed.deploy("default", "rule-managed-test", DeploymentCommand.empty(), "tester");
 
-        Map<String, Object> secondRevision = managed.inspect("rule-managed-test", "tester");
-        @SuppressWarnings("unchecked")
-        Map<String, Object> secondRevisionView =
-                (Map<String, Object>) secondRevision.get("revision");
-        @SuppressWarnings("unchecked")
-        Map<String, Object> secondPlan = (Map<String, Object>) secondRevision.get("plan");
-        assertNotEquals(firstContentHash, secondRevisionView.get("contentHash"));
+        ManagedDetectionInspection secondRevision = managed.inspect("rule-managed-test", "tester");
+        assertNotEquals(firstContentHash, secondRevision.revision().contentHash());
         assertNotEquals(
-                ((Map<String, Object>) firstRevision.get("revision")).get("revisionId"),
-                secondRevisionView.get("revisionId"));
-        assertEquals(firstPlanHash, secondPlan.get("planHash"));
+                firstRevision.revision().revisionId(), secondRevision.revision().revisionId());
+        assertEquals(firstPlanHash, secondRevision.plan().planHash());
         assertEquals(2, jdbc.queryForObject("SELECT COUNT(*) FROM rule_revision", Integer.class));
         assertEquals(2, jdbc.queryForObject("SELECT COUNT(*) FROM detection_plan", Integer.class));
         assertEquals(

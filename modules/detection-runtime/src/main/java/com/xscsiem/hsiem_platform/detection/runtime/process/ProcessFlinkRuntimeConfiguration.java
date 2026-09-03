@@ -1,7 +1,7 @@
 package com.xscsiem.hsiem_platform.detection.runtime.process;
 
 import com.xscsiem.hsiem_platform.detection.runtime.DetectionArtifactBuilder;
-import com.xscsiem.hsiem_platform.detection.runtime.DetectionArtifactRepository;
+import com.xscsiem.hsiem_platform.detection.runtime.DetectionArtifactRepositoryPort;
 import com.xscsiem.hsiem_platform.detection.runtime.DetectionJobNameCodec;
 import com.xscsiem.hsiem_platform.rules.runtime.RuntimeManifestCodec;
 import java.nio.file.Path;
@@ -36,7 +36,7 @@ public class ProcessFlinkRuntimeConfiguration {
 
     @Bean
     public DetectionArtifactBuilder detectionArtifactBuilder(
-            DetectionArtifactRepository repository,
+            DetectionArtifactRepositoryPort repository,
             RuntimeManifestCodec codec,
             @Value("${app.detection.artifact-root:./data/detection-artifacts}") String artifactRoot,
             @Value("${app.detection.container-artifact-root:/opt/flink/detection-artifacts}")

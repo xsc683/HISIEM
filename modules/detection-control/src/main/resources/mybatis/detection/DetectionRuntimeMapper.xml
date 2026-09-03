@@ -1,0 +1,115 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+  PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.xscsiem.hsiem_platform.rules.runtime.DetectionRuntimeMapper">
+  <resultMap id="groupRow" type="com.xscsiem.hsiem_platform.rules.runtime.DetectionRuntimeRepository$DetectionJobGroupRow">
+    <constructor>
+      <arg column="tenant_id" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="group_key" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="target_cluster" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="source_family" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="category" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="bucket" javaType="_int" jdbcType="INTEGER"/>
+      <arg column="desired_generation" javaType="_long" jdbcType="BIGINT"/>
+      <arg column="expected_manifest_json" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="expected_manifest_hash" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="status" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="job_id" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="job_key" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="last_error" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="created_at" javaType="java.time.Instant" jdbcType="TIMESTAMP"/>
+      <arg column="updated_at" javaType="java.time.Instant" jdbcType="TIMESTAMP"/>
+    </constructor>
+  </resultMap>
+  <resultMap id="desiredRow" type="com.xscsiem.hsiem_platform.rules.runtime.DetectionRuntimeRepository$DesiredDetectionRow">
+    <constructor>
+      <arg column="deployment_id" javaType="java.util.UUID" jdbcType="OTHER" typeHandler="com.xscsiem.hsiem_platform.rules.UuidTypeHandler"/>
+      <arg column="tenant_id" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="rule_key" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="desired_revision_id" javaType="java.util.UUID" jdbcType="OTHER" typeHandler="com.xscsiem.hsiem_platform.rules.UuidTypeHandler"/>
+      <arg column="deployment_generation" javaType="_long" jdbcType="BIGINT"/>
+      <arg column="target_cluster" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="revision" javaType="_long" jdbcType="BIGINT"/>
+      <arg column="plan_id" javaType="java.util.UUID" jdbcType="OTHER" typeHandler="com.xscsiem.hsiem_platform.rules.UuidTypeHandler"/>
+      <arg column="plan_hash" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="plan_json" javaType="java.lang.String" jdbcType="VARCHAR"/>
+    </constructor>
+  </resultMap>
+  <resultMap id="deploymentRow" type="com.xscsiem.hsiem_platform.rules.runtime.DetectionRuntimeRepository$RuleDeploymentRow">
+    <constructor>
+      <arg column="deployment_id" javaType="java.util.UUID" jdbcType="OTHER" typeHandler="com.xscsiem.hsiem_platform.rules.UuidTypeHandler"/>
+      <arg column="tenant_id" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="rule_key" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="desired_revision_id" javaType="java.util.UUID" jdbcType="OTHER" typeHandler="com.xscsiem.hsiem_platform.rules.UuidTypeHandler"/>
+      <arg column="desired_state" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="generation" javaType="_long" jdbcType="BIGINT"/>
+      <arg column="observed_generation" javaType="_long" jdbcType="BIGINT"/>
+      <arg column="target_cluster" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="status" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="last_error" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="created_at" javaType="java.time.Instant" jdbcType="TIMESTAMP"/>
+      <arg column="updated_at" javaType="java.time.Instant" jdbcType="TIMESTAMP"/>
+    </constructor>
+  </resultMap>
+  <resultMap id="assignmentRow" type="com.xscsiem.hsiem_platform.rules.runtime.DetectionRuntimeRepository$RuntimeAssignmentRow">
+    <constructor>
+      <arg column="tenant_id" javaType="java.lang.String" jdbcType="VARCHAR"/><arg column="rule_key" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="deployment_id" javaType="java.util.UUID" jdbcType="OTHER" typeHandler="com.xscsiem.hsiem_platform.rules.UuidTypeHandler"/><arg column="revision" javaType="_long" jdbcType="BIGINT"/>
+      <arg column="plan_id" javaType="java.util.UUID" jdbcType="OTHER" typeHandler="com.xscsiem.hsiem_platform.rules.UuidTypeHandler"/><arg column="plan_hash" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="group_key" javaType="java.lang.String" jdbcType="VARCHAR"/><arg column="generation" javaType="_long" jdbcType="BIGINT"/>
+      <arg column="created_at" javaType="java.time.Instant" jdbcType="TIMESTAMP"/><arg column="updated_at" javaType="java.time.Instant" jdbcType="TIMESTAMP"/>
+    </constructor>
+  </resultMap>
+  <resultMap id="statusRow" type="com.xscsiem.hsiem_platform.rules.runtime.DetectionRuntimeRepository$RuleRuntimeStatusRow">
+    <constructor>
+      <arg column="tenant_id" javaType="java.lang.String" jdbcType="VARCHAR"/><arg column="rule_key" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="deployment_id" javaType="java.util.UUID" jdbcType="OTHER" typeHandler="com.xscsiem.hsiem_platform.rules.UuidTypeHandler"/><arg column="group_key" javaType="java.lang.String" jdbcType="VARCHAR"/><arg column="target_cluster" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="job_id" javaType="java.lang.String" jdbcType="VARCHAR"/><arg column="job_key" javaType="java.lang.String" jdbcType="VARCHAR"/><arg column="observed_revision" javaType="java.lang.Long" jdbcType="BIGINT"/><arg column="observed_generation" javaType="java.lang.Long" jdbcType="BIGINT"/>
+      <arg column="observed_plan_hash" javaType="java.lang.String" jdbcType="VARCHAR"/><arg column="runtime_state" javaType="java.lang.String" jdbcType="VARCHAR"/><arg column="error_code" javaType="java.lang.String" jdbcType="VARCHAR"/><arg column="error_message" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="created_at" javaType="java.time.Instant" jdbcType="TIMESTAMP"/><arg column="updated_at" javaType="java.time.Instant" jdbcType="TIMESTAMP"/>
+    </constructor>
+  </resultMap>
+  <resultMap id="scopeRow" type="com.xscsiem.hsiem_platform.rules.runtime.DetectionRuntimeRepository$RuntimeStatusScopeRow">
+    <constructor>
+      <arg column="tenant_id" javaType="java.lang.String" jdbcType="VARCHAR"/><arg column="rule_key" javaType="java.lang.String" jdbcType="VARCHAR"/><arg column="deployment_id" javaType="java.util.UUID" jdbcType="OTHER" typeHandler="com.xscsiem.hsiem_platform.rules.UuidTypeHandler"/><arg column="group_key" javaType="java.lang.String" jdbcType="VARCHAR"/><arg column="target_cluster" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="job_id" javaType="java.lang.String" jdbcType="VARCHAR"/><arg column="job_key" javaType="java.lang.String" jdbcType="VARCHAR"/><arg column="observed_revision" javaType="java.lang.Long" jdbcType="BIGINT"/><arg column="observed_generation" javaType="java.lang.Long" jdbcType="BIGINT"/><arg column="observed_plan_hash" javaType="java.lang.String" jdbcType="VARCHAR"/><arg column="runtime_state" javaType="java.lang.String" jdbcType="VARCHAR"/><arg column="error_code" javaType="java.lang.String" jdbcType="VARCHAR"/><arg column="error_message" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="desired_state" javaType="java.lang.String" jdbcType="VARCHAR"/><arg column="desired_revision_id" javaType="java.util.UUID" jdbcType="OTHER" typeHandler="com.xscsiem.hsiem_platform.rules.UuidTypeHandler"/><arg column="desired_generation" javaType="java.lang.Long" jdbcType="BIGINT"/><arg column="deployment_status" javaType="java.lang.String" jdbcType="VARCHAR"/>
+    </constructor>
+  </resultMap>
+  <resultMap id="manifestRow" type="com.xscsiem.hsiem_platform.rules.runtime.DetectionRuntimeRepository$RuntimeManifestRow">
+    <constructor>
+      <arg column="manifest_id" javaType="_long" jdbcType="BIGINT"/><arg column="tenant_id" javaType="java.lang.String" jdbcType="VARCHAR"/><arg column="group_key" javaType="java.lang.String" jdbcType="VARCHAR"/><arg column="target_cluster" javaType="java.lang.String" jdbcType="VARCHAR"/><arg column="job_id" javaType="java.lang.String" jdbcType="VARCHAR"/><arg column="job_key" javaType="java.lang.String" jdbcType="VARCHAR"/><arg column="generation" javaType="_long" jdbcType="BIGINT"/><arg column="manifest_json" javaType="java.lang.String" jdbcType="VARCHAR"/><arg column="manifest_hash" javaType="java.lang.String" jdbcType="VARCHAR"/><arg column="observed_at" javaType="java.time.Instant" jdbcType="TIMESTAMP"/>
+    </constructor>
+  </resultMap>
+  <sql id="groupColumns">tenant_id, group_key, target_cluster, source_family, category, bucket, desired_generation, expected_manifest_json, expected_manifest_hash, status, job_id, job_key, last_error, created_at, updated_at</sql>
+  <sql id="fencePredicate">tenant_id = #{fence.tenantId} AND group_key = #{fence.groupKey} AND target_cluster = #{fence.targetCluster} AND controller_lease_owner = #{fence.owner} AND controller_fencing_token = #{fence.fencingToken} AND desired_generation = #{fence.desiredGeneration} AND controller_lease_until &gt; CURRENT_TIMESTAMP</sql>
+  <select id="findAssignmentGroups" resultType="string">SELECT group_key FROM rule_job_assignment WHERE tenant_id = #{tenantId} AND rule_key = #{ruleKey}</select>
+  <select id="findGroupRows" resultMap="groupRow">SELECT <include refid="groupColumns"/> FROM detection_job_group WHERE tenant_id = #{tenantId} ORDER BY group_key</select>
+  <select id="findGroup" resultMap="groupRow">SELECT <include refid="groupColumns"/> FROM detection_job_group WHERE tenant_id = #{tenantId} AND group_key = #{groupKey}</select>
+  <select id="findGroupByTarget" resultMap="groupRow">SELECT <include refid="groupColumns"/> FROM detection_job_group WHERE tenant_id = #{tenantId} AND group_key = #{groupKey} AND target_cluster = #{targetCluster}</select>
+  <select id="findDesiredRunningRows" resultMap="desiredRow">SELECT d.deployment_id, d.tenant_id, d.rule_key, d.desired_revision_id, d.generation AS deployment_generation, d.target_cluster, r.revision, p.plan_id, p.plan_hash, p.plan_json FROM rule_deployment d JOIN rule_revision r ON r.revision_id = d.desired_revision_id JOIN detection_plan p ON p.revision_id = r.revision_id AND p.compiler_version = #{compilerVersion} WHERE d.tenant_id = #{tenantId} AND d.desired_state = 'RUNNING' ORDER BY d.rule_key</select>
+  <select id="findDeploymentRow" resultMap="deploymentRow">SELECT deployment_id, tenant_id, rule_key, desired_revision_id, desired_state, generation, observed_generation, target_cluster, status, last_error, created_at, updated_at FROM rule_deployment WHERE tenant_id = #{tenantId} AND rule_key = #{ruleKey}</select>
+  <select id="findAssignmentRow" resultMap="assignmentRow">SELECT tenant_id, rule_key, deployment_id, revision, plan_id, plan_hash, group_key, generation, created_at, updated_at FROM rule_job_assignment WHERE tenant_id = #{tenantId} AND rule_key = #{ruleKey}</select>
+  <select id="findRuntimeStatusRow" resultMap="statusRow">SELECT tenant_id, rule_key, deployment_id, group_key, target_cluster, job_id, job_key, observed_revision, observed_generation, observed_plan_hash, runtime_state, error_code, error_message, created_at, updated_at FROM rule_runtime_status WHERE tenant_id = #{tenantId} AND rule_key = #{ruleKey}</select>
+  <select id="findStatusesInScopeRows" resultMap="scopeRow">SELECT s.tenant_id, s.rule_key, s.deployment_id, s.group_key, s.target_cluster, s.job_id, s.job_key, s.observed_revision, s.observed_generation, s.observed_plan_hash, s.runtime_state, s.error_code, s.error_message, s.created_at, s.updated_at, d.desired_state, d.desired_revision_id, d.generation AS desired_generation, d.status AS deployment_status FROM rule_runtime_status s LEFT JOIN rule_deployment d ON d.tenant_id = s.tenant_id AND d.rule_key = s.rule_key WHERE s.tenant_id = #{tenantId} AND s.group_key = #{groupKey} AND s.target_cluster = #{targetCluster} ORDER BY s.rule_key</select>
+  <select id="findLatestObservedManifest" resultMap="manifestRow">SELECT manifest_id, tenant_id, group_key, target_cluster, job_id, job_key, generation, manifest_json, manifest_hash, observed_at FROM detection_runtime_manifest WHERE tenant_id = #{tenantId} AND group_key = #{groupKey} AND target_cluster = #{targetCluster} ORDER BY observed_at DESC, manifest_id DESC FETCH FIRST 1 ROW ONLY</select>
+  <select id="lockCurrentObservation" resultType="int">SELECT 1 FROM detection_job_group WHERE <include refid="fencePredicate"/> FOR UPDATE</select>
+  <delete id="deleteAssignments">DELETE FROM rule_job_assignment WHERE tenant_id = #{tenantId}</delete>
+  <delete id="deleteAssignment">DELETE FROM rule_job_assignment WHERE tenant_id = #{tenantId} AND rule_key = #{ruleKey}</delete>
+  <update id="updateAssignment">UPDATE rule_job_assignment SET deployment_id = #{deploymentId,jdbcType=OTHER,typeHandler=com.xscsiem.hsiem_platform.rules.UuidTypeHandler}, revision = #{revision,jdbcType=BIGINT}, plan_id = #{planId,jdbcType=OTHER,typeHandler=com.xscsiem.hsiem_platform.rules.UuidTypeHandler}, plan_hash = #{planHash,jdbcType=VARCHAR}, group_key = #{groupKey,jdbcType=VARCHAR}, generation = #{generation,jdbcType=BIGINT}, updated_at = CURRENT_TIMESTAMP WHERE tenant_id = #{tenantId,jdbcType=VARCHAR} AND rule_key = #{ruleKey,jdbcType=VARCHAR}</update>
+  <insert id="insertAssignment">INSERT INTO rule_job_assignment (tenant_id, rule_key, deployment_id, revision, plan_id, plan_hash, group_key, generation) VALUES (#{tenantId,jdbcType=VARCHAR}, #{ruleKey,jdbcType=VARCHAR}, #{deploymentId,jdbcType=OTHER,typeHandler=com.xscsiem.hsiem_platform.rules.UuidTypeHandler}, #{revision,jdbcType=BIGINT}, #{planId,jdbcType=OTHER,typeHandler=com.xscsiem.hsiem_platform.rules.UuidTypeHandler}, #{planHash,jdbcType=VARCHAR}, #{groupKey,jdbcType=VARCHAR}, #{generation,jdbcType=BIGINT})</insert>
+  <update id="updateAssignmentGenerations">UPDATE rule_job_assignment SET generation = #{generation,jdbcType=BIGINT}, updated_at = CURRENT_TIMESTAMP WHERE tenant_id = #{tenantId,jdbcType=VARCHAR} AND group_key = #{groupKey,jdbcType=VARCHAR}</update>
+  <update id="updateGroup">UPDATE detection_job_group SET target_cluster = #{targetCluster,jdbcType=VARCHAR}, source_family = #{sourceFamily,jdbcType=VARCHAR}, category = #{category,jdbcType=VARCHAR}, bucket = #{bucket,jdbcType=INTEGER}, desired_generation = #{generation,jdbcType=BIGINT}, expected_manifest_json = #{expectedJson,jdbcType=VARCHAR}, expected_manifest_hash = #{expectedHash,jdbcType=VARCHAR}, status = 'PENDING', job_id = NULL, job_key = NULL, last_error = NULL, reconcile_state = 'PENDING', reconcile_available_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE tenant_id = #{tenantId,jdbcType=VARCHAR} AND group_key = #{groupKey,jdbcType=VARCHAR}</update>
+  <insert id="insertGroup">INSERT INTO detection_job_group (tenant_id, group_key, target_cluster, source_family, category, bucket, desired_generation, expected_manifest_json, expected_manifest_hash, status) VALUES (#{tenantId,jdbcType=VARCHAR}, #{groupKey,jdbcType=VARCHAR}, #{targetCluster,jdbcType=VARCHAR}, #{sourceFamily,jdbcType=VARCHAR}, #{category,jdbcType=VARCHAR}, #{bucket,jdbcType=INTEGER}, #{generation,jdbcType=BIGINT}, #{expectedJson,jdbcType=VARCHAR}, #{expectedHash,jdbcType=VARCHAR}, 'PENDING')</insert>
+  <update id="updatePendingStatus">UPDATE rule_runtime_status SET deployment_id = #{deploymentId,jdbcType=OTHER,typeHandler=com.xscsiem.hsiem_platform.rules.UuidTypeHandler}, group_key = #{groupKey,jdbcType=VARCHAR}, target_cluster = #{targetCluster,jdbcType=VARCHAR}, runtime_state = 'PENDING', error_code = NULL, error_message = NULL, updated_at = CURRENT_TIMESTAMP WHERE tenant_id = #{tenantId,jdbcType=VARCHAR} AND rule_key = #{ruleKey,jdbcType=VARCHAR}</update>
+  <insert id="insertPendingStatus">INSERT INTO rule_runtime_status (tenant_id, rule_key, deployment_id, group_key, target_cluster, runtime_state) VALUES (#{tenantId,jdbcType=VARCHAR}, #{ruleKey,jdbcType=VARCHAR}, #{deploymentId,jdbcType=OTHER,typeHandler=com.xscsiem.hsiem_platform.rules.UuidTypeHandler}, #{groupKey,jdbcType=VARCHAR}, #{targetCluster,jdbcType=VARCHAR}, 'PENDING')</insert>
+  <insert id="insertObservedManifest">INSERT INTO detection_runtime_manifest (tenant_id, group_key, target_cluster, job_id, job_key, generation, manifest_json, manifest_hash) VALUES (#{tenantId,jdbcType=VARCHAR}, #{groupKey,jdbcType=VARCHAR}, #{targetCluster,jdbcType=VARCHAR}, #{jobId,jdbcType=VARCHAR}, #{jobKey,jdbcType=VARCHAR}, #{generation,jdbcType=BIGINT}, #{json,jdbcType=VARCHAR}, #{hash,jdbcType=VARCHAR})</insert>
+  <insert id="insertObservedManifestFenced">INSERT INTO detection_runtime_manifest (tenant_id, group_key, target_cluster, job_id, job_key, generation, manifest_json, manifest_hash) SELECT #{fence.tenantId,jdbcType=VARCHAR}, #{fence.groupKey,jdbcType=VARCHAR}, #{fence.targetCluster,jdbcType=VARCHAR}, #{jobId,jdbcType=VARCHAR}, #{jobKey,jdbcType=VARCHAR}, #{fence.desiredGeneration,jdbcType=BIGINT}, #{json,jdbcType=VARCHAR}, #{hash,jdbcType=VARCHAR} WHERE EXISTS (SELECT 1 FROM detection_job_group WHERE <include refid="fencePredicate"/>)</insert>
+  <update id="updateGroupObserved">UPDATE detection_job_group SET status = #{state,jdbcType=VARCHAR}, job_id = #{jobId,jdbcType=VARCHAR}, job_key = #{jobKey,jdbcType=VARCHAR}, last_error = #{errorMessage,jdbcType=VARCHAR}, updated_at = CURRENT_TIMESTAMP WHERE tenant_id = #{tenantId,jdbcType=VARCHAR} AND group_key = #{groupKey,jdbcType=VARCHAR} AND target_cluster = #{targetCluster,jdbcType=VARCHAR}</update>
+  <update id="updateGroupObservedFenced">UPDATE detection_job_group SET status = #{state,jdbcType=VARCHAR}, job_id = #{jobId,jdbcType=VARCHAR}, job_key = #{jobKey,jdbcType=VARCHAR}, last_error = #{errorMessage,jdbcType=VARCHAR}, updated_at = CURRENT_TIMESTAMP WHERE <include refid="fencePredicate"/></update>
+  <update id="updateRuntimeStatusObserved">UPDATE rule_runtime_status SET job_id = #{jobId,jdbcType=VARCHAR}, job_key = #{jobKey,jdbcType=VARCHAR}, observed_revision = #{revision,jdbcType=BIGINT}, observed_generation = #{generation,jdbcType=BIGINT}, observed_plan_hash = #{planHash,jdbcType=VARCHAR}, runtime_state = #{state,jdbcType=VARCHAR}, last_seen = CURRENT_TIMESTAMP, last_seen_at = CURRENT_TIMESTAMP, error_code = #{errorCode,jdbcType=VARCHAR}, error_message = #{errorMessage,jdbcType=VARCHAR}, updated_at = CURRENT_TIMESTAMP WHERE tenant_id = #{tenantId,jdbcType=VARCHAR} AND rule_key = #{ruleKey,jdbcType=VARCHAR} AND group_key = #{groupKey,jdbcType=VARCHAR} AND target_cluster = #{targetCluster,jdbcType=VARCHAR}</update>
+  <update id="updateRuntimeStatusObservedFenced">UPDATE rule_runtime_status SET job_id = #{jobId,jdbcType=VARCHAR}, job_key = #{jobKey,jdbcType=VARCHAR}, observed_revision = #{revision,jdbcType=BIGINT}, observed_generation = #{generation,jdbcType=BIGINT}, observed_plan_hash = #{planHash,jdbcType=VARCHAR}, runtime_state = #{state,jdbcType=VARCHAR}, last_seen = CURRENT_TIMESTAMP, last_seen_at = CURRENT_TIMESTAMP, error_code = #{errorCode,jdbcType=VARCHAR}, error_message = #{errorMessage,jdbcType=VARCHAR}, updated_at = CURRENT_TIMESTAMP WHERE tenant_id = #{fence.tenantId,jdbcType=VARCHAR} AND rule_key = #{ruleKey,jdbcType=VARCHAR} AND group_key = #{fence.groupKey,jdbcType=VARCHAR} AND target_cluster = #{fence.targetCluster,jdbcType=VARCHAR} AND EXISTS (SELECT 1 FROM detection_job_group WHERE <include refid="fencePredicate"/>)</update>
+  <update id="updateDeploymentRuntimeState">UPDATE rule_deployment SET status = #{state,jdbcType=VARCHAR}, observed_generation = COALESCE(#{observedGeneration,jdbcType=BIGINT}, observed_generation), last_error = #{errorMessage,jdbcType=VARCHAR}, updated_at = CURRENT_TIMESTAMP WHERE tenant_id = #{tenantId,jdbcType=VARCHAR} AND rule_key = #{ruleKey,jdbcType=VARCHAR}</update>
+  <update id="updateDeploymentRuntimeStateFenced">UPDATE rule_deployment SET status = #{state,jdbcType=VARCHAR}, observed_generation = COALESCE(#{observedGeneration,jdbcType=BIGINT}, observed_generation), last_error = #{errorMessage,jdbcType=VARCHAR}, updated_at = CURRENT_TIMESTAMP WHERE tenant_id = #{fence.tenantId,jdbcType=VARCHAR} AND rule_key = #{ruleKey,jdbcType=VARCHAR} AND EXISTS (SELECT 1 FROM detection_job_group WHERE <include refid="fencePredicate"/>)</update>
+</mapper>

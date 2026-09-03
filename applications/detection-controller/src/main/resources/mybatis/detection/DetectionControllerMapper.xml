@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+  PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.xscsiem.hsiem_platform.detection.controller.DetectionControllerMapper">
+  <resultMap id="lease" type="com.xscsiem.hsiem_platform.detection.runtime.DetectionGroupLease">
+    <constructor>
+      <arg column="tenant_id" javaType="java.lang.String" jdbcType="VARCHAR"/><arg column="group_key" javaType="java.lang.String" jdbcType="VARCHAR"/><arg column="target_cluster" javaType="java.lang.String" jdbcType="VARCHAR"/><arg column="desired_generation" javaType="_long" jdbcType="BIGINT"/><arg column="expected_manifest_json" javaType="java.lang.String" jdbcType="VARCHAR"/><arg column="expected_manifest_hash" javaType="java.lang.String" jdbcType="VARCHAR"/><arg column="controller_lease_owner" javaType="java.lang.String" jdbcType="VARCHAR"/><arg column="controller_fencing_token" javaType="_long" jdbcType="BIGINT"/><arg column="reconcile_attempts" javaType="_int" jdbcType="INTEGER"/>
+    </constructor>
+  </resultMap>
+  <select id="selectDueGroupKeys" resultType="com.xscsiem.hsiem_platform.detection.controller.DetectionControllerMapper$GroupKeyRow">
+    SELECT tenant_id, group_key FROM detection_job_group
+    WHERE reconcile_available_at &lt;= CURRENT_TIMESTAMP
+      AND (controller_lease_until IS NULL OR controller_lease_until &lt; CURRENT_TIMESTAMP OR reconcile_state = 'PENDING')
+      AND reconcile_state IN ('PENDING', 'INSPECTING', 'APPLYING', 'VERIFYING', 'IDLE', 'FAILED')
+    ORDER BY reconcile_available_at, updated_at, tenant_id, group_key
+    LIMIT #{batch,jdbcType=INTEGER} FOR UPDATE SKIP LOCKED
+  </select>
+  <update id="claimGroup">
+    UPDATE detection_job_group SET controller_lease_owner = #{owner,jdbcType=VARCHAR}, controller_lease_until = #{leaseUntil,jdbcType=TIMESTAMP}, controller_fencing_token = controller_fencing_token + 1, reconcile_attempts = reconcile_attempts + 1, reconcile_state = 'INSPECTING', updated_at = CURRENT_TIMESTAMP WHERE tenant_id = #{tenantId,jdbcType=VARCHAR} AND group_key = #{groupKey,jdbcType=VARCHAR}
+  </update>
+  <select id="selectLease" resultMap="lease">
+    SELECT tenant_id, group_key, target_cluster, desired_generation, expected_manifest_json, expected_manifest_hash, controller_lease_owner, controller_fencing_token, reconcile_attempts FROM detection_job_group WHERE tenant_id = #{tenantId,jdbcType=VARCHAR} AND group_key = #{groupKey,jdbcType=VARCHAR}
+  </select>
+  <sql id="fence">tenant_id = #{lease.tenantId,jdbcType=VARCHAR} AND group_key = #{lease.groupKey,jdbcType=VARCHAR} AND controller_lease_owner = #{lease.owner,jdbcType=VARCHAR} AND controller_fencing_token = #{lease.fencingToken,jdbcType=BIGINT} AND desired_generation = #{lease.desiredGeneration,jdbcType=BIGINT} AND controller_lease_until &gt; CURRENT_TIMESTAMP</sql>
+  <update id="heartbeat">UPDATE detection_job_group SET controller_lease_until = #{leaseUntil,jdbcType=TIMESTAMP}, updated_at = CURRENT_TIMESTAMP WHERE <include refid="fence"/></update>
+  <update id="transitionPhase">UPDATE detection_job_group SET reconcile_state = #{state,jdbcType=VARCHAR}, updated_at = CURRENT_TIMESTAMP WHERE <include refid="fence"/></update>
+  <select id="isCurrent" resultType="int">SELECT 1 FROM detection_job_group WHERE <include refid="fence"/></select>
+  <update id="release">UPDATE detection_job_group SET reconcile_state = 'IDLE', reconcile_available_at = #{nextInspection,jdbcType=TIMESTAMP}, reconcile_attempts = 0, controller_lease_owner = NULL, controller_lease_until = NULL, last_reconciled_at = CURRENT_TIMESTAMP, last_error = NULL, updated_at = CURRENT_TIMESTAMP WHERE <include refid="fence"/></update>
+  <update id="fail">UPDATE detection_job_group SET reconcile_state = 'FAILED', reconcile_available_at = #{availableAt,jdbcType=TIMESTAMP}, controller_lease_owner = NULL, controller_lease_until = NULL, last_error = #{error,jdbcType=VARCHAR}, updated_at = CURRENT_TIMESTAMP WHERE <include refid="fence"/></update>
+</mapper>

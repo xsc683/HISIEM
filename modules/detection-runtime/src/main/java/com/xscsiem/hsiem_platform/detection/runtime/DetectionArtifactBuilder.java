@@ -36,7 +36,7 @@ public final class DetectionArtifactBuilder {
     private static final String METADATA_FILE = "artifact-metadata.json";
     private static final String DEFAULT_CONTAINER_ROOT = "/opt/flink/detection-artifacts";
 
-    private final DetectionArtifactRepository repository;
+    private final DetectionArtifactRepositoryPort repository;
     private final RuntimeManifestCodec codec;
     private final ObjectMapper mapper =
             new ObjectMapper()
@@ -48,7 +48,7 @@ public final class DetectionArtifactBuilder {
     private final FlinkArtifactCompiler flinkArtifacts;
 
     public DetectionArtifactBuilder(
-            DetectionArtifactRepository repository,
+            DetectionArtifactRepositoryPort repository,
             RuntimeManifestCodec codec,
             Path artifactRoot,
             String containerArtifactRoot) {
@@ -65,8 +65,29 @@ public final class DetectionArtifactBuilder {
     }
 
     public DetectionArtifactBuilder(
-            DetectionArtifactRepository repository, RuntimeManifestCodec codec, Path artifactRoot) {
+            DetectionArtifactRepositoryPort repository,
+            RuntimeManifestCodec codec,
+            Path artifactRoot) {
         this(repository, codec, artifactRoot, DEFAULT_CONTAINER_ROOT);
+    }
+
+    /** Binary/source compatibility for callers that still construct the JDBC adapter directly. */
+    public DetectionArtifactBuilder(
+            DetectionArtifactRepository repository,
+            RuntimeManifestCodec codec,
+            Path artifactRoot,
+            String containerArtifactRoot) {
+        this(
+                (DetectionArtifactRepositoryPort) repository,
+                codec,
+                artifactRoot,
+                containerArtifactRoot);
+    }
+
+    /** Binary/source compatibility for callers that still construct the JDBC adapter directly. */
+    public DetectionArtifactBuilder(
+            DetectionArtifactRepository repository, RuntimeManifestCodec codec, Path artifactRoot) {
+        this((DetectionArtifactRepositoryPort) repository, codec, artifactRoot);
     }
 
     /** Return the safe local directory name for an already observed immutable artifact. */

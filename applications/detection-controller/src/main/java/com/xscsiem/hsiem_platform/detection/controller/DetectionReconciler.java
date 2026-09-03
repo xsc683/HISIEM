@@ -22,20 +22,29 @@ import org.springframework.stereotype.Service;
 @Service
 public class DetectionReconciler {
 
-    private final DetectionControllerRepository repository;
+    private final DetectionControllerRepositoryPort repository;
     private final FlinkRuntimePort port;
     private final DetectionRuntimeService runtime;
     private final RuntimeManifestCodec codec;
 
     public DetectionReconciler(
-            DetectionControllerRepository repository,
+            DetectionControllerRepositoryPort repository,
             FlinkRuntimePort port,
             DetectionRuntimeService runtime) {
         this(repository, port, runtime, new RuntimeManifestCodec());
     }
 
+    /** Binary/source compatibility for integrations compiled against the former concrete port. */
     public DetectionReconciler(
             DetectionControllerRepository repository,
+            FlinkRuntimePort port,
+            DetectionRuntimeService runtime,
+            RuntimeManifestCodec codec) {
+        this((DetectionControllerRepositoryPort) repository, port, runtime, codec);
+    }
+
+    public DetectionReconciler(
+            DetectionControllerRepositoryPort repository,
             FlinkRuntimePort port,
             DetectionRuntimeService runtime,
             RuntimeManifestCodec codec) {

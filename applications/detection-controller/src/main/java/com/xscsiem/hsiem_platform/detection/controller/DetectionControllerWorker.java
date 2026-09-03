@@ -1,26 +1,25 @@
 package com.xscsiem.hsiem_platform.detection.controller;
 
 import com.xscsiem.hsiem_platform.detection.runtime.DetectionGroupLease;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.scheduling.annotation.Scheduled;
-import org.springframework.stereotype.Component;
-
 import jakarta.annotation.PreDestroy;
 import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
-import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Component;
 
 /** Bounded poller with a per-claim heartbeat and safe shutdown semantics. */
 @Component
 public class DetectionControllerWorker {
 
-    private final DetectionControllerRepository repository;
+    private final DetectionControllerRepositoryPort repository;
     private final DetectionReconciler reconciler;
     private final ControllerPollState pollState;
     private final String owner;
@@ -29,26 +28,32 @@ public class DetectionControllerWorker {
     private final ScheduledExecutorService heartbeatExecutor;
 
     public DetectionControllerWorker(
-            DetectionControllerRepository repository,
+            DetectionControllerRepositoryPort repository,
             DetectionReconciler reconciler,
             ControllerPollState pollState,
             @Value("${app.detection.controller.owner:}") String configuredOwner,
             @Value("${app.detection.controller.lease:PT30S}") Duration leaseDuration,
             @Value("${app.detection.controller.batch-size:10}") int batchSize) {
-        this(repository, reconciler, pollState,
+        this(
+                repository,
+                reconciler,
+                pollState,
                 configuredOwner == null || configuredOwner.isBlank()
-                        ? "detection-controller-" + UUID.randomUUID() : configuredOwner,
-                leaseDuration, batchSize,
+                        ? "detection-controller-" + UUID.randomUUID()
+                        : configuredOwner,
+                leaseDuration,
+                batchSize,
                 Executors.newScheduledThreadPool(1, daemonFactory()));
     }
 
-    DetectionControllerWorker(DetectionControllerRepository repository,
-                               DetectionReconciler reconciler,
-                               ControllerPollState pollState,
-                               String owner,
-                               Duration leaseDuration,
-                               int batchSize,
-                               ScheduledExecutorService heartbeatExecutor) {
+    DetectionControllerWorker(
+            DetectionControllerRepositoryPort repository,
+            DetectionReconciler reconciler,
+            ControllerPollState pollState,
+            String owner,
+            Duration leaseDuration,
+            int batchSize,
+            ScheduledExecutorService heartbeatExecutor) {
         this.repository = repository;
         this.reconciler = reconciler;
         this.pollState = pollState;
@@ -61,7 +66,26 @@ public class DetectionControllerWorker {
         this.heartbeatExecutor = heartbeatExecutor;
     }
 
-    @Scheduled(fixedDelayString = "${app.detection.controller.poll-ms:5000}",
+    DetectionControllerWorker(
+            DetectionControllerRepository repository,
+            DetectionReconciler reconciler,
+            ControllerPollState pollState,
+            String owner,
+            Duration leaseDuration,
+            int batchSize,
+            ScheduledExecutorService heartbeatExecutor) {
+        this(
+                (DetectionControllerRepositoryPort) repository,
+                reconciler,
+                pollState,
+                owner,
+                leaseDuration,
+                batchSize,
+                heartbeatExecutor);
+    }
+
+    @Scheduled(
+            fixedDelayString = "${app.detection.controller.poll-ms:5000}",
             initialDelayString = "${app.detection.controller.initial-delay-ms:1000}")
     public void scheduledPoll() {
         try {
@@ -96,20 +120,28 @@ public class DetectionControllerWorker {
     private void runLease(DetectionGroupLease lease) {
         AtomicBoolean heartbeatHealthy = new AtomicBoolean(true);
         long heartbeatMillis = Math.max(50L, leaseDuration.toMillis() / 3L);
-        ScheduledFuture<?> heartbeat = heartbeatExecutor.scheduleAtFixedRate(() -> {
-            if (!heartbeatHealthy.get()) return;
-            try {
-                if (!repository.heartbeat(lease, leaseDuration)) {
-                    heartbeatHealthy.set(false);
-                }
-            } catch (RuntimeException failure) {
-                heartbeatHealthy.set(false);
-            }
-        }, heartbeatMillis, heartbeatMillis, TimeUnit.MILLISECONDS);
+        ScheduledFuture<?> heartbeat =
+                heartbeatExecutor.scheduleAtFixedRate(
+                        () -> {
+                            if (!heartbeatHealthy.get()) return;
+                            try {
+                                if (!repository.heartbeat(lease, leaseDuration)) {
+                                    heartbeatHealthy.set(false);
+                                }
+                            } catch (RuntimeException failure) {
+                                heartbeatHealthy.set(false);
+                            }
+                        },
+                        heartbeatMillis,
+                        heartbeatMillis,
+                        TimeUnit.MILLISECONDS);
         try {
-            reconciler.reconcile(lease, () -> heartbeatHealthy.get()
-                    && !Thread.currentThread().isInterrupted()
-                    && repository.isCurrent(lease));
+            reconciler.reconcile(
+                    lease,
+                    () ->
+                            heartbeatHealthy.get()
+                                    && !Thread.currentThread().isInterrupted()
+                                    && repository.isCurrent(lease));
         } finally {
             heartbeat.cancel(false);
         }

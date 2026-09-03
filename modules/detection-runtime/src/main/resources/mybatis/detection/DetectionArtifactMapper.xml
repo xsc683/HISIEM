@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+  PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.xscsiem.hsiem_platform.detection.runtime.DetectionArtifactMapper">
+  <resultMap id="artifactRule" type="com.xscsiem.hsiem_platform.detection.runtime.DetectionArtifactRepository$DetectionArtifactRuleRow">
+    <constructor>
+      <arg column="rule_key" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="revision" javaType="_long" jdbcType="BIGINT"/>
+      <arg column="plan_id" javaType="java.util.UUID" jdbcType="OTHER" typeHandler="com.xscsiem.hsiem_platform.rules.UuidTypeHandler"/>
+      <arg column="plan_hash" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="generation" javaType="_long" jdbcType="BIGINT"/>
+      <arg column="compiler_version" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="plan_json" javaType="java.lang.String" jdbcType="VARCHAR"/>
+    </constructor>
+  </resultMap>
+  <select id="findRules" resultMap="artifactRule">
+    SELECT a.rule_key, a.revision, a.plan_id, a.plan_hash, a.generation,
+           p.compiler_version, p.plan_json
+    FROM rule_job_assignment a
+    JOIN detection_plan p ON p.plan_id = a.plan_id AND p.plan_hash = a.plan_hash
+    JOIN rule_revision r ON r.revision_id = p.revision_id
+      AND r.rule_key = a.rule_key AND r.revision = a.revision
+    WHERE a.tenant_id = #{tenantId} AND a.group_key = #{groupKey}
+    ORDER BY a.rule_key
+  </select>
+</mapper>

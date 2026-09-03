@@ -7,8 +7,11 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.xscsiem.hsiem_platform.rules.DeploymentCommand;
+import com.xscsiem.hsiem_platform.rules.DesiredState;
 import com.xscsiem.hsiem_platform.rules.ManagedDetectionRepository;
 import com.xscsiem.hsiem_platform.rules.ManagedDetectionService;
+import com.xscsiem.hsiem_platform.rules.RuleDeployment;
 import com.xscsiem.hsiem_platform.rules.RuleService;
 import com.xscsiem.hsiem_platform.tenant.TenantContext;
 import com.zaxxer.hikari.HikariDataSource;
@@ -16,6 +19,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -47,13 +51,13 @@ class DetectionRuntimeServiceTest {
         ManagedDetectionService managed = managed(jdbc);
         TenantContext.set("default");
 
-        Map<String, Object> deployment =
+        RuleDeployment deployment =
                 managed.deploy(
                         "default",
                         "rule-runtime-test",
-                        Map.of("targetCluster", "cluster-a"),
+                        DeploymentCommand.fromApi(Map.of("targetCluster", "cluster-a")),
                         "tester");
-        assertEquals("RUNNING", deployment.get("desired_state"));
+        assertEquals(DesiredState.RUNNING, deployment.desiredState());
         assertEquals(
                 1, jdbc.queryForObject("SELECT COUNT(*) FROM detection_job_group", Integer.class));
         assertEquals(
@@ -92,7 +96,7 @@ class DetectionRuntimeServiceTest {
         ManagedDetectionService managed = managed(jdbc);
         DetectionRuntimeService runtime = runtime(jdbc, 3);
         TenantContext.set("default");
-        managed.deploy("default", "rule-runtime-test", Map.of(), "tester");
+        managed.deploy("default", "rule-runtime-test", DeploymentCommand.empty(), "tester");
 
         RuntimeManifest expected = expected(jdbc);
         RuntimeManifest matching =
@@ -172,7 +176,10 @@ class DetectionRuntimeServiceTest {
                         runtime);
         TenantContext.set("default");
         managed.deploy(
-                "default", "rule-runtime-test", Map.of("targetCluster", "cluster-a"), "tester");
+                "default",
+                "rule-runtime-test",
+                DeploymentCommand.fromApi(Map.of("targetCluster", "cluster-a")),
+                "tester");
         RuntimeManifest expected = expected(jdbc);
         jdbc.update(
                 """
@@ -339,7 +346,10 @@ class DetectionRuntimeServiceTest {
         ManagedDetectionService managed = managed(jdbc);
         TenantContext.set("default");
         managed.deploy(
-                "default", "rule-runtime-test", Map.of("targetCluster", "cluster-a"), "tester");
+                "default",
+                "rule-runtime-test",
+                DeploymentCommand.fromApi(Map.of("targetCluster", "cluster-a")),
+                "tester");
         RuntimeManifest expected = expected(jdbc);
         jdbc.update(
                 """
@@ -443,7 +453,7 @@ class DetectionRuntimeServiceTest {
         ManagedDetectionService managed = managed(jdbc);
         DetectionRuntimeService runtime = runtime(jdbc, 1);
         TenantContext.set("default");
-        managed.deploy("default", "rule-runtime-test", Map.of(), "tester");
+        managed.deploy("default", "rule-runtime-test", DeploymentCommand.empty(), "tester");
         RuntimeManifest expected = expected(jdbc);
 
         runtime.observe(expected, RuntimeJobState.FAILED, "JOB_FAILED", "job failed");
@@ -486,11 +496,11 @@ class DetectionRuntimeServiceTest {
                         runtime);
         TenantContext.set("default");
 
-        Map<String, Object> first =
+        RuleDeployment first =
                 managed.deploy(
                         "default",
                         "rule-runtime-test",
-                        Map.of("targetCluster", "cluster-a"),
+                        DeploymentCommand.fromApi(Map.of("targetCluster", "cluster-a")),
                         "tester");
         RuntimeManifest expected = expected(jdbc);
         RuntimeManifest observed =
@@ -543,11 +553,11 @@ class DetectionRuntimeServiceTest {
         int historyCountBefore =
                 jdbc.queryForObject("SELECT COUNT(*) FROM rule_deployment_history", Integer.class);
 
-        Map<String, Object> repeated =
+        RuleDeployment repeated =
                 managed.deploy(
                         "default",
                         "rule-runtime-test",
-                        Map.of("targetCluster", "cluster-a"),
+                        DeploymentCommand.fromApi(Map.of("targetCluster", "cluster-a")),
                         "tester");
 
         long deploymentGenerationAfter =
@@ -580,7 +590,7 @@ class DetectionRuntimeServiceTest {
                 FROM rule_runtime_status
                 """);
 
-        assertEquals(first.get("generation"), repeated.get("generation"));
+        assertEquals(first.generation(), repeated.generation());
         assertEquals(deploymentGenerationBefore, deploymentGenerationAfter);
         assertEquals(historyCountBefore, historyCountAfter);
         assertEquals(assignmentBefore, assignmentAfter);
@@ -624,8 +634,16 @@ class DetectionRuntimeServiceTest {
                         new RuleService(rulesDir.toString(), "http://localhost:9200"),
                         "test-commit",
                         runtime);
-        managed.deploy("default", firstRule, Map.of("targetCluster", "cluster-a"), "tester");
-        managed.deploy("default", secondRule, Map.of("targetCluster", "cluster-a"), "tester");
+        managed.deploy(
+                "default",
+                firstRule,
+                DeploymentCommand.fromApi(Map.of("targetCluster", "cluster-a")),
+                "tester");
+        managed.deploy(
+                "default",
+                secondRule,
+                DeploymentCommand.fromApi(Map.of("targetCluster", "cluster-a")),
+                "tester");
         String secondGroup =
                 jdbc.queryForObject(
                         """
@@ -681,7 +699,11 @@ class DetectionRuntimeServiceTest {
         Files.writeString(
                 rulesDir.resolve(firstRule + ".yaml"),
                 rule(firstRule, "first rule changed", "password"));
-        managed.deploy("default", firstRule, Map.of("targetCluster", "cluster-a"), "tester");
+        managed.deploy(
+                "default",
+                firstRule,
+                DeploymentCommand.fromApi(Map.of("targetCluster", "cluster-a")),
+                "tester");
 
         Map<String, Object> assignmentAfter =
                 jdbc.queryForMap(
@@ -728,8 +750,16 @@ class DetectionRuntimeServiceTest {
                         runtime);
         TenantContext.set("default");
 
-        managed.deploy("default", firstRule, Map.of("targetCluster", "cluster-a"), "tester");
-        managed.deploy("default", secondRule, Map.of("targetCluster", "cluster-a"), "tester");
+        managed.deploy(
+                "default",
+                firstRule,
+                DeploymentCommand.fromApi(Map.of("targetCluster", "cluster-a")),
+                "tester");
+        managed.deploy(
+                "default",
+                secondRule,
+                DeploymentCommand.fromApi(Map.of("targetCluster", "cluster-a")),
+                "tester");
         String group =
                 jdbc.queryForObject(
                         "SELECT group_key FROM rule_job_assignment WHERE rule_key = ?",
@@ -744,7 +774,11 @@ class DetectionRuntimeServiceTest {
         Files.writeString(
                 rulesDir.resolve(firstRule + ".yaml"),
                 rule(firstRule, "first changed", "password"));
-        managed.deploy("default", firstRule, Map.of("targetCluster", "cluster-a"), "tester");
+        managed.deploy(
+                "default",
+                firstRule,
+                DeploymentCommand.fromApi(Map.of("targetCluster", "cluster-a")),
+                "tester");
 
         long after =
                 jdbc.queryForObject(
@@ -776,7 +810,7 @@ class DetectionRuntimeServiceTest {
         ManagedDetectionService managed = managed(jdbc);
         DetectionRuntimeService runtime = runtime(jdbc, 1);
         TenantContext.set("default");
-        managed.deploy("default", "rule-runtime-test", Map.of(), "tester");
+        managed.deploy("default", "rule-runtime-test", DeploymentCommand.empty(), "tester");
         RuntimeManifest expected = expected(jdbc);
         runtime.observe(
                 new RuntimeManifest(
@@ -821,9 +855,15 @@ class DetectionRuntimeServiceTest {
         DetectionRuntimeService runtime = runtime(jdbc, 1);
 
         managed.deploy(
-                "tenant-a", "rule-runtime-test", Map.of("targetCluster", "cluster-a"), "tester");
+                "tenant-a",
+                "rule-runtime-test",
+                DeploymentCommand.fromApi(Map.of("targetCluster", "cluster-a")),
+                "tester");
         managed.deploy(
-                "tenant-b", "rule-runtime-test", Map.of("targetCluster", "cluster-b"), "tester");
+                "tenant-b",
+                "rule-runtime-test",
+                DeploymentCommand.fromApi(Map.of("targetCluster", "cluster-b")),
+                "tester");
         Map<String, Object> groupA =
                 jdbc.queryForMap(
                         """
@@ -866,15 +906,15 @@ class DetectionRuntimeServiceTest {
         JdbcTemplate jdbc = jdbc();
         ManagedDetectionService managed = managed(jdbc);
         TenantContext.set("default");
-        Map<String, Object> first =
-                managed.deploy("default", "rule-runtime-test", Map.of(), "tester");
-        Object firstDesiredRevisionId = first.get("desired_revision_id");
+        RuleDeployment first =
+                managed.deploy("default", "rule-runtime-test", DeploymentCommand.empty(), "tester");
+        UUID firstDesiredRevisionId = first.desiredRevisionId();
         assertNotNull(firstDesiredRevisionId);
 
         Files.writeString(file, rule("runtime test changed", "logout"));
-        Map<String, Object> second =
-                managed.deploy("default", "rule-runtime-test", Map.of(), "tester");
-        Object secondDesiredRevisionId = second.get("desired_revision_id");
+        RuleDeployment second =
+                managed.deploy("default", "rule-runtime-test", DeploymentCommand.empty(), "tester");
+        UUID secondDesiredRevisionId = second.desiredRevisionId();
         assertNotNull(secondDesiredRevisionId);
         assertNotEquals(firstDesiredRevisionId, secondDesiredRevisionId);
         long before =
@@ -887,7 +927,7 @@ class DetectionRuntimeServiceTest {
         managed.rollback(
                 "default",
                 "rule-runtime-test",
-                Map.of("revisionId", firstDesiredRevisionId),
+                DeploymentCommand.fromApi(Map.of("revisionId", firstDesiredRevisionId)),
                 "tester");
         long after =
                 ((Number)
