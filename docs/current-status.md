@@ -2,7 +2,7 @@
 
 > 定位：这是项目当前事实的单一入口。内容以代码、`infra/` 配置和最近一次可复现验证为准；详细方案、阶段记录和验收用例分别见设计文档与 Story 文档。
 >
-> 基线日期：2026-09-03（WSL2 + Docker Desktop）
+> 基线日期：2026-09-04（WSL2 + Docker Desktop）
 
 ## 一句话结论
 
@@ -13,12 +13,12 @@ HISIEM 已完成检测链路、控制面、接入向导、告警处置、调查�
 | 领域 | 当前结论 | 事实来源 |
 | --- | --- | --- |
 | 数据链路 | Logstash → Elasticsearch/Kafka → Flink → 告警索引链路可运行；规则发布遵循 YAML → RuleRevision → DetectionPlan → FlinkArtifactCompiler → RuleDecl → DetectionJob；Flink 解析毒消息进入独立 Kafka DLQ | [架构](architecture.md)、`infra/` |
-| 控制面 | Spring Boot + PostgreSQL/Flyway，认证、RBAC、案件、审计、通知和后台任务可用 | [部署](deployment.md)、[路线图](roadmap.md) |
+| 控制面 | Spring Boot + PostgreSQL/Flyway + MyBatis，认证、RBAC、案件、审计、通知和后台任务可用；持久化 SQL 已统一到 MyBatis（control 域工厂 + detection 域工厂 + soar 域工厂，见 CLAUDE.md「持久化与 MyBatis 约定」） | [部署](deployment.md)、[路线图](roadmap.md)、`modules/iam`、`modules/soar-core` |
 | 前端 | Vue 3/Vite + vue-router + Ant Design Vue 控制台；统一色彩、排版、间距、控件状态和页面/卡片/筛选/表格视觉壳，租户与账户操作收纳在侧栏底部；桌面侧栏与移动抽屉、响应式表单/表格、结构化加载/空/错误状态、受控 ES 日志检索、安全运营大屏、Kibana 入口、深链详情与 Vue Flow SOAR 画布可构建 | `web/`、[当前产品契约](product-contract.md) |
 | 运行态 | PostgreSQL、Elasticsearch、Kafka、Logstash、Flink、Kibana 均有健康扫描 | [运维手册](operations.md) |
 | Managed Detection Runtime | Phase 5A foundation and Phase 5B single-cluster process path are implemented: V17 desired/observed state + V18 controller reconcile state、durable lease/fencing、独立 non-web detection-controller、typed runtime port、immutable job-group artifact、structured Flink job identity、startup manifest verification、real-job/artifact observation and disabled/process adapter selection；control-api deploy API remains `202 PENDING` and has no physical deployment permission | [managed detection runtime 设计](design/managed-detection-runtime.md)、[模块边界](design/module-boundaries.md)、`modules/detection-runtime`、`flink/` |
 | SOAR | lifecycle + 手动入口、11 类节点、持久 Parallel/Join 与 Loop、Connector SPI/HTTP、验证器链、节点 I/O、消息去重、租约续期/fencing 和 Vue Flow 编辑器可用 | [SOAR 设计](soar.md)、`modules/soar-*`、`applications/*` |
-| 自动化验证 | Java 21 编译、根/独立 Flink Spotless 检查和独立 Flink `clean package`（60 项）通过；根 `mvn test` 本轮因 `DetectionRuntimeAdapterSelectionTest` 缺少 `DetectionArtifactRepository` 测试 bean 失败，另有 3 个 Testcontainers 测试因本机 Docker 不可用而跳过 | 本次验收命令与 `target/surefire-reports` |
+| 自动化验证 | Java 21 编译、根/独立 Flink Spotless 检查和独立 Flink `clean package` 通过；根 `mvn test` 于 2026-09-04 全绿（Docker Desktop 可用时 Testcontainers 的 `PostgresMigrationContainerTest` 与 SOAR 持久化集成用例均执行） | 本次验收命令与 `target/surefire-reports` |
 | 备份恢复 | ES 临时索引备份恢复演练通过 | `infra/elasticsearch/backup-restore-rehearsal.sh` |
 
 ## 当前部署基线
@@ -33,7 +33,7 @@ HISIEM 已完成检测链路、控制面、接入向导、告警处置、调查�
 
 - 动态数据源解析失败写入 raw 索引，避免进入正常事件索引和检测链路。
 - DataHealth 同时统计正常事件、失败事件以及配置中的数据源。
-- 案件、告警、规则、审计和后台任务已迁移到控制面持久化，并补充租约/恢复器。
+- 案件、告警、规则、审计和后台任务已迁移到控制面持久化（MyBatis），并补充租约/恢复器。控制面业务 SQL 已统一为 MyBatis 四件套（RepositoryPort + `MyBatis*Repository` + Mapper 接口 + XML），不再内联 `JdbcTemplate` SQL。
 - 告警 sink 使用保护分析师处置字段的 partial update。
 - 数据源生命周期按源串行，配置文件使用原子替换，文件输入使用持久 sincedb。
 - 前端统一处理 204、非 JSON 错误、初始化失败、轮询超时和破坏性操作确认；按路由加载模块，不在根组件拉取全站数据。

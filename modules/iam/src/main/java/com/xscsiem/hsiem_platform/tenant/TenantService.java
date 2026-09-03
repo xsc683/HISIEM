@@ -3,15 +3,18 @@ package com.xscsiem.hsiem_platform.tenant;
 import com.xscsiem.hsiem_platform.auth.ForbiddenException;
 import com.xscsiem.hsiem_platform.onboarding.ConflictException;
 import com.xscsiem.hsiem_platform.onboarding.NotFoundException;
-import org.springframework.context.annotation.DependsOn;
-import org.springframework.dao.DuplicateKeyException;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Pattern;
+import org.springframework.context.annotation.DependsOn;
+import org.springframework.dao.DuplicateKeyException;
+import org.springframework.dao.EmptyResultDataAccessException;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /** SOAR 租户目录与用户成员关系。 */
 @Service
@@ -19,49 +22,57 @@ import java.util.regex.Pattern;
 public class TenantService {
 
     private static final Pattern ID = Pattern.compile("[a-z0-9][a-z0-9-]{2,63}");
-    private final JdbcTemplate jdbc;
+    private final TenantRepositoryPort tenants;
 
-    public TenantService(JdbcTemplate jdbc) {
-        this.jdbc = jdbc;
+    public TenantService(TenantRepositoryPort tenants) {
+        this.tenants = tenants;
     }
 
     @Transactional
     public String requireMembership(String username, String requestedTenant) {
-        String tenant = requestedTenant == null || requestedTenant.isBlank()
-                ? TenantContext.DEFAULT_TENANT : requestedTenant.trim();
+        String tenant =
+                requestedTenant == null || requestedTenant.isBlank()
+                        ? TenantContext.DEFAULT_TENANT
+                        : requestedTenant.trim();
         if (!ID.matcher(tenant).matches()) throw new ForbiddenException("租户标识非法");
-        Integer count = jdbc.queryForObject("""
-                SELECT COUNT(*) FROM tenant_memberships m JOIN tenants t ON t.id = m.tenant_id
-                WHERE m.tenant_id = ? AND m.username = ? AND t.status = 'active'
-                """, Integer.class, tenant, username);
-        if ((count == null || count == 0) && TenantContext.DEFAULT_TENANT.equals(tenant)) {
-            Integer allMemberships = jdbc.queryForObject("""
-                    SELECT COUNT(*) FROM tenant_memberships WHERE username = ?
-                    """, Integer.class, username);
-            if (allMemberships == null || allMemberships == 0) {
+        boolean member = tenants.hasActiveMembership(tenant, username);
+        if (!member && TenantContext.DEFAULT_TENANT.equals(tenant)) {
+            if (tenants.countMemberships(username) == 0) {
                 ensureDefaultMembership(username);
-                count = 1;
+                member = true;
             }
         }
-        if (count == null || count == 0) throw new ForbiddenException("当前用户不属于租户: " + tenant);
+        if (!member) throw new ForbiddenException("当前用户不属于租户: " + tenant);
         return tenant;
     }
 
     public List<Map<String, Object>> listForUser(String username) {
-        return jdbc.queryForList("""
-                SELECT t.id, t.name, t.status, m.tenant_role AS "tenantRole", t.created_at AS "createdAt"
-                FROM tenants t JOIN tenant_memberships m ON m.tenant_id = t.id
-                WHERE m.username = ? ORDER BY t.id
-                """, username);
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (TenantRow.UserTenantRow row : tenants.listForUser(username)) {
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("id", row.id());
+            item.put("name", row.name());
+            item.put("status", row.status());
+            item.put("tenantRole", row.tenantRole());
+            item.put("createdAt", row.createdAt().toString());
+            result.add(item);
+        }
+        return result;
     }
 
     public List<Map<String, Object>> listAll() {
-        return jdbc.queryForList("""
-                SELECT t.id, t.name, t.status, t.created_by AS "createdBy", t.created_at AS "createdAt",
-                       COUNT(m.username) AS "memberCount"
-                FROM tenants t LEFT JOIN tenant_memberships m ON m.tenant_id = t.id
-                GROUP BY t.id, t.name, t.status, t.created_by, t.created_at ORDER BY t.id
-                """);
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (TenantRow.TenantCountRow row : tenants.listAll()) {
+            Map<String, Object> item = new HashMap<>();
+            item.put("id", row.id());
+            item.put("name", row.name());
+            item.put("status", row.status());
+            item.put("createdBy", row.createdBy());
+            item.put("createdAt", row.createdAt().toString());
+            item.put("memberCount", row.memberCount());
+            result.add(item);
+        }
+        return result;
     }
 
     @Transactional
@@ -69,49 +80,34 @@ public class TenantService {
         if (id == null || !ID.matcher(id).matches() || name == null || name.isBlank()) {
             throw new IllegalArgumentException("tenant id 需为 3-64 位小写字母/数字/连字符，name 不能为空");
         }
+        String trimmed = name.trim();
         try {
-            jdbc.update("INSERT INTO tenants(id, name, created_by) VALUES (?, ?, ?)", id, name.trim(), actor);
-            jdbc.update("INSERT INTO tenant_memberships(tenant_id, username, tenant_role) VALUES (?, ?, 'owner')",
-                    id, actor);
+            tenants.createTenantWithOwner(id, trimmed, actor);
         } catch (DuplicateKeyException e) {
             throw new ConflictException("租户已存在: " + id);
         }
-        return Map.of("id", id, "name", name.trim(), "status", "active", "tenantRole", "owner");
+        return Map.of("id", id, "name", trimmed, "status", "active", "tenantRole", "owner");
     }
 
     @Transactional
     public void addMember(String tenantId, String username, String role) {
-        if (!SetValues.TENANT_ROLES.contains(role)) throw new IllegalArgumentException("tenantRole 非法");
-        if (!exists(tenantId)) throw new NotFoundException("租户不存在: " + tenantId);
-        Integer users = jdbc.queryForObject("SELECT COUNT(*) FROM users WHERE username = ?", Integer.class, username);
-        if (users == null || users == 0) throw new NotFoundException("用户不存在: " + username);
-        int changed = jdbc.update("""
-                UPDATE tenant_memberships SET tenant_role = ? WHERE tenant_id = ? AND username = ?
-                """, role, tenantId, username);
+        if (!ROLES.contains(role)) throw new IllegalArgumentException("tenantRole 非法");
+        if (!tenants.tenantExists(tenantId)) throw new NotFoundException("租户不存在: " + tenantId);
+        if (tenants.countUsers(username) == 0) throw new NotFoundException("用户不存在: " + username);
+        int changed = tenants.updateMembershipRole(tenantId, username, role);
         if (changed == 0) {
-            jdbc.update("INSERT INTO tenant_memberships(tenant_id, username, tenant_role) VALUES (?, ?, ?)",
-                    tenantId, username, role);
+            tenants.insertMembership(tenantId, username, role);
         }
     }
 
     @Transactional
     public void ensureDefaultMembership(String username) {
-        jdbc.queryForObject("SELECT username FROM users WHERE username = ? FOR UPDATE", String.class, username);
-        Integer count = jdbc.queryForObject("""
-                SELECT COUNT(*) FROM tenant_memberships WHERE tenant_id = 'default' AND username = ?
-                """, Integer.class, username);
-        if (count == null || count == 0) {
-            jdbc.update("INSERT INTO tenant_memberships(tenant_id, username, tenant_role) VALUES ('default', ?, 'member')",
-                    username);
+        // FOR UPDATE 串行化并发默认租户引导；行不存在时抛出(与 JdbcTemplate queryForObject 空结果一致)。
+        if (tenants.lockUser(username) == null) throw new EmptyResultDataAccessException(1);
+        if (tenants.countMembershipsOfTenant("default", username) == 0) {
+            tenants.insertMembership("default", username, "member");
         }
     }
 
-    private boolean exists(String tenantId) {
-        Integer count = jdbc.queryForObject("SELECT COUNT(*) FROM tenants WHERE id = ?", Integer.class, tenantId);
-        return count != null && count > 0;
-    }
-
-    private static final class SetValues {
-        private static final java.util.Set<String> TENANT_ROLES = java.util.Set.of("owner", "member", "viewer");
-    }
+    private static final Set<String> ROLES = Set.of("owner", "member", "viewer");
 }

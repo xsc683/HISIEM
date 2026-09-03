@@ -1,0 +1,728 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+  PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.xscsiem.hsiem_platform.soar.persistence.SoarMapper">
+
+  <sql id="playbookColumns">id, tenant_id, name, description, status, enabled,
+    entry_type, event_types_json, graph_json, revision, created_by, updated_by,
+    created_at, updated_at, published_at</sql>
+  <resultMap id="playbookRow" type="com.xscsiem.hsiem_platform.soar.persistence.SoarRow$PlaybookRow">
+    <constructor>
+      <arg column="id" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="tenant_id" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="name" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="description" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="status" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="enabled" javaType="_boolean" jdbcType="BOOLEAN"/>
+      <arg column="entry_type" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="event_types_json" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="graph_json" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="revision" javaType="_long" jdbcType="BIGINT"/>
+      <arg column="created_by" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="updated_by" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="created_at" javaType="java.time.Instant" jdbcType="TIMESTAMP"/>
+      <arg column="updated_at" javaType="java.time.Instant" jdbcType="TIMESTAMP"/>
+      <arg column="published_at" javaType="java.time.Instant" jdbcType="TIMESTAMP"/>
+    </constructor>
+  </resultMap>
+
+  <sql id="executionColumns">id, tenant_id, playbook_id, playbook_name,
+    playbook_revision, graph_snapshot, object_type, object_id, event_type, trigger_type,
+    trigger_message_id, trigger_envelope, payload_snapshot, status, current_node_id,
+    next_run_at, error, actor, cancel_requested, lease_owner, lease_expires_at, version,
+    created_at, updated_at, started_at, finished_at</sql>
+  <resultMap id="executionRow" type="com.xscsiem.hsiem_platform.soar.persistence.SoarRow$ExecutionRow">
+    <constructor>
+      <arg column="id" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="tenant_id" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="playbook_id" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="playbook_name" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="playbook_revision" javaType="_long" jdbcType="BIGINT"/>
+      <arg column="graph_snapshot" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="object_type" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="object_id" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="event_type" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="trigger_type" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="trigger_message_id" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="trigger_envelope" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="payload_snapshot" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="status" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="current_node_id" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="next_run_at" javaType="java.time.Instant" jdbcType="TIMESTAMP"/>
+      <arg column="error" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="actor" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="cancel_requested" javaType="_boolean" jdbcType="BOOLEAN"/>
+      <arg column="lease_owner" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="lease_expires_at" javaType="java.time.Instant" jdbcType="TIMESTAMP"/>
+      <arg column="version" javaType="_long" jdbcType="BIGINT"/>
+      <arg column="created_at" javaType="java.time.Instant" jdbcType="TIMESTAMP"/>
+      <arg column="updated_at" javaType="java.time.Instant" jdbcType="TIMESTAMP"/>
+      <arg column="started_at" javaType="java.time.Instant" jdbcType="TIMESTAMP"/>
+      <arg column="finished_at" javaType="java.time.Instant" jdbcType="TIMESTAMP"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="nodeRunRow" type="com.xscsiem.hsiem_platform.soar.persistence.SoarRow$NodeRunRow">
+    <constructor>
+      <arg column="id" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="execution_id" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="node_id" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="node_name" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="node_type" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="status" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="sequence_no" javaType="_long" jdbcType="BIGINT"/>
+      <arg column="visit_no" javaType="_int" jdbcType="INTEGER"/>
+      <arg column="attempt" javaType="_int" jdbcType="INTEGER"/>
+      <arg column="token_id" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="idempotency_key" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="input_json" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="output_json" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="error" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="started_at" javaType="java.time.Instant" jdbcType="TIMESTAMP"/>
+      <arg column="finished_at" javaType="java.time.Instant" jdbcType="TIMESTAMP"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="nodeOutputRow" type="com.xscsiem.hsiem_platform.soar.persistence.SoarRow$NodeOutputRow">
+    <constructor>
+      <arg column="node_id" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="output_json" javaType="java.lang.String" jdbcType="VARCHAR"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="approvalRow" type="com.xscsiem.hsiem_platform.soar.persistence.SoarRow$ApprovalRow">
+    <constructor>
+      <arg column="id" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="tenant_id" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="execution_id" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="node_run_id" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="node_id" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="playbook_id" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="playbook_name" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="object_type" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="object_id" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="prompt" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="status" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="decided_by" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="decision_note" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="created_at" javaType="java.time.Instant" jdbcType="TIMESTAMP"/>
+      <arg column="decided_at" javaType="java.time.Instant" jdbcType="TIMESTAMP"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="parallelBranchJoinRow" type="com.xscsiem.hsiem_platform.soar.persistence.SoarRow$ParallelBranchJoinRow">
+    <constructor>
+      <arg column="id" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="group_id" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="parent_execution_id" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="join_node_id" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="branch_label" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="target_node_id" javaType="java.lang.String" jdbcType="VARCHAR"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="branchExecutionRow" type="com.xscsiem.hsiem_platform.soar.persistence.SoarRow$BranchExecutionRow">
+    <constructor>
+      <arg column="branch_label" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="execution_id" javaType="java.lang.String" jdbcType="VARCHAR"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="parallelFailureParentRow" type="com.xscsiem.hsiem_platform.soar.persistence.SoarRow$ParallelFailureParentRow">
+    <constructor>
+      <arg column="group_id" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="parent_execution_id" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="parent_node_run_id" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="branch_label" javaType="java.lang.String" jdbcType="VARCHAR"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="loopStateRow" type="com.xscsiem.hsiem_platform.soar.persistence.SoarRow$LoopStateRow">
+    <constructor>
+      <arg column="id" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="tenant_id" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="parent_execution_id" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="parent_node_run_id" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="child_execution_id" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="body_start_node_id" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="body_end_node_id" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="items_json" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="iteration_index" javaType="_int" jdbcType="INTEGER"/>
+      <arg column="max_iterations" javaType="_int" jdbcType="INTEGER"/>
+      <arg column="status" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="output_json" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="created_at" javaType="java.time.Instant" jdbcType="TIMESTAMP"/>
+      <arg column="finished_at" javaType="java.time.Instant" jdbcType="TIMESTAMP"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="loopFailureParentRow" type="com.xscsiem.hsiem_platform.soar.persistence.SoarRow$LoopFailureParentRow">
+    <constructor>
+      <arg column="id" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="parent_execution_id" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="parent_node_run_id" javaType="java.lang.String" jdbcType="VARCHAR"/>
+    </constructor>
+  </resultMap>
+
+  <!-- ============================ soar_playbook ============================ -->
+
+  <select id="selectPlaybooks" resultMap="playbookRow">
+    SELECT <include refid="playbookColumns"/> FROM soar_playbook
+    WHERE tenant_id = #{tenantId} AND deleted_at IS NULL ORDER BY updated_at DESC
+  </select>
+
+  <select id="selectPlaybook" resultMap="playbookRow">
+    SELECT <include refid="playbookColumns"/> FROM soar_playbook
+    WHERE tenant_id = #{tenantId} AND id = #{id} AND deleted_at IS NULL
+  </select>
+
+  <select id="selectMatchingPlaybooks" resultMap="playbookRow">
+    SELECT <include refid="playbookColumns"/> FROM soar_playbook
+    WHERE tenant_id = #{tenantId} AND entry_type = #{objectType} AND status = 'published'
+    AND enabled = TRUE AND deleted_at IS NULL
+  </select>
+
+  <select id="countLivePlaybook" resultType="int">
+    SELECT COUNT(*) FROM soar_playbook WHERE tenant_id = #{tenantId}
+    AND id = #{id} AND deleted_at IS NULL
+  </select>
+
+  <insert id="insertPlaybook">
+    INSERT INTO soar_playbook (id, tenant_id, name, description, status, enabled,
+      entry_type, event_types_json, graph_json, revision, created_by, updated_by,
+      created_at, updated_at)
+    VALUES (#{id,jdbcType=VARCHAR}, #{tenantId,jdbcType=VARCHAR}, #{name,jdbcType=VARCHAR},
+      #{description,jdbcType=VARCHAR}, 'draft', FALSE, #{entryType,jdbcType=VARCHAR},
+      #{eventTypesJson,jdbcType=VARCHAR}, #{graphJson,jdbcType=VARCHAR}, 1,
+      #{createdBy,jdbcType=VARCHAR}, #{actor,jdbcType=VARCHAR},
+      #{createdAt,jdbcType=TIMESTAMP}, #{createdAt,jdbcType=TIMESTAMP})
+  </insert>
+
+  <update id="updatePlaybook">
+    UPDATE soar_playbook SET name = #{name,jdbcType=VARCHAR},
+      description = #{description,jdbcType=VARCHAR}, entry_type = #{entryType,jdbcType=VARCHAR},
+      event_types_json = #{eventTypesJson,jdbcType=VARCHAR}, graph_json = #{graphJson,jdbcType=VARCHAR},
+      status = 'draft', enabled = FALSE, revision = revision + 1,
+      updated_by = #{actor,jdbcType=VARCHAR}, updated_at = CURRENT_TIMESTAMP
+    WHERE tenant_id = #{tenantId,jdbcType=VARCHAR} AND id = #{id,jdbcType=VARCHAR}
+      AND revision = #{expectedRevision,jdbcType=BIGINT} AND deleted_at IS NULL
+  </update>
+
+  <update id="publishPlaybook">
+    UPDATE soar_playbook SET status = 'published', enabled = TRUE,
+      revision = revision + 1, updated_by = #{actor,jdbcType=VARCHAR},
+      updated_at = CURRENT_TIMESTAMP, published_at = CURRENT_TIMESTAMP
+    WHERE tenant_id = #{tenantId,jdbcType=VARCHAR} AND id = #{id,jdbcType=VARCHAR}
+      AND revision = #{expectedRevision,jdbcType=BIGINT} AND deleted_at IS NULL
+  </update>
+
+  <update id="updatePlaybookEnabled">
+    UPDATE soar_playbook SET status = #{status,jdbcType=VARCHAR},
+      enabled = #{enabled,jdbcType=BOOLEAN}, revision = revision + 1,
+      updated_by = #{actor,jdbcType=VARCHAR}, updated_at = CURRENT_TIMESTAMP
+    WHERE tenant_id = #{tenantId,jdbcType=VARCHAR} AND id = #{id,jdbcType=VARCHAR}
+  </update>
+
+  <select id="countActiveExecutions" resultType="int">
+    SELECT COUNT(*) FROM soar_execution WHERE tenant_id = #{tenantId}
+    AND playbook_id = #{playbookId} AND status IN ('pending','running','waiting','waiting_human')
+  </select>
+
+  <update id="deletePlaybook">
+    UPDATE soar_playbook SET status = 'disabled', enabled = FALSE, deleted_at = CURRENT_TIMESTAMP,
+      updated_by = #{actor,jdbcType=VARCHAR}, updated_at = CURRENT_TIMESTAMP
+    WHERE tenant_id = #{tenantId,jdbcType=VARCHAR} AND id = #{id,jdbcType=VARCHAR}
+  </update>
+
+  <!-- ============================ soar_execution =========================== -->
+
+  <select id="selectExecution" resultMap="executionRow">
+    SELECT <include refid="executionColumns"/> FROM soar_execution WHERE id = #{id}
+  </select>
+
+  <select id="selectExecutionByTenant" resultMap="executionRow">
+    SELECT <include refid="executionColumns"/> FROM soar_execution
+    WHERE tenant_id = #{tenantId} AND id = #{id}
+  </select>
+
+  <select id="selectExecutionByTrigger" resultMap="executionRow">
+    SELECT <include refid="executionColumns"/> FROM soar_execution
+    WHERE tenant_id = #{tenantId} AND playbook_id = #{playbookId} AND trigger_message_id = #{messageId}
+  </select>
+
+  <select id="selectRootExecutions" resultMap="executionRow">
+    SELECT <include refid="executionColumns"/> FROM soar_execution
+    WHERE tenant_id = #{tenantId} AND parallel_parent_id IS NULL AND NOT EXISTS
+      (SELECT 1 FROM soar_loop_state l WHERE l.child_execution_id = soar_execution.id)
+    ORDER BY updated_at DESC FETCH FIRST #{limit,jdbcType=INTEGER} ROWS ONLY
+  </select>
+
+  <select id="selectRootExecutionsByStatus" resultMap="executionRow">
+    SELECT <include refid="executionColumns"/> FROM soar_execution
+    WHERE tenant_id = #{tenantId} AND status = #{status,jdbcType=VARCHAR} AND parallel_parent_id IS NULL
+      AND NOT EXISTS (SELECT 1 FROM soar_loop_state l WHERE l.child_execution_id = soar_execution.id)
+    ORDER BY updated_at DESC FETCH FIRST #{limit,jdbcType=INTEGER} ROWS ONLY
+  </select>
+
+  <select id="selectClaimCandidates" resultType="string">
+    SELECT id FROM soar_execution WHERE
+      status IN ('pending','running','waiting') AND next_run_at &lt;= CURRENT_TIMESTAMP
+      AND (lease_expires_at IS NULL OR lease_expires_at &lt; CURRENT_TIMESTAMP)
+    ORDER BY next_run_at, created_at FETCH FIRST #{limit,jdbcType=INTEGER} ROWS ONLY
+  </select>
+
+  <update id="claimExecution">
+    UPDATE soar_execution SET lease_owner = #{owner,jdbcType=VARCHAR},
+      lease_expires_at = #{leaseUntil,jdbcType=TIMESTAMP},
+      status = 'running', started_at = COALESCE(started_at, CURRENT_TIMESTAMP),
+      updated_at = CURRENT_TIMESTAMP, version = version + 1
+    WHERE id = #{id,jdbcType=VARCHAR}
+      AND status IN ('pending','running','waiting')
+      AND (lease_expires_at IS NULL OR lease_expires_at &lt; CURRENT_TIMESTAMP)
+  </update>
+
+  <update id="renewLease">
+    UPDATE soar_execution SET lease_expires_at = #{leaseUntil,jdbcType=TIMESTAMP},
+      updated_at = CURRENT_TIMESTAMP
+    WHERE id = #{id,jdbcType=VARCHAR} AND status = 'running' AND cancel_requested = FALSE
+      AND lease_owner = #{owner,jdbcType=VARCHAR} AND version = #{fencingToken,jdbcType=BIGINT}
+      AND lease_expires_at &gt;= CURRENT_TIMESTAMP
+  </update>
+
+  <select id="selectLeaseHolders" resultType="string">
+    SELECT id FROM soar_execution WHERE id = #{id,jdbcType=VARCHAR}
+      AND status = 'running' AND cancel_requested = FALSE AND lease_owner = #{owner,jdbcType=VARCHAR}
+      AND version = #{fencingToken,jdbcType=BIGINT} AND lease_expires_at &gt;= CURRENT_TIMESTAMP
+      <if test="lock">FOR UPDATE</if>
+  </select>
+
+  <update id="markWaitingFarFuture">
+    UPDATE soar_execution SET status = 'waiting', current_node_id = NULL,
+      next_run_at = #{nextRunAt,jdbcType=TIMESTAMP}, lease_owner = NULL, lease_expires_at = NULL,
+      updated_at = CURRENT_TIMESTAMP, version = version + 1
+    WHERE id = #{id,jdbcType=VARCHAR} AND status = 'running' AND lease_owner = #{owner,jdbcType=VARCHAR}
+      AND version = #{fencingToken,jdbcType=BIGINT}
+  </update>
+
+  <update id="advancePending">
+    UPDATE soar_execution SET status = 'pending', current_node_id = #{nextNodeId,jdbcType=VARCHAR},
+      next_run_at = CURRENT_TIMESTAMP, lease_owner = NULL, lease_expires_at = NULL,
+      updated_at = CURRENT_TIMESTAMP, version = version + 1
+    WHERE id = #{id,jdbcType=VARCHAR} AND status = 'running' AND cancel_requested = FALSE
+      AND lease_owner = #{owner,jdbcType=VARCHAR} AND version = #{fencingToken,jdbcType=BIGINT}
+      AND lease_expires_at &gt;= CURRENT_TIMESTAMP
+  </update>
+
+  <update id="markSuccess">
+    UPDATE soar_execution SET status = 'success', lease_owner = NULL, lease_expires_at = NULL,
+      updated_at = CURRENT_TIMESTAMP, finished_at = CURRENT_TIMESTAMP, version = version + 1
+    WHERE id = #{id,jdbcType=VARCHAR} AND status = 'running'
+      <if test="cancelGuard">AND cancel_requested = FALSE</if>
+      AND lease_owner = #{owner,jdbcType=VARCHAR} AND version = #{fencingToken,jdbcType=BIGINT}
+      <if test="cancelGuard">AND lease_expires_at &gt;= CURRENT_TIMESTAMP</if>
+  </update>
+
+  <update id="markFailed">
+    UPDATE soar_execution SET status = 'failed', error = #{error,jdbcType=VARCHAR},
+      lease_owner = NULL, lease_expires_at = NULL, updated_at = CURRENT_TIMESTAMP,
+      finished_at = CURRENT_TIMESTAMP, version = version + 1
+    WHERE id = #{id,jdbcType=VARCHAR} AND status = 'running'
+      AND cancel_requested = FALSE AND lease_owner = #{owner,jdbcType=VARCHAR}
+      AND version = #{fencingToken,jdbcType=BIGINT} AND lease_expires_at &gt;= CURRENT_TIMESTAMP
+  </update>
+
+  <update id="scheduleRetry">
+    UPDATE soar_execution SET status = 'pending', error = #{error,jdbcType=VARCHAR},
+      next_run_at = #{nextRunAt,jdbcType=TIMESTAMP}, lease_owner = NULL, lease_expires_at = NULL,
+      updated_at = CURRENT_TIMESTAMP, version = version + 1
+    WHERE id = #{id,jdbcType=VARCHAR} AND status = 'running'
+      AND cancel_requested = FALSE AND lease_owner = #{owner,jdbcType=VARCHAR}
+      AND version = #{fencingToken,jdbcType=BIGINT} AND lease_expires_at &gt;= CURRENT_TIMESTAMP
+  </update>
+
+  <update id="markWaitingUntil">
+    UPDATE soar_execution SET status = 'waiting', next_run_at = #{nextRunAt,jdbcType=TIMESTAMP},
+      lease_owner = NULL, lease_expires_at = NULL, updated_at = CURRENT_TIMESTAMP,
+      version = version + 1
+    WHERE id = #{id,jdbcType=VARCHAR} AND status = 'running' AND cancel_requested = FALSE
+      AND lease_owner = #{owner,jdbcType=VARCHAR} AND version = #{fencingToken,jdbcType=BIGINT}
+      AND lease_expires_at &gt;= CURRENT_TIMESTAMP
+  </update>
+
+  <update id="markWaitingHuman">
+    UPDATE soar_execution SET status = 'waiting_human', lease_owner = NULL, lease_expires_at = NULL,
+      updated_at = CURRENT_TIMESTAMP, version = version + 1
+    WHERE id = #{id,jdbcType=VARCHAR} AND status = 'running' AND cancel_requested = FALSE
+      AND lease_owner = #{owner,jdbcType=VARCHAR} AND version = #{fencingToken,jdbcType=BIGINT}
+      AND lease_expires_at &gt;= CURRENT_TIMESTAMP
+  </update>
+
+  <update id="resumeWaitingHuman">
+    UPDATE soar_execution SET status = 'pending', current_node_id = #{nextNodeId,jdbcType=VARCHAR},
+      next_run_at = CURRENT_TIMESTAMP, lease_owner = NULL, lease_expires_at = NULL,
+      updated_at = CURRENT_TIMESTAMP, version = version + 1
+    WHERE id = #{id,jdbcType=VARCHAR} AND status = 'waiting_human'
+  </update>
+
+  <update id="releaseWaitingExecution">
+    UPDATE soar_execution SET status = 'pending', current_node_id = #{nextNodeId,jdbcType=VARCHAR},
+      next_run_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP, version = version + 1
+    WHERE id = #{id,jdbcType=VARCHAR} AND status = 'waiting'
+  </update>
+
+  <update id="cancelAll">
+    UPDATE soar_execution SET cancel_requested = TRUE, status = 'cancelled',
+      lease_owner = NULL, lease_expires_at = NULL, finished_at = CURRENT_TIMESTAMP,
+      updated_at = CURRENT_TIMESTAMP, version = version + 1
+    WHERE id = #{id,jdbcType=VARCHAR} AND status NOT IN ('success','failed','cancelled')
+  </update>
+
+  <update id="markFailedWaiting">
+    UPDATE soar_execution SET status = 'failed', error = #{error,jdbcType=VARCHAR},
+      lease_owner = NULL, lease_expires_at = NULL, finished_at = CURRENT_TIMESTAMP,
+      updated_at = CURRENT_TIMESTAMP, version = version + 1
+    WHERE id = #{id,jdbcType=VARCHAR} AND status = 'waiting'
+  </update>
+
+  <update id="failExecution">
+    UPDATE soar_execution SET status = 'failed', error = #{error,jdbcType=VARCHAR},
+      lease_owner = NULL, lease_expires_at = NULL, finished_at = CURRENT_TIMESTAMP,
+      updated_at = CURRENT_TIMESTAMP, version = version + 1
+    WHERE id = #{id,jdbcType=VARCHAR}
+  </update>
+
+  <select id="selectActiveChildren" resultType="string">
+    SELECT id FROM soar_execution
+    WHERE (parallel_parent_id = #{parent,jdbcType=VARCHAR} OR id IN
+      (SELECT child_execution_id FROM soar_loop_state WHERE parent_execution_id = #{parent,jdbcType=VARCHAR}))
+      AND status NOT IN ('success','failed','cancelled')
+  </select>
+
+  <insert id="insertExecution">
+    INSERT INTO soar_execution (id, tenant_id, playbook_id, playbook_name,
+      playbook_revision, graph_snapshot, object_type, object_id, event_type,
+      trigger_type, trigger_message_id, trigger_envelope, payload_snapshot, status, current_node_id,
+      actor)
+    VALUES (#{id,jdbcType=VARCHAR}, #{tenantId,jdbcType=VARCHAR}, #{playbookId,jdbcType=VARCHAR},
+      #{playbookName,jdbcType=VARCHAR}, #{playbookRevision,jdbcType=BIGINT},
+      #{graphSnapshot,jdbcType=VARCHAR}, #{objectType,jdbcType=VARCHAR}, #{objectId,jdbcType=VARCHAR},
+      #{eventType,jdbcType=VARCHAR}, #{triggerType,jdbcType=VARCHAR}, #{triggerMessageId,jdbcType=VARCHAR},
+      #{triggerEnvelope,jdbcType=VARCHAR}, #{payloadSnapshot,jdbcType=VARCHAR}, 'pending',
+      #{currentNodeId,jdbcType=VARCHAR}, #{actor,jdbcType=VARCHAR})
+  </insert>
+
+  <insert id="insertParallelChild">
+    INSERT INTO soar_execution (id, tenant_id, playbook_id, playbook_name,
+      playbook_revision, graph_snapshot, object_type, object_id, event_type,
+      trigger_type, trigger_message_id, trigger_envelope, payload_snapshot, status, current_node_id,
+      actor, parallel_parent_id)
+    VALUES (#{id,jdbcType=VARCHAR}, #{tenantId,jdbcType=VARCHAR}, #{playbookId,jdbcType=VARCHAR},
+      #{playbookName,jdbcType=VARCHAR}, #{playbookRevision,jdbcType=BIGINT},
+      #{graphSnapshot,jdbcType=VARCHAR}, #{objectType,jdbcType=VARCHAR}, #{objectId,jdbcType=VARCHAR},
+      #{eventType,jdbcType=VARCHAR}, 'INTERNAL', #{triggerMessageId,jdbcType=VARCHAR},
+      #{triggerEnvelope,jdbcType=VARCHAR}, #{payloadSnapshot,jdbcType=VARCHAR}, 'pending',
+      #{currentNodeId,jdbcType=VARCHAR}, #{actor,jdbcType=VARCHAR}, #{parallelParentId,jdbcType=VARCHAR})
+  </insert>
+
+  <insert id="insertLoopChild">
+    INSERT INTO soar_execution (id, tenant_id, playbook_id, playbook_name,
+      playbook_revision, graph_snapshot, object_type, object_id, event_type,
+      trigger_type, trigger_message_id, trigger_envelope, payload_snapshot, status, current_node_id,
+      actor)
+    VALUES (#{id,jdbcType=VARCHAR}, #{tenantId,jdbcType=VARCHAR}, #{playbookId,jdbcType=VARCHAR},
+      #{playbookName,jdbcType=VARCHAR}, #{playbookRevision,jdbcType=BIGINT},
+      #{graphSnapshot,jdbcType=VARCHAR}, #{objectType,jdbcType=VARCHAR}, #{objectId,jdbcType=VARCHAR},
+      #{eventType,jdbcType=VARCHAR}, 'INTERNAL', #{triggerMessageId,jdbcType=VARCHAR},
+      #{triggerEnvelope,jdbcType=VARCHAR}, #{payloadSnapshot,jdbcType=VARCHAR}, 'pending',
+      #{currentNodeId,jdbcType=VARCHAR}, #{actor,jdbcType=VARCHAR})
+  </insert>
+
+  <update id="updateChildPayload">
+    UPDATE soar_execution SET status = 'pending', current_node_id = #{currentNodeId,jdbcType=VARCHAR},
+      payload_snapshot = #{payloadSnapshot,jdbcType=VARCHAR}, next_run_at = CURRENT_TIMESTAMP,
+      lease_owner = NULL, lease_expires_at = NULL, updated_at = CURRENT_TIMESTAMP,
+      version = version + 1
+    WHERE id = #{id,jdbcType=VARCHAR} AND status = 'running' AND lease_owner = #{owner,jdbcType=VARCHAR}
+      AND version = #{fencingToken,jdbcType=BIGINT}
+  </update>
+
+  <!-- ========================== soar_node_execution ======================== -->
+
+  <select id="selectNodeRuns" resultMap="nodeRunRow">
+    SELECT * FROM soar_node_execution WHERE execution_id = #{executionId} ORDER BY sequence_no
+  </select>
+
+  <select id="selectResumableNodeRun" resultMap="nodeRunRow">
+    SELECT * FROM soar_node_execution WHERE execution_id = #{executionId} AND node_id = #{nodeId}
+      AND status = 'waiting' ORDER BY sequence_no DESC FETCH FIRST 1 ROWS ONLY
+  </select>
+
+  <select id="selectLatestNodeRun" resultMap="nodeRunRow">
+    SELECT * FROM soar_node_execution WHERE execution_id = #{executionId} AND node_id = #{nodeId}
+      ORDER BY sequence_no DESC FETCH FIRST 1 ROWS ONLY
+  </select>
+
+  <select id="selectNodeRun" resultMap="nodeRunRow">
+    SELECT * FROM soar_node_execution WHERE id = #{id}
+  </select>
+
+  <select id="selectNextSequence" resultType="long">
+    SELECT COALESCE(MAX(sequence_no), 0) + 1 FROM soar_node_execution WHERE execution_id = #{executionId}
+  </select>
+
+  <insert id="insertNodeRun">
+    INSERT INTO soar_node_execution (id, execution_id, node_id, node_name, node_type,
+      status, sequence_no, visit_no, attempt, token_id, idempotency_key, input_json)
+    VALUES (#{id,jdbcType=VARCHAR}, #{executionId,jdbcType=VARCHAR}, #{nodeId,jdbcType=VARCHAR},
+      #{nodeName,jdbcType=VARCHAR}, #{nodeType,jdbcType=VARCHAR}, 'running',
+      #{sequenceNo,jdbcType=BIGINT}, #{visitNo,jdbcType=INTEGER}, #{attempt,jdbcType=INTEGER},
+      'root', #{idempotencyKey,jdbcType=VARCHAR}, #{inputJson,jdbcType=VARCHAR})
+  </insert>
+
+  <update id="markNodeRunRetrying">
+    UPDATE soar_node_execution SET status = 'retrying',
+      error = COALESCE(error, '工作租约过期，重新执行该节点'),
+      finished_at = COALESCE(finished_at, CURRENT_TIMESTAMP)
+    WHERE id = #{id,jdbcType=VARCHAR}
+  </update>
+
+  <update id="updateNodeRunInput">
+    UPDATE soar_node_execution SET input_json = #{inputJson,jdbcType=VARCHAR}
+    WHERE id = #{id,jdbcType=VARCHAR} AND execution_id = #{executionId,jdbcType=VARCHAR}
+      AND status = 'running'
+  </update>
+
+  <update id="finishNodeRun">
+    UPDATE soar_node_execution SET status = #{status,jdbcType=VARCHAR},
+      output_json = #{outputJson,jdbcType=VARCHAR}, error = #{error,jdbcType=VARCHAR},
+      finished_at = CURRENT_TIMESTAMP
+    WHERE id = #{id,jdbcType=VARCHAR}
+      AND status IN ('running','waiting','waiting_human','retrying')
+  </update>
+
+  <update id="finishNodeRunNoGuard">
+    UPDATE soar_node_execution SET status = #{status,jdbcType=VARCHAR},
+      output_json = #{outputJson,jdbcType=VARCHAR}, error = #{error,jdbcType=VARCHAR},
+      finished_at = CURRENT_TIMESTAMP
+    WHERE id = #{id,jdbcType=VARCHAR}
+  </update>
+
+  <update id="setNodeRunWaiting">
+    UPDATE soar_node_execution SET status = 'waiting'
+    WHERE id = #{nodeRunId,jdbcType=VARCHAR} AND execution_id = #{executionId,jdbcType=VARCHAR}
+      AND status = 'running'
+  </update>
+
+  <update id="setNodeRunWaitingHuman">
+    UPDATE soar_node_execution SET status = 'waiting_human'
+    WHERE id = #{nodeRunId,jdbcType=VARCHAR} AND execution_id = #{executionId,jdbcType=VARCHAR}
+      AND status = 'running'
+  </update>
+
+  <update id="cancelNodeRuns">
+    UPDATE soar_node_execution SET status = 'cancelled', finished_at = CURRENT_TIMESTAMP
+    WHERE execution_id = #{executionId}
+      AND status IN ('running','waiting','waiting_human','retrying')
+  </update>
+
+  <update id="failParentNodeRun">
+    UPDATE soar_node_execution SET status = 'failed', error = #{error,jdbcType=VARCHAR},
+      finished_at = CURRENT_TIMESTAMP
+    WHERE id = #{id,jdbcType=VARCHAR}
+  </update>
+
+  <select id="selectNodeOutputs" resultMap="nodeOutputRow">
+    SELECT node_id, output_json FROM soar_node_execution WHERE execution_id = #{executionId}
+      AND status = 'success' AND output_json IS NOT NULL ORDER BY sequence_no
+  </select>
+
+  <!-- ============================ soar_approval_task ======================= -->
+
+  <select id="selectApprovals" resultMap="approvalRow">
+    SELECT * FROM soar_approval_task WHERE tenant_id = #{tenantId}
+    ORDER BY created_at DESC FETCH FIRST #{limit,jdbcType=INTEGER} ROWS ONLY
+  </select>
+
+  <select id="selectApprovalsByStatus" resultMap="approvalRow">
+    SELECT * FROM soar_approval_task WHERE tenant_id = #{tenantId} AND status = #{status,jdbcType=VARCHAR}
+    ORDER BY created_at DESC FETCH FIRST #{limit,jdbcType=INTEGER} ROWS ONLY
+  </select>
+
+  <select id="selectApproval" resultMap="approvalRow">
+    SELECT * FROM soar_approval_task WHERE tenant_id = #{tenantId} AND id = #{id}
+  </select>
+
+  <insert id="insertApproval">
+    INSERT INTO soar_approval_task (id, tenant_id, execution_id, node_run_id, node_id,
+      playbook_id, playbook_name, object_type, object_id, prompt)
+    VALUES (#{id,jdbcType=VARCHAR}, #{tenantId,jdbcType=VARCHAR}, #{executionId,jdbcType=VARCHAR},
+      #{nodeRunId,jdbcType=VARCHAR}, #{nodeId,jdbcType=VARCHAR}, #{playbookId,jdbcType=VARCHAR},
+      #{playbookName,jdbcType=VARCHAR}, #{objectType,jdbcType=VARCHAR}, #{objectId,jdbcType=VARCHAR},
+      #{prompt,jdbcType=VARCHAR})
+  </insert>
+
+  <update id="decideApproval">
+    UPDATE soar_approval_task SET status = #{decision,jdbcType=VARCHAR},
+      decided_by = #{actor,jdbcType=VARCHAR}, decision_note = #{note,jdbcType=VARCHAR},
+      decided_at = CURRENT_TIMESTAMP
+    WHERE tenant_id = #{tenantId,jdbcType=VARCHAR} AND id = #{id,jdbcType=VARCHAR} AND status = 'pending'
+  </update>
+
+  <update id="cancelPendingApprovals">
+    UPDATE soar_approval_task SET status = 'cancelled', decided_at = CURRENT_TIMESTAMP
+    WHERE execution_id = #{executionId} AND status = 'pending'
+  </update>
+
+  <!-- ==================== soar_parallel_group / branch ===================== -->
+
+  <insert id="insertParallelGroup">
+    INSERT INTO soar_parallel_group (id, tenant_id, parent_execution_id, parent_node_run_id,
+      join_node_id, expected_count)
+    VALUES (#{id,jdbcType=VARCHAR}, #{tenantId,jdbcType=VARCHAR}, #{parentExecutionId,jdbcType=VARCHAR},
+      #{parentNodeRunId,jdbcType=VARCHAR}, #{joinNodeId,jdbcType=VARCHAR}, #{expectedCount,jdbcType=INTEGER})
+  </insert>
+
+  <insert id="insertParallelBranch">
+    INSERT INTO soar_parallel_branch (id, group_id, execution_id, branch_label, target_node_id)
+    VALUES (#{id,jdbcType=VARCHAR}, #{groupId,jdbcType=VARCHAR}, #{executionId,jdbcType=VARCHAR},
+      #{branchLabel,jdbcType=VARCHAR}, #{targetNodeId,jdbcType=VARCHAR})
+  </insert>
+
+  <update id="markParallelBranchArrived">
+    UPDATE soar_parallel_branch SET status = 'arrived', arrived_at = CURRENT_TIMESTAMP
+    WHERE id = #{id,jdbcType=VARCHAR} AND status IN ('pending','running')
+  </update>
+
+  <update id="markBranchCancelledAll">
+    UPDATE soar_parallel_branch SET status = 'cancelled' WHERE status IN ('pending','running')
+      AND (execution_id = #{executionId,jdbcType=VARCHAR} OR group_id IN
+      (SELECT id FROM soar_parallel_group WHERE parent_execution_id = #{executionId,jdbcType=VARCHAR}))
+  </update>
+
+  <update id="cancelBranchesOfGroup">
+    UPDATE soar_parallel_branch SET status = 'cancelled'
+    WHERE group_id = #{groupId,jdbcType=VARCHAR} AND status IN ('pending','running')
+  </update>
+
+  <update id="markGroupCancelledWaiting">
+    UPDATE soar_parallel_group SET status = 'cancelled'
+    WHERE parent_execution_id = #{executionId,jdbcType=VARCHAR} AND status = 'waiting'
+  </update>
+
+  <update id="markGroupCancelledById">
+    UPDATE soar_parallel_group SET status = 'cancelled'
+    WHERE id = #{id,jdbcType=VARCHAR} AND status = 'waiting'
+  </update>
+
+  <update id="releaseGroup">
+    UPDATE soar_parallel_group SET status = 'released', output_json = #{outputJson,jdbcType=VARCHAR},
+      released_at = CURRENT_TIMESTAMP
+    WHERE id = #{groupId,jdbcType=VARCHAR} AND status = 'waiting'
+  </update>
+
+  <select id="selectArrivedCount" resultType="int">
+    SELECT arrived_count FROM soar_parallel_group WHERE id = #{groupId} FOR UPDATE
+  </select>
+
+  <update id="updateArrivedCount">
+    UPDATE soar_parallel_group SET arrived_count = #{arrivedCount,jdbcType=INTEGER}
+    WHERE id = #{groupId,jdbcType=VARCHAR} AND status = 'waiting'
+  </update>
+
+  <select id="selectExpectedCount" resultType="int">
+    SELECT expected_count FROM soar_parallel_group WHERE id = #{groupId}
+  </select>
+
+  <select id="selectGroupParentNodeRunId" resultType="string">
+    SELECT parent_node_run_id FROM soar_parallel_group WHERE id = #{groupId}
+  </select>
+
+  <select id="selectParallelBranch" resultMap="parallelBranchJoinRow">
+    SELECT b.id, b.group_id, g.parent_execution_id, g.join_node_id,
+      b.branch_label, b.target_node_id
+    FROM soar_parallel_branch b JOIN soar_parallel_group g ON g.id = b.group_id
+    WHERE b.execution_id = #{executionId,jdbcType=VARCHAR}
+      AND b.status IN ('pending','running') AND g.status = 'waiting' AND g.join_node_id = #{nodeId,jdbcType=VARCHAR}
+  </select>
+
+  <select id="selectParallelBranchForUpdate" resultMap="parallelFailureParentRow">
+    SELECT g.id AS group_id, g.parent_execution_id, g.parent_node_run_id, b.branch_label
+    FROM soar_parallel_branch b JOIN soar_parallel_group g ON g.id = b.group_id
+    WHERE b.execution_id = #{childExecutionId,jdbcType=VARCHAR} AND g.status = 'waiting' FOR UPDATE
+  </select>
+
+  <select id="selectBranchExecutions" resultMap="branchExecutionRow">
+    SELECT branch_label, execution_id FROM soar_parallel_branch
+    WHERE group_id = #{groupId} ORDER BY branch_label
+  </select>
+
+  <select id="selectSiblingBranches" resultType="string">
+    SELECT execution_id FROM soar_parallel_branch
+    WHERE group_id = #{groupId,jdbcType=VARCHAR} AND execution_id &lt;&gt; #{childExecutionId,jdbcType=VARCHAR}
+  </select>
+
+  <select id="selectWaitingParentId" resultType="string">
+    SELECT id FROM soar_execution WHERE id = #{parentId}
+      AND status = 'waiting' AND cancel_requested = FALSE
+  </select>
+
+  <!-- ============================ soar_loop_state ========================== -->
+
+  <select id="selectLoopState" resultMap="loopStateRow">
+    SELECT * FROM soar_loop_state WHERE child_execution_id = #{childExecutionId}
+      AND body_end_node_id = #{nodeId} AND status = 'running'
+  </select>
+
+  <insert id="insertLoopState">
+    INSERT INTO soar_loop_state (id, tenant_id, parent_execution_id, parent_node_run_id,
+      child_execution_id, body_start_node_id, body_end_node_id, items_json, max_iterations)
+    VALUES (#{id,jdbcType=VARCHAR}, #{tenantId,jdbcType=VARCHAR}, #{parentExecutionId,jdbcType=VARCHAR},
+      #{parentNodeRunId,jdbcType=VARCHAR}, #{childExecutionId,jdbcType=VARCHAR},
+      #{bodyStartNodeId,jdbcType=VARCHAR}, #{bodyEndNodeId,jdbcType=VARCHAR},
+      #{itemsJson,jdbcType=VARCHAR}, #{maxIterations,jdbcType=INTEGER})
+  </insert>
+
+  <update id="advanceLoopIndex">
+    UPDATE soar_loop_state SET iteration_index = #{iterationIndex,jdbcType=INTEGER}
+    WHERE id = #{id,jdbcType=VARCHAR} AND status = 'running'
+  </update>
+
+  <update id="completeLoop">
+    UPDATE soar_loop_state SET iteration_index = #{iterationIndex,jdbcType=INTEGER},
+      status = 'success', output_json = #{outputJson,jdbcType=VARCHAR}, finished_at = CURRENT_TIMESTAMP
+    WHERE id = #{id,jdbcType=VARCHAR} AND status = 'running'
+  </update>
+
+  <update id="markLoopFailed">
+    UPDATE soar_loop_state SET status = 'failed', output_json = #{outputJson,jdbcType=VARCHAR},
+      finished_at = CURRENT_TIMESTAMP
+    WHERE id = #{id,jdbcType=VARCHAR} AND status = 'running'
+  </update>
+
+  <update id="markLoopCancelled">
+    UPDATE soar_loop_state SET status = 'cancelled', finished_at = CURRENT_TIMESTAMP
+    WHERE parent_execution_id = #{executionId} AND status = 'running'
+  </update>
+
+  <select id="selectLoopFailureParent" resultMap="loopFailureParentRow">
+    SELECT id, parent_execution_id, parent_node_run_id
+    FROM soar_loop_state WHERE child_execution_id = #{childExecutionId,jdbcType=VARCHAR}
+      AND status = 'running' FOR UPDATE
+  </select>
+
+  <!-- ============================ soar_action_receipt ====================== -->
+
+  <select id="selectReceipt" resultType="string">
+    SELECT result_json FROM soar_action_receipt WHERE idempotency_key = #{idempotencyKey}
+  </select>
+
+  <insert id="insertReceipt">
+    INSERT INTO soar_action_receipt (idempotency_key, tenant_id, execution_id,
+      node_id, action_id, result_json)
+    VALUES (#{idempotencyKey,jdbcType=VARCHAR}, #{tenantId,jdbcType=VARCHAR},
+      #{executionId,jdbcType=VARCHAR}, #{nodeId,jdbcType=VARCHAR},
+      #{actionId,jdbcType=VARCHAR}, #{resultJson,jdbcType=VARCHAR})
+  </insert>
+
+</mapper>

@@ -2,7 +2,7 @@
 
 > 定位：面向项目交接、迭代决策和后续开发的管理视图。当前运行事实仍以 [`current-status.md`](current-status.md) 为准，功能/API 以 [`product-contract.md`](product-contract.md) 为准，阶段优先级以 [`roadmap.md`](roadmap.md) 为准；本文不建立第四份接口契约。
 >
-> 基线：2026-08-30，`add_frame` 分支，WSL2 + Docker Desktop；最近一次 Maven 完整验证基线为 control-api 149 个测试、detection-runtime 21 个测试、detection-controller 17 个测试、SOAR worker 1 个测试、Flink 46 个测试，全部通过；前端验证沿用 CI/历史记录。
+> 基线：2026-09-04，`add_frame` 分支，WSL2 + Docker Desktop；最近一次 Maven 完整验证基线为根 reactor 168 项（control-api 含 control/soar mapper smoke + Testcontainers `PostgresMigrationContainerTest`，Docker 可用时执行）、detection-controller 17 项、SOAR worker 1 项、Flink 60 项，全部通过；前端验证沿用 CI/历史记录。
 
 ## 1. 当前结论
 
@@ -37,7 +37,7 @@ flowchart LR
 | Managed Detection Runtime | 已完成单集群开发闭环 | Phase 5A durable claim/lease/fencing；Phase 5B immutable job-group artifact、structured Flink identity、真实 job/artifact observation、savepoint replacement/rollback、启动 manifest/rule-ID verification 和 opt-in process adapter | 默认 disabled；process path 仅支持单配置集群，生产 HA、多集群编排、分布式 artifact 锁和灾备治理未完成 |
 | 数据质量 | 已完成基础保护 | Logstash 解析失败进入 `siem-events-raw-*`；Flink 坏 JSON/非法时间戳进入 `siem-events-dlq` | DLQ 没有管理页面、审批式重放和积压告警 |
 | 告警与调查 | 已完成主要旅程 | 告警筛选/详情/批量处置、自动聚合、案件状态/负责人/证据/时间线、告警与案件关联 | PostgreSQL、ES 与告警 marker 仍是补偿 + 最终一致性模型 |
-| 控制面与权限 | 已完成基础闭环 | Spring Security、Bearer 会话、RBAC、首次改密、审计、通知、Flyway V19、后台任务租约与 lifecycle outbox | 数据面尚未形成完整 tenant 隔离；生产密钥与统一身份源未接入 |
+| 控制面与权限 | 已完成基础闭环 | Spring Security、Bearer 会话、RBAC、首次改密、审计、通知、Flyway V19、后台任务租约与 lifecycle outbox；控制面业务 SQL 已统一为 MyBatis（control/detection/soar 三域工厂，见 CLAUDE.md） | 数据面尚未形成完整 tenant 隔离；生产密钥与统一身份源未接入 |
 | SOAR | 已完成持久编排扩展 | lifecycle/人工触发、11 类 Handler、持久并行/静态循环、Connector SPI/HTTP、验证器链、逐 attempt、幂等回执、续租与 fencing | 无 Cron/Webhook、子 Playbook、AI、凭据库、Connector 生产隔离和事务 lifecycle outbox |
 | Vue 控制台 | 已完成主要页面重构 | Vue 3 路由、模块拆分、统一请求错误、结构化详情、规则编辑、Vue Flow 设计器、离开保存保护 | 浏览器 E2E 目前只覆盖一个使用 mock API 的 Playbook 编辑旅程 |
 | 运维与交付 | 已完成开发环境基线 | 六组件健康扫描、Kafka/Flink 语义检查、ES 备份恢复、Compose 校验、部署脚本、GitHub Actions | Spring Boot/前端不在 Compose 内；缺少生产反向代理、统一证书和环境级发布回滚 |

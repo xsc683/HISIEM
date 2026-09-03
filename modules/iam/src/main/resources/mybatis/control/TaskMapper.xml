@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+  PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.xscsiem.hsiem_platform.control.TaskMapper">
+  <resultMap id="taskRow" type="com.xscsiem.hsiem_platform.control.ControlPlaneRow$TaskRow">
+    <constructor>
+      <arg column="id" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="task_type" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="resource_id" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="status" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="progress" javaType="_int" jdbcType="INTEGER"/>
+      <arg column="message" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="error" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="started_at" javaType="java.time.Instant" jdbcType="TIMESTAMP"/>
+      <arg column="finished_at" javaType="java.time.Instant" jdbcType="TIMESTAMP"/>
+      <arg column="created_at" javaType="java.time.Instant" jdbcType="TIMESTAMP"/>
+      <arg column="updated_at" javaType="java.time.Instant" jdbcType="TIMESTAMP"/>
+      <arg column="attempts" javaType="_int" jdbcType="INTEGER"/>
+      <arg column="max_attempts" javaType="_int" jdbcType="INTEGER"/>
+      <arg column="lease_owner" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="lease_until" javaType="java.time.Instant" jdbcType="TIMESTAMP"/>
+      <arg column="heartbeat_at" javaType="java.time.Instant" jdbcType="TIMESTAMP"/>
+    </constructor>
+  </resultMap>
+  <sql id="taskColumns">
+    id, task_type, resource_id, status, progress, message, error,
+    started_at, finished_at, created_at, updated_at, attempts, max_attempts,
+    lease_owner, lease_until, heartbeat_at
+  </sql>
+  <insert id="insertTask">
+    INSERT INTO background_tasks(id, task_type, resource_id, status, progress, message)
+    VALUES (#{id}, #{type}, #{resourceId,jdbcType=VARCHAR}, 'queued', 0, #{message,jdbcType=VARCHAR})
+  </insert>
+  <update id="updateTask">
+    UPDATE background_tasks SET status = #{status}, progress = #{progress}, message = #{message,jdbcType=VARCHAR}, error = #{error,jdbcType=VARCHAR},
+      started_at = CASE WHEN #{status} = 'running' AND started_at IS NULL THEN CURRENT_TIMESTAMP ELSE started_at END,
+      finished_at = CASE WHEN #{status} IN ('succeeded', 'failed', 'cancelled') THEN CURRENT_TIMESTAMP ELSE finished_at END,
+      lease_owner = CASE WHEN #{status} IN ('succeeded', 'failed', 'cancelled') THEN NULL ELSE lease_owner END,
+      lease_until = CASE WHEN #{status} IN ('succeeded', 'failed', 'cancelled') THEN NULL ELSE lease_until END,
+      updated_at = CURRENT_TIMESTAMP WHERE id = #{id}
+  </update>
+  <update id="claimTask">
+    UPDATE background_tasks SET status = 'running', lease_owner = #{owner}, lease_until = #{leaseUntil,jdbcType=TIMESTAMP},
+      heartbeat_at = CURRENT_TIMESTAMP, attempts = attempts + 1,
+      started_at = COALESCE(started_at, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP
+    WHERE id = #{id} AND status IN ('queued', 'running')
+      AND (lease_until IS NULL OR lease_until &lt; CURRENT_TIMESTAMP)
+  </update>
+  <update id="heartbeatTask">
+    UPDATE background_tasks SET status = 'running', progress = #{progress}, message = #{message,jdbcType=VARCHAR},
+      lease_until = #{leaseUntil,jdbcType=TIMESTAMP}, heartbeat_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+    WHERE id = #{id} AND status = 'running' AND lease_owner = #{owner}
+  </update>
+  <select id="selectTask" resultMap="taskRow">
+    SELECT <include refid="taskColumns"/> FROM background_tasks WHERE id = #{id}
+  </select>
+  <select id="selectTasks" resultMap="taskRow">
+    SELECT <include refid="taskColumns"/> FROM background_tasks ORDER BY updated_at DESC LIMIT #{limit}
+  </select>
+  <update id="recoverStaleTasks">
+    UPDATE background_tasks
+    SET status = 'failed', progress = 100,
+      message = '任务未完成，已由服务恢复器收敛',
+      error = #{errorMessage,jdbcType=VARCHAR}, finished_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP,
+      lease_owner = NULL, lease_until = NULL
+    WHERE status IN ('queued', 'running') AND updated_at &lt; #{cutoff,jdbcType=TIMESTAMP}
+  </update>
+</mapper>

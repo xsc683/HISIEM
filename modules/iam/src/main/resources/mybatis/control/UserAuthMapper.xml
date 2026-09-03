@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+  PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.xscsiem.hsiem_platform.control.UserAuthMapper">
+  <resultMap id="userRow" type="com.xscsiem.hsiem_platform.control.ControlPlaneRow$UserRow">
+    <constructor>
+      <arg column="id" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="username" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="password_hash" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="password_change_required" javaType="_boolean" jdbcType="BOOLEAN"/>
+      <arg column="role_name" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="status" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="created_at" javaType="java.time.Instant" jdbcType="TIMESTAMP"/>
+    </constructor>
+  </resultMap>
+  <resultMap id="loginAttemptRow" type="com.xscsiem.hsiem_platform.control.ControlPlaneRow$LoginAttemptRow">
+    <constructor>
+      <arg column="failure_count" javaType="_int" jdbcType="INTEGER"/>
+      <arg column="first_failure_at" javaType="java.time.Instant" jdbcType="TIMESTAMP"/>
+    </constructor>
+  </resultMap>
+  <select id="selectUsers" resultMap="userRow">
+    SELECT id, username, password_hash, password_change_required, role_name, status, created_at
+    FROM users ORDER BY username
+  </select>
+  <select id="selectUser" resultMap="userRow">
+    SELECT id, username, password_hash, password_change_required, role_name, status, created_at
+    FROM users WHERE username = #{username}
+  </select>
+  <insert id="insertUser">
+    INSERT INTO users(id, username, password_hash, password_change_required, role_name, status, created_at, updated_at)
+    VALUES (#{id,jdbcType=VARCHAR}, #{username,jdbcType=VARCHAR}, #{passwordHash,jdbcType=VARCHAR}, #{passwordChangeRequired,jdbcType=BOOLEAN}, #{role,jdbcType=VARCHAR},
+      #{status,jdbcType=VARCHAR}, #{createdAt,jdbcType=TIMESTAMP}, CURRENT_TIMESTAMP)
+  </insert>
+  <update id="updateUser">
+    UPDATE users SET role_name = #{role,jdbcType=VARCHAR}, status = #{status,jdbcType=VARCHAR},
+      password_hash = #{passwordHash,jdbcType=VARCHAR}, password_change_required = #{passwordChangeRequired,jdbcType=BOOLEAN},
+      updated_at = CURRENT_TIMESTAMP
+    WHERE username = #{username,jdbcType=VARCHAR}
+  </update>
+  <delete id="deleteUser">DELETE FROM users WHERE username = #{username}</delete>
+
+  <select id="selectSessionUsername" resultType="string">
+    SELECT username FROM auth_sessions
+    WHERE token_hash = #{tokenHash} AND expires_at &gt; #{now,jdbcType=TIMESTAMP}
+  </select>
+  <delete id="deleteExpiredSession">
+    DELETE FROM auth_sessions WHERE token_hash = #{tokenHash} OR expires_at &lt;= #{now,jdbcType=TIMESTAMP}
+  </delete>
+  <update id="touchSession">
+    UPDATE auth_sessions SET last_seen_at = CURRENT_TIMESTAMP WHERE token_hash = #{tokenHash}
+  </update>
+  <insert id="insertSession">
+    INSERT INTO auth_sessions(token_hash, username, expires_at)
+    VALUES (#{tokenHash}, #{username}, #{expiresAt,jdbcType=TIMESTAMP})
+  </insert>
+  <delete id="deleteSession">DELETE FROM auth_sessions WHERE token_hash = #{tokenHash}</delete>
+  <delete id="deleteSessionsForUser">DELETE FROM auth_sessions WHERE username = #{username}</delete>
+  <delete id="deleteExpiredSessions">
+    DELETE FROM auth_sessions WHERE expires_at &lt;= #{now,jdbcType=TIMESTAMP}
+  </delete>
+
+  <select id="countActiveLoginBlock" resultType="int">
+    SELECT COUNT(*) FROM login_attempts
+    WHERE username = #{username} AND locked_until &gt; #{now,jdbcType=TIMESTAMP}
+  </select>
+  <select id="selectLoginAttemptForUpdate" resultMap="loginAttemptRow">
+    SELECT failure_count, first_failure_at FROM login_attempts
+    WHERE username = #{username} FOR UPDATE
+  </select>
+  <insert id="insertLoginAttempt">
+    INSERT INTO login_attempts(username, failure_count, first_failure_at, locked_until)
+    VALUES (#{username}, 1, #{now,jdbcType=TIMESTAMP}, NULL)
+  </insert>
+  <update id="updateLoginAttempt">
+    UPDATE login_attempts SET failure_count = #{failures}, first_failure_at = #{firstFailureAt,jdbcType=TIMESTAMP},
+      locked_until = #{lockedUntil,jdbcType=TIMESTAMP}, updated_at = CURRENT_TIMESTAMP WHERE username = #{username}
+  </update>
+  <delete id="deleteLoginAttempts">DELETE FROM login_attempts WHERE username = #{username}</delete>
+</mapper>

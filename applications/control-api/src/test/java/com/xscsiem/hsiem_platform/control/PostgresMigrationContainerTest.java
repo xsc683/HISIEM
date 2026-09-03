@@ -19,8 +19,12 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import org.apache.ibatis.session.SqlSessionFactory;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.Test;
+import org.mybatis.spring.SqlSessionFactoryBean;
+import org.mybatis.spring.SqlSessionTemplate;
+import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
@@ -254,7 +258,7 @@ class PostgresMigrationContainerTest {
                 .load()
                 .migrate();
         JdbcTemplate jdbc = new JdbcTemplate(dataSource);
-        JdbcControlPlaneStore store = new JdbcControlPlaneStore(jdbc);
+        MyBatisControlPlaneStore store = controlPlaneStore(dataSource);
         String messageId = "lifecycle-concurrent-" + System.nanoTime();
         store.enqueueLifecycle(
                 messageId,
@@ -497,5 +501,36 @@ class PostgresMigrationContainerTest {
         dataSource.setUsername(postgres.getUsername());
         dataSource.setPassword(postgres.getPassword());
         return dataSource;
+    }
+
+    /**
+     * Builds the MyBatis control-plane store over the container datasource without a Spring
+     * context.
+     */
+    private static MyBatisControlPlaneStore controlPlaneStore(DriverManagerDataSource dataSource) {
+        try {
+            SqlSessionFactoryBean factory = new SqlSessionFactoryBean();
+            factory.setDataSource(dataSource);
+            factory.setMapperLocations(
+                    new PathMatchingResourcePatternResolver()
+                            .getResources("classpath*:mybatis/control/*.xml"));
+            SqlSessionFactory sessionFactory = factory.getObject();
+            if (sessionFactory == null) {
+                throw new IllegalStateException(
+                        "control-plane MyBatis session factory was not created");
+            }
+            SqlSessionTemplate template = new SqlSessionTemplate(sessionFactory);
+            return new MyBatisControlPlaneStore(
+                    dataSource,
+                    template.getMapper(UserAuthMapper.class),
+                    template.getMapper(RoleAuditMapper.class),
+                    template.getMapper(NotificationMapper.class),
+                    template.getMapper(CaseMapper.class),
+                    template.getMapper(CaseMirrorOutboxMapper.class),
+                    template.getMapper(TaskMapper.class),
+                    template.getMapper(LifecycleOutboxMapper.class));
+        } catch (Exception e) {
+            throw new IllegalStateException("cannot initialize control-plane MyBatis store", e);
+        }
     }
 }

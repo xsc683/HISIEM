@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+  PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.xscsiem.hsiem_platform.control.CaseMirrorOutboxMapper">
+  <resultMap id="claimRow" type="com.xscsiem.hsiem_platform.control.ControlPlaneRow$CaseMirrorClaimRow">
+    <constructor>
+      <arg column="id" javaType="_long" jdbcType="BIGINT"/>
+      <arg column="case_id" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="operation" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="payload_json" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="attempts" javaType="_int" jdbcType="INTEGER"/>
+    </constructor>
+  </resultMap>
+  <update id="compactPendingUpsert">
+    UPDATE case_mirror_outbox SET payload_json = #{payload,jdbcType=VARCHAR}, status = 'pending',
+      available_at = CURRENT_TIMESTAMP, locked_until = NULL, lease_owner = NULL,
+      last_error = NULL, updated_at = CURRENT_TIMESTAMP
+    WHERE case_id = #{caseId} AND operation = 'upsert' AND status IN ('pending', 'failed')
+  </update>
+  <select id="countPendingUpsert" resultType="int">
+    SELECT COUNT(*) FROM case_mirror_outbox
+    WHERE case_id = #{caseId} AND operation = 'upsert' AND status = 'pending'
+  </select>
+  <insert id="insert">
+    INSERT INTO case_mirror_outbox(case_id, operation, payload_json)
+    VALUES (#{caseId}, #{operation}, #{payload,jdbcType=VARCHAR})
+  </insert>
+  <select id="selectClaimable" resultMap="claimRow">
+    SELECT id, case_id, operation, payload_json, attempts
+    FROM case_mirror_outbox
+    WHERE status IN ('pending', 'failed')
+      AND available_at &lt;= CURRENT_TIMESTAMP
+      AND (locked_until IS NULL OR locked_until &lt; CURRENT_TIMESTAMP)
+    ORDER BY id
+    LIMIT #{limit} FOR UPDATE
+  </select>
+  <update id="claim">
+    UPDATE case_mirror_outbox SET status = 'in_flight', lease_owner = #{owner},
+      locked_until = #{leaseUntil,jdbcType=TIMESTAMP}, attempts = attempts + 1, updated_at = CURRENT_TIMESTAMP
+    WHERE id = #{id}
+  </update>
+  <update id="succeed">
+    UPDATE case_mirror_outbox SET status = 'succeeded', lease_owner = NULL,
+      locked_until = NULL, last_error = NULL, updated_at = CURRENT_TIMESTAMP
+    WHERE id = #{id} AND lease_owner = #{owner}
+  </update>
+  <update id="fail">
+    UPDATE case_mirror_outbox SET status = 'failed', lease_owner = NULL,
+      locked_until = NULL, last_error = #{error,jdbcType=VARCHAR},
+      available_at = #{nextAttemptAt,jdbcType=TIMESTAMP}, updated_at = CURRENT_TIMESTAMP
+    WHERE id = #{id} AND lease_owner = #{owner}
+  </update>
+</mapper>

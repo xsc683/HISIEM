@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+  PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.xscsiem.hsiem_platform.tenant.TenantMapper">
+  <resultMap id="tenantValuesRow" type="com.xscsiem.hsiem_platform.tenant.TenantRow$TenantRowValues">
+    <constructor>
+      <arg column="id" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="name" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="status" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="created_by" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="created_at" javaType="java.time.Instant" jdbcType="TIMESTAMP"/>
+    </constructor>
+  </resultMap>
+  <resultMap id="userTenantRow" type="com.xscsiem.hsiem_platform.tenant.TenantRow$UserTenantRow">
+    <constructor>
+      <arg column="id" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="name" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="status" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="tenant_role" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="created_at" javaType="java.time.Instant" jdbcType="TIMESTAMP"/>
+    </constructor>
+  </resultMap>
+  <resultMap id="tenantCountRow" type="com.xscsiem.hsiem_platform.tenant.TenantRow$TenantCountRow">
+    <constructor>
+      <arg column="id" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="name" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="status" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="created_by" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="created_at" javaType="java.time.Instant" jdbcType="TIMESTAMP"/>
+      <arg column="member_count" javaType="_long" jdbcType="BIGINT"/>
+    </constructor>
+  </resultMap>
+
+  <select id="selectTenant" resultMap="tenantValuesRow">
+    SELECT id, name, status, created_by, created_at FROM tenants WHERE id = #{id}
+  </select>
+  <select id="countActiveMembership" resultType="int">
+    SELECT COUNT(*) FROM tenant_memberships m JOIN tenants t ON t.id = m.tenant_id
+    WHERE m.tenant_id = #{tenantId} AND m.username = #{username} AND t.status = 'active'
+  </select>
+  <select id="countAllMemberships" resultType="int">
+    SELECT COUNT(*) FROM tenant_memberships WHERE username = #{username}
+  </select>
+  <select id="countMembershipsOfTenant" resultType="int">
+    SELECT COUNT(*) FROM tenant_memberships WHERE tenant_id = #{tenantId} AND username = #{username}
+  </select>
+  <select id="selectUserTenants" resultMap="userTenantRow">
+    SELECT t.id, t.name, t.status, m.tenant_role AS tenant_role, t.created_at AS created_at
+    FROM tenants t JOIN tenant_memberships m ON m.tenant_id = t.id
+    WHERE m.username = #{username} ORDER BY t.id
+  </select>
+  <select id="selectAllTenants" resultMap="tenantCountRow">
+    SELECT t.id, t.name, t.status, t.created_by AS created_by, t.created_at AS created_at,
+           COUNT(m.username) AS member_count
+    FROM tenants t LEFT JOIN tenant_memberships m ON m.tenant_id = t.id
+    GROUP BY t.id, t.name, t.status, t.created_by, t.created_at ORDER BY t.id
+  </select>
+  <insert id="insertTenant">
+    INSERT INTO tenants(id, name, created_by) VALUES (#{id}, #{name}, #{createdBy})
+  </insert>
+  <insert id="insertMembership">
+    INSERT INTO tenant_memberships(tenant_id, username, tenant_role)
+    VALUES (#{tenantId}, #{username}, #{role})
+  </insert>
+  <update id="updateMembershipRole">
+    UPDATE tenant_memberships SET tenant_role = #{role}
+    WHERE tenant_id = #{tenantId} AND username = #{username}
+  </update>
+  <select id="countUsers" resultType="int">
+    SELECT COUNT(*) FROM users WHERE username = #{username}
+  </select>
+  <select id="lockUser" resultType="string">
+    SELECT username FROM users WHERE username = #{username} FOR UPDATE
+  </select>
+</mapper>

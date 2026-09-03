@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+  PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.xscsiem.hsiem_platform.control.LifecycleOutboxMapper">
+  <resultMap id="claimRow" type="com.xscsiem.hsiem_platform.control.ControlPlaneRow$LifecycleClaimRow">
+    <constructor>
+      <arg column="message_id" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="event_type" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="tenant_id" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="object_type" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="object_id" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="occurred_at" javaType="java.time.Instant" jdbcType="TIMESTAMP"/>
+      <arg column="topic" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="message_key" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="payload_json" javaType="java.lang.String" jdbcType="VARCHAR"/>
+      <arg column="attempts" javaType="_int" jdbcType="INTEGER"/>
+    </constructor>
+  </resultMap>
+  <insert id="insert">
+    INSERT INTO lifecycle_outbox(message_id, event_type, tenant_id, object_type, object_id,
+      occurred_at, topic, message_key, payload_json)
+    SELECT #{messageId}, #{eventType}, #{tenantId}, #{objectType}, #{objectId},
+      #{occurredAt,jdbcType=TIMESTAMP}, #{topic}, #{messageKey}, #{payload}
+    WHERE NOT EXISTS (SELECT 1 FROM lifecycle_outbox WHERE message_id = #{messageId})
+  </insert>
+  <insert id="insertOnConflictDoNothing">
+    INSERT INTO lifecycle_outbox(message_id, event_type, tenant_id, object_type, object_id,
+      occurred_at, topic, message_key, payload_json)
+    VALUES (#{messageId}, #{eventType}, #{tenantId}, #{objectType}, #{objectId},
+      #{occurredAt,jdbcType=TIMESTAMP}, #{topic}, #{messageKey}, #{payload})
+    ON CONFLICT (message_id) DO NOTHING
+  </insert>
+  <select id="selectClaimable" resultMap="claimRow">
+    SELECT message_id, event_type, tenant_id, object_type, object_id, occurred_at,
+      topic, message_key, payload_json, attempts
+    FROM lifecycle_outbox
+    WHERE (status IN ('pending', 'failed') AND available_at &lt;= CURRENT_TIMESTAMP)
+       OR (status = 'in_flight' AND locked_until &lt; CURRENT_TIMESTAMP)
+    ORDER BY available_at, created_at
+    LIMIT #{limit} FOR UPDATE SKIP LOCKED
+  </select>
+  <update id="claim">
+    UPDATE lifecycle_outbox SET status = 'in_flight', lease_owner = #{owner},
+      locked_until = #{leaseUntil,jdbcType=TIMESTAMP}, attempts = attempts + 1, updated_at = CURRENT_TIMESTAMP
+    WHERE message_id = #{messageId}
+  </update>
+  <update id="succeed">
+    UPDATE lifecycle_outbox SET status = 'succeeded', lease_owner = NULL,
+      locked_until = NULL, last_error = NULL, updated_at = CURRENT_TIMESTAMP
+    WHERE message_id = #{messageId} AND status = 'in_flight' AND lease_owner = #{owner}
+  </update>
+  <update id="fail">
+    UPDATE lifecycle_outbox SET status = 'failed', available_at = #{nextAttemptAt,jdbcType=TIMESTAMP},
+      lease_owner = NULL, locked_until = NULL, last_error = #{error,jdbcType=VARCHAR}, updated_at = CURRENT_TIMESTAMP
+    WHERE message_id = #{messageId} AND status = 'in_flight' AND lease_owner = #{owner}
+  </update>
+</mapper>
