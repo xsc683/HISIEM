@@ -20,6 +20,7 @@
 | 4.9 | 可靠性回归门禁 | 已完成 | Case 删除镜像状态、keystore 隔离、SOAR fencing/续租、编辑器离开保存、Flink 解析 DLQ、GitHub Actions 与 Playwright E2E |
 | 4.10 | SOAR 持久能力扩展 | 已完成 | V13–V15 持久 Parallel/Join、静态 item Loop、取消/失败传播、手动触发、Connector SPI/HTTP、验证器链和设计器表单 |
 | 5A/5B | Managed Detection Runtime | 已完成（单集群 process path） | V17/V18 desired/observed、durable lease/fencing、独立 controller、immutable job-group artifact、structured Flink identity、真实 job/artifact observation、启动校验和 opt-in process/disabled adapter；生产 HA、多集群编排和灾备治理仍未完成 |
+| 5C | Detection correctness and persistence convergence | 已完成 | fenced observed-state commit、immutable revision compile、revision provenance no-op、typed DetectionPlan IR、shared authoring validation、repository/mapper boundary、typed persistence rows、Spotless/Java 21 baseline、仓库元数据清理和 Logstash command hardening |
 
 ## 当前验收基线
 
@@ -33,7 +34,7 @@ npm.cmd --prefix web run build
 npm.cmd --prefix web run test:e2e
 ```
 
-当前 Maven 基线为 control-api 149 个测试、detection-runtime 21 个测试、detection-controller 17 个测试、SOAR worker 1 个测试、Flink 46 个测试，全部通过；前端生产构建和浏览器 E2E 的最近结果仍以 CI/历史验证记录为准，测试数量随新增回归用例变化，最终以 Maven/Node/Playwright 输出为准。涉及基础设施时还要执行 Docker Compose、健康扫描、Kafka/Flink/lifecycle 链路和 ES 备份恢复验证。结果与环境说明集中记录在[当前状态](current-status.md)和[运维手册](operations.md)。
+本轮新增代码的测试数量不在文档中预填；最终以本轮 Maven、Flink 和 CI 输出为准。涉及基础设施时还要执行 Docker Compose、健康扫描、Kafka/Flink/lifecycle 链路和 ES 备份恢复验证。结果与环境说明集中记录在[当前状态](current-status.md)和[运维手册](operations.md)。
 
 ## 下一阶段优先级
 
@@ -53,7 +54,7 @@ npm.cmd --prefix web run test:e2e
 - 真实负载下的分区、checkpoint、索引生命周期、保留策略和 RTO/RPO 压测。
 - 多租户字段、索引隔离、文档级权限和更细粒度的角色模型。
 - 通知渠道、更多接入协议和可视化信息架构的持续评估。
-- SOAR lifecycle 事务 outbox/DLQ、OR 条件、动态 map/while、子 Playbook、Connector 凭据/mTLS/代理/隔离、AI Agent，以及跨地域容量验证。
+- lifecycle DLQ/replay、OR 条件、动态 map/while、子 Playbook、Connector 凭据/mTLS/代理/隔离、AI Agent，以及跨地域容量验证。
 
 ## 学习路线
 

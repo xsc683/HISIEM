@@ -77,7 +77,7 @@ java -jar applications/soar-worker/target/hsiem-soar-worker.jar
 # WSL: export SIEM_BOOTSTRAP_PASSWORD='<至少12位临时口令>'
 ```
 
-Flyway 首次启动会创建控制面表并导入旧版本 `infra/auth/users.yaml` 用户；当前迁移为 V16。V11 建立 lifecycle SOAR 的 Playbook/execution 基线，V12 增加 trigger envelope、逐 attempt `soar_node_execution`、`soar_approval_task` 和 `soar_action_receipt`，V13/V14 增加持久并行与循环状态，V15 增加触发类型，V16 增加 managed detection 运行态。V8-V10 旧 SOAR 表以及 V11 被替代的 node/approval 表作为历史迁移保留；之后 PostgreSQL 是用户、角色、审计和 SOAR 控制面记录的唯一来源。
+Flyway 首次启动会创建控制面表并导入旧版本 `infra/auth/users.yaml` 用户；当前迁移为 V19。V11 建立 lifecycle SOAR 的 Playbook/execution 基线，V12 增加 trigger envelope、逐 attempt `soar_node_execution`、`soar_approval_task` 和 `soar_action_receipt`，V13/V14 增加持久并行与循环状态，V15 增加触发类型，V16-V18 增加 managed detection desired/observed state 与 controller leases，V19 增加 lifecycle outbox。V8-V10 旧 SOAR 表以及 V11 被替代的 node/approval 表作为历史迁移保留；之后 PostgreSQL 是用户、角色、审计、SOAR 和 lifecycle outbox 控制面记录的唯一来源。
 登录 Token 只在响应中返回一次，数据库保存 SHA-256 后的会话值；默认会话 8 小时，连续 5 次失败后锁定 15 分钟。控制面 API 需要 `Authorization: Bearer <token>`。首次登录或管理员新建用户必须先调用密码轮换接口，业务 API 在轮换完成前返回 428。
 
 Logstash 的 healthcheck 同时检查 5000/5001/5002/5004/5005/5006 和 9600,
@@ -247,7 +247,7 @@ MVN="D:/application/IntelliJ IDEA 2026.2.0.1/plugins/maven-plugin/lib/maven3/bin
 "$MVN" -f flink/pom.xml clean package          # 测试数量以 Maven 输出为准
 "$MVN" -f flink/pom.xml clean package -DskipTests   # 部署时加快
 
-# Spring Boot 控制面（根 pom；Flyway 当前 V15，测试数量以 Maven 输出为准）
+# Spring Boot 控制面（根 pom；Flyway 当前 V19，测试数量以 Maven 输出为准）
 "$MVN" -f pom.xml clean package
 ```
 

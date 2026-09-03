@@ -78,13 +78,19 @@ same desired-state transaction. Placement is deterministic from tenant, target
 cluster, plan input source family (default `siem-events`), category, and the
 configured positive bucket count.
 
+The canonical detection compilation path is `Rule YAML → RuleRevision →
+DetectionPlan → FlinkArtifactCompiler → RuleDecl → DetectionJob`. A semantic
+revision change with the same plan hash updates logical provenance only; it does
+not advance physical job-group generation or trigger a Flink apply.
+
 This phase is an **observed-state foundation plus the Phase 5A controller core and the Phase 5B single-cluster process adapter**. The API records desired state and returns `PENDING`; it has no physical deployment permission. The independent `detection-controller` process claims durable V18 leases, fences stale work, reconciles through `FlinkRuntimePort`, and calls `observe` only after a final exact verification inspect. Its default disabled adapter performs no physical Flink/Docker operation and reports `UNKNOWN`. When explicitly enabled, the process adapter materializes immutable job-group artifacts, submits structured Flink jobs through argument vectors, and derives observed members from the real job list and local artifact. It is not a production HA or multi-cluster deployment solution. Runtime observations are accepted and updated only for their exact tenant + target-cluster + job-group scope.
 
 Runtime manifest JSON and its spec hash are produced by
 `RuntimeManifestCodec`; member order is canonical by `ruleKey`, and volatile
 observed `jobId`/`jobKey` fields are excluded from the SHA-256 spec hash. Runtime
 persistence and the V17/V18 migrations live in `detection-control` and
-`platform-migrations` respectively; the Flink module remains independent.
+`platform-migrations` respectively; V19 owns the lifecycle outbox. The Flink
+module remains independent.
 
 This intentionally avoids splitting alert, case, planner, tool, or connector
 CRUD into independent services. Those calls are tightly coupled and should

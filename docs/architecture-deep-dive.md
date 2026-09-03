@@ -45,7 +45,7 @@ source .conf
 
 ### 2.1 YAML 字段与 Java 对象一一对应
 
-实现位置：`infra/parser-templates/ssh-auth.yaml`、`src/main/java/com/xscsiem/hsiem_platform/onboarding/ParserTemplate.java`。
+实现位置：`infra/parser-templates/ssh-auth.yaml`、`modules/platform-operations/src/main/java/com/xscsiem/hsiem_platform/onboarding/ParserTemplate.java`。
 
 当前 infra/parser-templates/ssh-auth.yaml 的实际结构（截取关键字段）是：
 
@@ -79,7 +79,7 @@ negative:
   - "not an ssh authentication line"
 ~~~
 
-对应的 src/main/java/com/xscsiem/hsiem_platform/onboarding/ParserTemplate.java 不是一个无类型 Map，而是显式的中间表示：
+对应的 `modules/platform-operations/src/main/java/com/xscsiem/hsiem_platform/onboarding/ParserTemplate.java` 不是一个无类型 Map，而是显式的中间表示：
 
 ~~~java
 @JsonAutoDetect(fieldVisibility = JsonAutoDetect.Visibility.ANY)
@@ -113,7 +113,7 @@ public class ParserTemplate {
 
 ### 2.2 预览解析与保存门禁实际共用一条代码路径
 
-实现位置：`src/main/java/com/xscsiem/hsiem_platform/onboarding/GrokTestService.java`、`ParserTemplateService.java`、`OnboardingController.java`。
+实现位置：`modules/platform-operations/src/main/java/com/xscsiem/hsiem_platform/onboarding/GrokTestService.java`、`ParserTemplateService.java`；`applications/control-api/src/main/java/com/xscsiem/hsiem_platform/onboarding/OnboardingController.java`。
 
 GrokTestService.test 的关键逻辑是“按顺序尝试 pattern，首个捕获成功后补固定字段和 action”：
 
@@ -195,7 +195,7 @@ ConfigRevisionJournal.record(control, "parser-template",
 
 ### 2.3 Java 生成器如何逐字段编译成 .conf
 
-实现位置：`src/main/java/com/xscsiem/hsiem_platform/onboarding/LogstashConfigGenerator.java`。
+实现位置：`modules/platform-operations/src/main/java/com/xscsiem/hsiem_platform/onboarding/LogstashConfigGenerator.java`。
 
 LogstashConfigGenerator.generateFilter 中的实际映射是：
 
@@ -343,7 +343,7 @@ output {
 
 ### 3.1 创建阶段先写声明，激活阶段才接触外部系统
 
-实现位置：`src/main/java/com/xscsiem/hsiem_platform/onboarding/LogSourceService.java`、`src/main/java/com/xscsiem/hsiem_platform/control/BackgroundTaskController.java`。
+实现位置：`modules/platform-operations/src/main/java/com/xscsiem/hsiem_platform/onboarding/LogSourceService.java`、`applications/control-api/src/main/java/com/xscsiem/hsiem_platform/control/BackgroundTaskController.java`。
 
 LogSourceService.create 只接受 tcp/syslog/file，file 强制 port=0，TCP/Syslog 检查 1–65535 和 JVM 内端口锁：
 
@@ -389,7 +389,7 @@ ACTIVATOR.execute(() -> {
 
 ### 3.2 ActivationCoordinator 不是普通文件写入器
 
-实现位置：`src/main/java/com/xscsiem/hsiem_platform/onboarding/ActivationCoordinator.java`、`LogstashDeployer.java`。
+实现位置：`modules/platform-operations/src/main/java/com/xscsiem/hsiem_platform/onboarding/ActivationCoordinator.java`、`LogstashDeployer.java`。
 
 激活方法的关键顺序如下：
 
@@ -443,21 +443,18 @@ public synchronized void activate(LogSource s, ParserTemplate t) {
 
 ### 3.3 规则发布使用另一套带 savepoint 的补偿
 
-实现位置：`src/main/java/com/xscsiem/hsiem_platform/rules/ProcessRulesDeployer.java`、`RuleService.java`、`RuleController.java`。
+实现位置：`modules/detection-control/src/main/java/com/xscsiem/hsiem_platform/rules/RuleService.java`、`ManagedDetectionService.java`、`DetectionPlanCompiler.java`，以及 `modules/detection-runtime/src/main/java/com/xscsiem/hsiem_platform/detection/runtime/FlinkArtifactCompiler.java`。
 
-ProcessRulesDeployer.syncRules 不覆盖 /opt/flink/rules，而是建立 revision 目录：
+当前规则发布由 detection-controller 驱动，控制 API 只把 authoring YAML 固化为 `RuleRevision`，再编译为不可变 canonical `DetectionPlan`；部署控制器随后将其降低为 Flink `RuleDecl` artifact：
 
 ~~~java
-String revision = "rev-" + Instant.now().toEpochMilli() + "-"
-        + UUID.randomUUID().toString().substring(0, 8);
-String target = "/opt/flink/rules-revisions/" + revision;
-run("docker", "exec", containerName, "mkdir", "-p", target);
-run("wsl", "bash", "-c", "docker cp " + wslRepoPath
-        + "/infra/rules/. " + containerName + ":" + target + "/");
-activeRulesDir = target;
+RuleRevision revision = ruleService.createRevision(authoringYaml);
+DetectionPlan plan = detectionPlanCompiler.compile(revision.definition());
+DetectionArtifact artifact = flinkArtifactCompiler.compile(plan);
+controller.reconcile(revision.ruleKey(), artifact);
 ~~~
 
-重启流程是 cancel -s savepoint → 从 savepoint 用新目录提交 → 轮询 flink list 确认 RUNNING；新目录提交失败则用相同 savepoint 和 lastSuccessfulRulesDir 恢复旧 Job。规则变更因此不会因为一次提交失败而让检测面长期停机。
+controller 的 reconcile 顺序是 inspect → apply/stop → inspect → exact verification → fenced observe → fenced release。需要替换物理 runtime 时，process adapter 才会按 job-group 的 savepoint/artifact 策略执行 cancel、submit、回滚和 `RUNNING` 验证；控制 API 本身没有 Docker/WSL/Flink CLI 权限。
 
 ## 4. Logstash 到 Flink 的数据质量和 schema 细节
 
@@ -714,7 +711,7 @@ return new UpdateOperation.Builder<JsonData, JsonData>()
 
 ### 6.3 分析师更新使用 ES 乐观锁，并且批量请求先预检查
 
-实现位置：`src/main/java/com/xscsiem/hsiem_platform/alert/AlertService.java`、`AlertController.java`。
+实现位置：`modules/security-ops/src/main/java/com/xscsiem/hsiem_platform/alert/AlertService.java`、`applications/control-api/src/main/java/com/xscsiem/hsiem_platform/alert/AlertController.java`。
 
 AlertService 先 GET 得到 _seq_no/_primary_term，再发送：
 
@@ -778,7 +775,7 @@ flowchart TD
 
 ### 7.1 案件主表、关系表和 outbox 在同一数据库事务中落地
 
-实现位置：`src/main/java/com/xscsiem/hsiem_platform/control/JdbcControlPlaneStore.java`、`src/main/resources/db/migration/V*.sql`。
+实现位置：`modules/iam/src/main/java/com/xscsiem/hsiem_platform/control/JdbcControlPlaneStore.java`、`modules/platform-migrations/src/main/resources/db/migration/V*.sql`。
 
 JdbcControlPlaneStore.createCase 的核心 SQL（JDBC 参数映射省略）：
 
@@ -808,7 +805,7 @@ WHERE id = ? AND version = ?;
 
 ### 7.2 outbox 合并、租约和退避分别解决三个问题
 
-实现位置：`src/main/java/com/xscsiem/hsiem_platform/investigation/CaseMirrorDispatcher.java`、`ControlPlaneStore.java`。
+实现位置：`modules/security-ops/src/main/java/com/xscsiem/hsiem_platform/investigation/CaseMirrorDispatcher.java`、`modules/iam/src/main/java/com/xscsiem/hsiem_platform/control/ControlPlaneStore.java`。
 
 case_mirror_outbox 的实际字段：
 
@@ -856,7 +853,7 @@ DELETE 镜像把任意 HTTP 2xx 和 404 都视为幂等成功：2xx 覆盖 Elast
 
 ### 7.4 告警 case_id 是快速索引，业务层仍有补偿
 
-实现位置：`src/main/java/com/xscsiem/hsiem_platform/investigation/CaseService.java`。
+实现位置：`modules/security-ops/src/main/java/com/xscsiem/hsiem_platform/investigation/CaseService.java`。
 
 案件创建前先检查所有告警 open 且没有其它 case_id。案件和关系成功后，再逐条写 ES alert marker：
 
@@ -879,7 +876,7 @@ if (!failed.isEmpty()) {
 
 ### 8.1 文件配置统一原子写入并记录内容 hash
 
-实现位置：`src/main/java/com/xscsiem/hsiem_platform/control/ConfigRevisionJournal.java`。
+实现位置：`modules/platform-operations/src/main/java/com/xscsiem/hsiem_platform/control/ConfigRevisionJournal.java`。
 
 ConfigRevisionJournal.atomicWrite 的机制：
 
@@ -901,7 +898,7 @@ record 对最终文件计算 SHA-256，审计目标形如 kind:path#revision-pre
 
 ### 8.2 任务租约让进程内 worker 具备可收敛状态
 
-实现位置：`src/main/java/com/xscsiem/hsiem_platform/control/BackgroundTaskRecovery.java`、`ControlPlaneStore.java`、`src/main/resources/db/migration/V7__outbox_task_leases.sql`。
+实现位置：`modules/platform-operations/src/main/java/com/xscsiem/hsiem_platform/control/BackgroundTaskRecovery.java`、`modules/iam/src/main/java/com/xscsiem/hsiem_platform/control/ControlPlaneStore.java`、`modules/platform-migrations/src/main/resources/db/migration/V7__outbox_task_leases.sql`。
 
 background_tasks 在 V7 增加：
 
@@ -925,7 +922,7 @@ control.recoverStaleTasks(
 
 ### 8.3 资产关键度更新是全量校验、单次替换
 
-实现位置：`src/main/java/com/xscsiem/hsiem_platform/settings/CriticalityService.java`、`CriticalityRecalcCoordinator.java`、`ProcessCriticalityDeployer.java`。
+实现位置：`modules/platform-operations/src/main/java/com/xscsiem/hsiem_platform/settings/CriticalityService.java`、`CriticalityRecalcCoordinator.java`、`modules/platform-operations-adapters/src/main/java/com/xscsiem/hsiem_platform/settings/ProcessCriticalityDeployer.java`。
 
 CriticalityService 只允许 ip/user/host，校验 key 长度、字符集和 IP 格式；级别映射为 low=0.5、medium=1.0、high=1.5、extreme=2.0。批量接口先验证最多 1000 条全部输入，再写一次临时文件并原子替换，任何一项失败都不改变旧文件。
 
@@ -939,7 +936,7 @@ wsl bash -c "python3 infra/elasticsearch/entity-risk.py --write"
 
 ## 9. 认证实现展示：输出 DTO、持久会话和首次改密
 
-实现位置：`src/main/java/com/xscsiem/hsiem_platform/auth/AuthUserView.java`、`AuthService.java`、`BearerSessionFilter.java`。
+实现位置：`modules/iam/src/main/java/com/xscsiem/hsiem_platform/auth/AuthUserView.java`、`AuthService.java`、`applications/control-api/src/main/java/com/xscsiem/hsiem_platform/auth/BearerSessionFilter.java`。
 
 用户实体内部含 passwordHash，但管理 API 使用独立输出类型：
 
@@ -971,7 +968,7 @@ if (user.passwordChangeRequired && requiresPasswordChange(request)) {
 
 ### 10.1 Kafka 检查 topic、分区、group offset 和 lag
 
-实现位置：`src/main/java/com/xscsiem/hsiem_platform/health/OperationalHealthService.java`。
+实现位置：`modules/platform-operations/src/main/java/com/xscsiem/hsiem_platform/health/OperationalHealthService.java`。
 
 OperationalHealthService.kafka() 不是 Socket.connect：
 
@@ -1007,7 +1004,7 @@ for (TopicPartition partition : partitions) {
 
 ### 10.2 Logstash API 失败时明确标记降级
 
-实现位置：`src/main/java/com/xscsiem/hsiem_platform/health/OperationalHealthService.java`。
+实现位置：`modules/platform-operations/src/main/java/com/xscsiem/hsiem_platform/health/OperationalHealthService.java`。
 
 ~~~java
 Map<String, Object> monitoring = httpJson(
@@ -1032,7 +1029,7 @@ return socket;
 
 ### 11.1 所有请求通过一个协议边界
 
-实现位置：`web/src/api/index.js`、`src/main/java/com/xscsiem/hsiem_platform/onboarding/GlobalExceptionHandler.java`。
+实现位置：`web/src/api/index.js`、`applications/control-api/src/main/java/com/xscsiem/hsiem_platform/onboarding/GlobalExceptionHandler.java`。
 
 Vue 控制台的统一 request 直接处理超时、401、非 JSON 和 204，并保留状态码与错误代码：
 
@@ -1098,6 +1095,6 @@ return r.status === 204 || !raw.trim() ? null : body
 
 - synchronized、lifecycleInFlight 和端口锁只覆盖单 JVM；多副本控制面仍需要分布式锁。
 - outbox 把案件事实到 ES 变成可重试的最终一致性，不是跨 ES/PostgreSQL 的原子事务。
-- Flink savepoint 保护规则状态，但规则启停仍需要重启 Job；规模扩大后需要动态规则广播或版本化作业。
+- Flink savepoint 保护规则状态；规则启停由 desired generation 和 detection-controller reconcile 驱动，当前物理 process adapter 在需要替换 artifact 时才重建对应 job-group。规模扩大后仍需动态规则广播或版本化作业。
 - raw 索引保留坏数据并阻止检测污染，但不会自动修复模板；DataHealth 和通知负责暴露问题。
 - 本地 Compose 的 PLAINTEXT、单节点和 RF=1 只适合当前环境；生产必须满足 ProductionSafetyValidator 的 TLS/SASL 门禁并补足拓扑高可用。

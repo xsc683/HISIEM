@@ -6,7 +6,7 @@ Phase 5A provides the independent detection controller foundation. `detection-co
 
 Phase 5B adds the opt-in process adapter for a configured Flink JobManager container. The controller materializes a tenant/group-scoped immutable artifact from the exact assignment, plan, and revision rows, submits the Flink job with a structured identity, and accepts observed members only from the real Flink job list plus the local artifact manifest. The expected manifest is never copied into observed state.
 
-The control API has no `RulesDeployer` or `ProcessRulesDeployer`, and no Detection Docker/WSL command or Flink CLI authority. Its deploy endpoints only persist desired state and return `202 PENDING`; a controller claim is the only path from Detection desired state to a runtime port. Existing non-Detection Logstash and criticality operations remain available through `platform-operations-adapters` for compatibility, are enabled by default, and can be disabled with `app.operations.process-adapters=disabled`.
+The control API has no Detection process/deployment command authority and does not invoke Docker/WSL commands or the Flink CLI. Its deploy endpoints only persist desired state and return `202 PENDING`; a controller claim is the only path from Detection desired state to a runtime port. Existing non-Detection Logstash and criticality operations remain available through `platform-operations-adapters` for compatibility, are enabled by default, and can be disabled with `app.operations.process-adapters=disabled`.
 
 ## Durable state and fencing
 

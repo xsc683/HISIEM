@@ -94,7 +94,7 @@ GET    /api/detection-rules/mitre
 POST   /api/detection-rules/deploy
 ```
 
-`infra/rules/*.yaml` 是规则声明和 `enabled` 的来源；控制台的启停/部署不能另造一份规则状态。POST/PUT 仅开放 Flink 已能结构化校验的 `single_event` 和 `window`，递归校验 FieldEquals/FieldIn/All/Any/Not DSL 后原子写 YAML并记录操作者，成功后标记“待部署”。CEP/基线规则保持只读并继续通过代码评审维护。当前检测基线为 6 条规则。
+`infra/rules/*.yaml` 是 authoring 输入和 `enabled` 的来源；保存后固化为不可变 `RuleRevision`，再按 YAML → RuleRevision → DetectionPlan → FlinkArtifactCompiler → RuleDecl → DetectionJob 编译。控制台的启停/部署不能另造一份规则状态。POST/PUT 仅开放 Flink 已能结构化校验的 `single_event` 和 `window`，递归校验 FieldEquals/FieldIn/All/Any/Not DSL 后原子写 YAML并记录操作者，成功后标记“待部署”。CEP/基线规则保持只读并继续通过代码评审维护。当前检测基线为 6 条规则。
 
 ### 告警和案件
 
@@ -181,7 +181,7 @@ POST   /api/tenants
 PUT    /api/tenants/{tenantId}/members/{username}
 ```
 
-Playbook 和执行以 V11–V15 PostgreSQL 表为准，不从 `infra/soar/*.yaml` 加载。Kafka lifecycle 与 `POST /api/soar/executions` 分别提供自动和人工入口，使用 message/request ID 去重并进入同一个持久内核。节点由 Spring 自动收集的 Handler 执行；除基础六类外，Parallel/Join 使用持久分支 execution 与计数器，Loop/Loop End 使用持久串行 frame，Connector 通过注册表、幂等回执和审计脱敏执行。完整实现见 [`soar.md`](soar.md) 与 [`design/soar-capability-runtime.md`](design/soar-capability-runtime.md)。
+Playbook 和执行以 V11–V15 PostgreSQL 表为准，不从 `infra/soar/*.yaml` 加载；lifecycle outbox 由 V19 持久化。Kafka lifecycle 与 `POST /api/soar/executions` 分别提供自动和人工入口，使用 message/request ID 去重并进入同一个持久内核。节点由 Spring 自动收集的 Handler 执行；除基础六类外，Parallel/Join 使用持久分支 execution 与计数器，Loop/Loop End 使用持久串行 frame，Connector 通过注册表、幂等回执和审计脱敏执行。完整实现见 [`soar.md`](soar.md) 与 [`design/soar-capability-runtime.md`](design/soar-capability-runtime.md)。
 
 ## 3. 端到端主旅程
 
@@ -207,7 +207,7 @@ Playbook 和执行以 V11–V15 PostgreSQL 表为准，不从 `infra/soar/*.yaml
 
 1. 在 `/rules` 直接查看条件摘要；进入详情查看条件树和只读 YAML/JSON。
 2. 管理员可在 `/rules/new` 创建单事件/窗口规则，或编辑已有同类规则；保存后仍需显式部署。
-3. 规则启停只改 YAML 的 `enabled`，确认部署任务完成后再期待 Flink 行为变化。
+3. 规则启停只改 YAML 的 `enabled` 和 desired state；由 detection-controller 完成 artifact apply/stop、精确 inspect 和 fenced observe，确认部署任务完成后再期待 Flink 行为变化。
 4. 在 `/criticality` 修改资产权重并触发风险重算，观察实体风险结果。
 5. 在 `/notifications` 处理接入失败、健康异常和 FP 率通知；外部邮件/Webhook 当前不属于已实现能力。
 
@@ -246,4 +246,4 @@ Playbook 和执行以 V11–V15 PostgreSQL 表为准，不从 `infra/soar/*.yaml
 
 ## 5. 不在当前契约中的内容
 
-ES/Kafka 生产 TLS/高可用、外部通知投递、完整 OCSF 合规，以及全 SIEM 数据面多租户、SOAR 事务 outbox、DLQ 管理、Cron/Webhook、具体厂商 Connector 与凭据库、mTLS/出口代理/隔离执行、子 Playbook、动态 map/while、AI Agent 和跨地域恢复仍是路线图事项。V8–V10 历史代码不是当前运行事实。
+ES/Kafka 生产 TLS/高可用、外部通知投递、完整 OCSF 合规，以及全 SIEM 数据面多租户、lifecycle DLQ/replay 管理、Cron/Webhook、具体厂商 Connector 与凭据库、mTLS/出口代理/隔离执行、子 Playbook、动态 map/while、AI Agent 和跨地域恢复仍是路线图事项。V8–V10 历史代码不是当前运行事实。

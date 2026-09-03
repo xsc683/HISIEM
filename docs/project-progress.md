@@ -37,7 +37,7 @@ flowchart LR
 | Managed Detection Runtime | 已完成单集群开发闭环 | Phase 5A durable claim/lease/fencing；Phase 5B immutable job-group artifact、structured Flink identity、真实 job/artifact observation、savepoint replacement/rollback、启动 manifest/rule-ID verification 和 opt-in process adapter | 默认 disabled；process path 仅支持单配置集群，生产 HA、多集群编排、分布式 artifact 锁和灾备治理未完成 |
 | 数据质量 | 已完成基础保护 | Logstash 解析失败进入 `siem-events-raw-*`；Flink 坏 JSON/非法时间戳进入 `siem-events-dlq` | DLQ 没有管理页面、审批式重放和积压告警 |
 | 告警与调查 | 已完成主要旅程 | 告警筛选/详情/批量处置、自动聚合、案件状态/负责人/证据/时间线、告警与案件关联 | PostgreSQL、ES 与告警 marker 仍是补偿 + 最终一致性模型 |
-| 控制面与权限 | 已完成基础闭环 | Spring Security、Bearer 会话、RBAC、首次改密、审计、通知、Flyway V15、后台任务租约 | 数据面尚未形成完整 tenant 隔离；生产密钥与统一身份源未接入 |
+| 控制面与权限 | 已完成基础闭环 | Spring Security、Bearer 会话、RBAC、首次改密、审计、通知、Flyway V19、后台任务租约与 lifecycle outbox | 数据面尚未形成完整 tenant 隔离；生产密钥与统一身份源未接入 |
 | SOAR | 已完成持久编排扩展 | lifecycle/人工触发、11 类 Handler、持久并行/静态循环、Connector SPI/HTTP、验证器链、逐 attempt、幂等回执、续租与 fencing | 无 Cron/Webhook、子 Playbook、AI、凭据库、Connector 生产隔离和事务 lifecycle outbox |
 | Vue 控制台 | 已完成主要页面重构 | Vue 3 路由、模块拆分、统一请求错误、结构化详情、规则编辑、Vue Flow 设计器、离开保存保护 | 浏览器 E2E 目前只覆盖一个使用 mock API 的 Playbook 编辑旅程 |
 | 运维与交付 | 已完成开发环境基线 | 六组件健康扫描、Kafka/Flink 语义检查、ES 备份恢复、Compose 校验、部署脚本、GitHub Actions | Spring Boot/前端不在 Compose 内；缺少生产反向代理、统一证书和环境级发布回滚 |
@@ -64,7 +64,7 @@ flowchart LR
 | HA-01 | P0 | 未开始 | ES/Kafka 为单节点，Kafka RF=1，Flink 也是单 JobManager 基线 | 任一核心节点故障可能中断或丢失服务 |
 | REL-01 | P0 | 部分完成 | Spring Boot 与前端未纳入统一生产编排、反向代理和发布回滚 | 无法形成可重复的生产交付物 |
 | CON-01 | P1 | 部分完成 | Case 采用 PG 事实 + 同步 ES 保护 + outbox/reconcile 混合一致性 | 故障窗口可能产生暂时不一致或孤儿 marker |
-| CON-02 | P1 | 未开始 | 控制面 lifecycle 发布不是事务 outbox | 业务写成功但 Kafka 发布失败时，SOAR 可能漏触发 |
+| CON-02 | P1 | 部分完成 | lifecycle publisher 已进入 PostgreSQL outbox 并由 dispatcher 以 at-least-once 语义投递；ES 更新与 outbox enqueue 仍非原子 | Kafka 瞬时故障可恢复，但 ES crash gap 仍需 reconciliation；ACK 后 completion 崩溃允许幂等重投 |
 | TASK-01 | P1 | 部分完成 | 后台任务有租约和恢复，但 handler 重放/幂等策略未统一 | 进程崩溃后部分任务仍需人工判断 |
 | DLQ-01 | P1 | 部分完成 | 事件 DLQ 只有隔离/只读观测；lifecycle 没有运营型 DLQ | 毒消息处置、审批重放和积压治理不完整 |
 | TEST-01 | P1 | 部分完成 | CI 浏览器测试使用 mock API，缺少真实全栈和多实例故障注入 | 单元测试通过不代表部署链路与恢复语义成立 |
@@ -179,7 +179,7 @@ flowchart TD
 ## 8. 下一发布候选的最低验收
 
 - 根项目、Flink、前端单元测试、生产构建和 Playwright 全部通过；
-- Compose、Flyway V15、ES templates、四个 Kafka topic 和 Flink Job 状态验证通过；
+- Compose、Flyway V19、ES templates、四个 Kafka topic 和 Flink Job 状态验证通过；
 - 至少一次真实日志到 SOAR 的完整链路成功，并保存关键 ID：event、alert、case、message、execution、node attempt；
 - Case outbox、事件 DLQ、Kafka lag 和 SOAR lease 没有未解释积压；
 - ES 备份恢复与 Flink savepoint 恢复演练通过；

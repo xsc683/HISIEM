@@ -178,7 +178,7 @@ Actuator 的 `soarKafka` health 检查消费者线程、两个 topic、消费组
 当前明确限制：
 
 - Compose 是单 broker/RF=1，生产必须启用 TLS/SASL、高可用和更高副本；
-- 控制面 lifecycle publish 还不是事务 outbox；
+- 控制面 lifecycle publish 已采用 PostgreSQL outbox + leased dispatcher；Kafka ACK 与 outbox completion 之间允许重复投递，依赖稳定 message ID 幂等；ES 告警更新与 enqueue 之间仍存在 residual crash gap。
 - tenant 隔离覆盖 SOAR 控制表，但告警/案件数据面尚未全面 tenant 化；
 - 条件仍只支持 AND；已有持久并行和静态 item 串行循环，但没有子 Playbook、动态 while/map 或补偿栈；
 - 没有 DLQ 管理界面；格式非法消息会记录并提交，暂态数据库失败会 seek 后重试；

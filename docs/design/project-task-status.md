@@ -1,6 +1,6 @@
 # HISIEM / HISIEM-Agent 任务清单与完成状态
 
-> 归档日期：2026-09-01
+> 更新日期：2026-09-03
 > 本文记录跨两个仓库的架构演进任务清单、每项完成状态、对应提交和遗留边界。
 > 相关方案：`docs/design/module-boundaries.md`、`docs/design/managed-detection-runtime.md`、根目录三份 proposal。
 
@@ -10,10 +10,27 @@
 
 | 仓库 | 分支 | 最新提交 |
 |---|---|---|
-| SIEM | `add_frame` | `ca0e292` docs(detection): record DetectionPlan runtime contract convergence status |
+| SIEM | `add_frame` | `c6fd8de` fix: architecture/code-quality convergence |
 | HISIEM-Agent | `main` | `01e2d49` fix(runtime): harden durable queue atomicity and lease safety |
 
-SIEM 工作区包含尚未提交的 #13 Runtime Contract 验收测试与本状态更新；HISIEM-Agent 工作区清洁。当前未创建新提交或推送。
+SIEM 的 #14 Lifecycle Outbox、#15 Agent atomic acceptance 和本轮 Detection correctness/code-quality 收尾已实现；HISIEM-Agent 工作区清洁。最终测试数字以本轮实际命令输出为准。
+
+## 本轮 SIEM Remaining Engineering Tasks（1–10）
+
+| 编号 | 任务 | 状态 |
+|---|---|---|
+| 1 | Fence final observed-state commit | ✅ 实现完成 |
+| 2 | Remove RuleRevision compile fallback | ✅ 实现完成 |
+| 3 | Typed DetectionPlan IR | ✅ 实现完成 |
+| 4 | Shared Rule authoring validation | ✅ 实现完成 |
+| 5 | Separate revision provenance from physical generation | ✅ 实现完成 |
+| 6 | Repository / Mapper persistence boundary | ✅ 实现完成 |
+| 7 | Typed persistence records | ✅ 实现完成 |
+| 8 | Spotless formatter/check、Java 21 baseline、metadata cleanup | ✅ 实现完成 |
+| 9 | Active architecture documentation cleanup | ✅ 实现完成 |
+| 10 | ProcessLogstashDeployer command hardening | ✅ 实现完成 |
+
+验证状态不在此处预填测试数量；以 `spotless:check`、Maven compile/test 和最终 `git diff --check` 输出为准。
 
 ---
 
@@ -174,7 +191,7 @@ SIEM 工作区包含尚未提交的 #13 Runtime Contract 验收测试与本状�
 
 | 阶段 | 内容 | 状态 |
 |---|---|---|
-| 阶段六 | Lifecycle Kafka Durable Receipt / Outbox（SIEM 与 Agent 双端） | ⬜ 未开始 |
+| 阶段六 | Lifecycle Kafka Durable Receipt / Outbox（SIEM 与 Agent 双端） | ✅ 完成 |
 | 阶段七 | Agent fencing token 与条件 checkpoint（单调 token、stale 写入拒绝、外部调用后重校验） | ⬜ 未开始 |
 | 阶段八 | 多租户字段/索引隔离、ES TLS/认证、Kafka SASL/RF、PostgreSQL 灾备、Connector 安全、Production Safety Validator、HA 演练 | ⬜ 未开始 |
 | 横向 | 规则 `get(id)` 去全量 YAML 解析、SOAR `claimDue` 批量 SKIP LOCKED/有界并发、前端 Desired/Observed 展示、指标与可观测性 | ⬜ 未开始 |
@@ -186,7 +203,7 @@ SIEM 工作区包含尚未提交的 #13 Runtime Contract 验收测试与本状�
 SIEM（288 项，0 失败 / 0 错误 / 0 跳过）：
 
 - control-api 156；detection-runtime 34；detection-controller 17；soar-core 17；soar-adapters 4；soar-worker-runtime 3；soar-worker 1；Flink 56。
-- 迁移：V1–V18 全部在 H2 与 PostgreSQL Testcontainer 通过。
+- 迁移：V1–V19 已纳入当前迁移链；本轮最终数据库验证结果以实际命令输出为准。
 
 HISIEM-Agent（152 passed / 3 skipped）：
 
@@ -197,8 +214,7 @@ HISIEM-Agent（152 passed / 3 skipped）：
 ## 十一、后续推荐执行顺序
 
 ```text
-阶段六 Lifecycle Outbox / Receipt
-  → 阶段七 Agent Fencing / Conditional Checkpoint
+阶段七 Agent Fencing / Conditional Checkpoint
   → 阶段八 多租户 / TLS / HA / 灾备
   → 性能、前端、容量与故障演练
 ```

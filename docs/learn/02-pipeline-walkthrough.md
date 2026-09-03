@@ -183,7 +183,7 @@ parsed
 | 检测规则声明与构建 | Flink + YAML | `infra/rules/*.yaml`、`RuleConfigLoader.java`、`RuleBuilder.java` |
 | 事件/告警存储 | ES | `infra/elasticsearch/*-template.json` |
 | 呈现/处置 | Kibana + Spring Boot | `infra/kibana/create_dashboards.py`、`src/main/java/.../alert`、`.../investigation` |
-| 控制面存储 | PostgreSQL/Flyway | `src/main/resources/db/migration/V1__control_plane.sql` 至 `V15__soar_trigger_type.sql` |
+| 控制面存储 | PostgreSQL/Flyway | `modules/platform-migrations/src/main/resources/db/migration/V1__control_plane.sql` 至 `V19__lifecycle_outbox.sql` |
 
 ## 5. 动手验证
 

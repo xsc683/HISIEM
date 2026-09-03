@@ -2,7 +2,7 @@
 
 > 定位：这是项目当前事实的单一入口。内容以代码、`infra/` 配置和最近一次可复现验证为准；详细方案、阶段记录和验收用例分别见设计文档与 Story 文档。
 >
-> 基线日期：2026-08-30（WSL2 + Docker Desktop）
+> 基线日期：2026-09-03（WSL2 + Docker Desktop）
 
 ## 一句话结论
 
@@ -12,13 +12,13 @@ HISIEM 已完成检测链路、控制面、接入向导、告警处置、调查�
 
 | 领域 | 当前结论 | 事实来源 |
 | --- | --- | --- |
-| 数据链路 | Logstash → Elasticsearch/Kafka → Flink → 告警索引链路可运行；Flink 解析毒消息进入独立 Kafka DLQ | [架构](architecture.md)、`infra/` |
+| 数据链路 | Logstash → Elasticsearch/Kafka → Flink → 告警索引链路可运行；规则发布遵循 YAML → RuleRevision → DetectionPlan → FlinkArtifactCompiler → RuleDecl → DetectionJob；Flink 解析毒消息进入独立 Kafka DLQ | [架构](architecture.md)、`infra/` |
 | 控制面 | Spring Boot + PostgreSQL/Flyway，认证、RBAC、案件、审计、通知和后台任务可用 | [部署](deployment.md)、[路线图](roadmap.md) |
 | 前端 | Vue 3/Vite + vue-router + Ant Design Vue 控制台；统一色彩、排版、间距、控件状态和页面/卡片/筛选/表格视觉壳，租户与账户操作收纳在侧栏底部；桌面侧栏与移动抽屉、响应式表单/表格、结构化加载/空/错误状态、受控 ES 日志检索、安全运营大屏、Kibana 入口、深链详情与 Vue Flow SOAR 画布可构建 | `web/`、[当前产品契约](product-contract.md) |
 | 运行态 | PostgreSQL、Elasticsearch、Kafka、Logstash、Flink、Kibana 均有健康扫描 | [运维手册](operations.md) |
 | Managed Detection Runtime | Phase 5A foundation and Phase 5B single-cluster process path are implemented: V17 desired/observed state + V18 controller reconcile state、durable lease/fencing、独立 non-web detection-controller、typed runtime port、immutable job-group artifact、structured Flink job identity、startup manifest verification、real-job/artifact observation and disabled/process adapter selection；control-api deploy API remains `202 PENDING` and has no physical deployment permission | [managed detection runtime 设计](design/managed-detection-runtime.md)、[模块边界](design/module-boundaries.md)、`modules/detection-runtime`、`flink/` |
-| SOAR | lifecycle + 手动入口、11 类节点、持久 Parallel/Join 与 Loop、Connector SPI/HTTP、验证器链、节点 I/O、消息去重、租约续期/fencing 和 Vue Flow 编辑器可用 | [SOAR 设计](soar.md)、`src/main/java/**/soar/` |
-| 自动化验证 | 根 Maven reactor 全量通过：control-api 149 项、detection-runtime 21 项、detection-controller 17 项、SOAR worker 1 项；Flink 独立工程 46 项通过；包含真实 PostgreSQL Testcontainer migration 与 H2 lease 状态机验证，静态 diff/NUL 扫描通过 | 本次验收命令与 `target/surefire-reports` |
+| SOAR | lifecycle + 手动入口、11 类节点、持久 Parallel/Join 与 Loop、Connector SPI/HTTP、验证器链、节点 I/O、消息去重、租约续期/fencing 和 Vue Flow 编辑器可用 | [SOAR 设计](soar.md)、`modules/soar-*`、`applications/*` |
+| 自动化验证 | Java 21 编译、根/独立 Flink Spotless 检查和独立 Flink `clean package`（60 项）通过；根 `mvn test` 本轮因 `DetectionRuntimeAdapterSelectionTest` 缺少 `DetectionArtifactRepository` 测试 bean 失败，另有 3 个 Testcontainers 测试因本机 Docker 不可用而跳过 | 本次验收命令与 `target/surefire-reports` |
 | 备份恢复 | ES 临时索引备份恢复演练通过 | `infra/elasticsearch/backup-restore-rehearsal.sh` |
 
 ## 当前部署基线
@@ -39,7 +39,7 @@ HISIEM 已完成检测链路、控制面、接入向导、告警处置、调查�
 - 前端统一处理 204、非 JSON 错误、初始化失败、轮询超时和破坏性操作确认；按路由加载模块，不在根组件拉取全站数据。
 - 日志检索只允许后端字段目录与字段实际支持的 8 类结构化关系，显式排除 raw 索引；旧请求不会覆盖新结果。运营大屏使用告警/案件全量状态聚合与最新时间序列展示库存和闭环指标，并在标签页隐藏时暂停 10 秒轮询。
 - 检测规则支持结构化逻辑展示、single_event/window 创建编辑、YAML 原子写入、审计和显式部署；告警与案件使用独立详情路由。
-- Managed Detection Runtime 的 placement、Job Assignment、canonical Runtime Manifest 和 RuleRuntimeStatus 由 V17 持久化；Phase 5A 新增 V18 独立 reconcile state、lease owner/until、单调 fencing token、attempt/backoff 和 controller worker。Phase 5B 新增 immutable tenant/group artifact、结构化 Flink job identity、process adapter 的真实 job/artifact inspect、savepoint 更新/rollback、Flink 启动 raw manifest/实际 rule ID 校验，以及 process/disabled 互斥选择；disabled adapter 仍只返回 UNKNOWN，不执行物理部署。process adapter 仅覆盖显式配置的单集群，生产 HA、多集群编排、分布式 artifact 锁和灾备治理仍未完成。WSL/Docker 的既有非 Detection 运维 process adapter 已模块化到 `platform-operations-adapters`，control-api 暂时显式依赖并默认启用以保持既有开发行为，可通过 `app.operations.process-adapters=disabled` 关闭；未来再拆独立 operations worker。
+- Managed Detection Runtime 的 placement、Job Assignment、canonical Runtime Manifest 和 RuleRuntimeStatus 由 V17 持久化；Phase 5A 新增 V18 独立 reconcile state、lease owner/until、单调 fencing token、attempt/backoff 和 controller worker。Phase 5B 新增 immutable tenant/group artifact、结构化 Flink job identity、process adapter 的真实 job/artifact inspect、savepoint 更新/rollback、Flink 启动 raw manifest/实际 rule ID 校验，以及 process/disabled 互斥选择；最终 observed-state mutation 还会校验 owner、fencing token、desired generation 和有效租约。规则 revision provenance 变化但 plan hash 不变时只更新 desired revision，不推进物理 generation。disabled adapter 仍只返回 UNKNOWN，不执行物理部署。process adapter 仅覆盖显式配置的单集群，生产 HA、多集群编排、分布式 artifact 锁和灾备治理仍未完成。WSL/Docker 的既有非 Detection 运维 process adapter 已模块化到 `platform-operations-adapters`，control-api 暂时显式依赖并默认启用以保持既有开发行为，可通过 `app.operations.process-adapters=disabled` 关闭；未来再拆独立 operations worker。
 - Kafka、Flink、Logstash 的健康探针区分“真正健康”和“仅端口可达”，避免把降级结果误报为完整健康。
 - Case 镜像删除把任意 2xx 和 404 视为幂等成功；SOAR 状态提交校验 owner、fencing token 与未过期租约，长节点执行时持续续租。
 - Playbook 路由离开会等待最新草稿保存；保存失败会阻止导航，浏览器刷新/关闭时对未保存内容给出原生确认。
@@ -54,7 +54,7 @@ HISIEM 已完成检测链路、控制面、接入向导、告警处置、调查�
 3. 后台任务已有租约和启动恢复，但具体 handler 的自动重放、幂等键和跨实例协调仍需补齐。
 4. SOAR 控制面按 tenant 隔离 Playbook/执行/审批；告警、案件和 ES 数据面仍缺少完整 tenant 字段、索引隔离和文档级权限。
 5. 真实生产负载下的容量、保留策略、升级回滚和灾备 RTO/RPO 还需要环境级压测与演练。
-6. SOAR 控制面发布 lifecycle 消息还不是事务 outbox；事件解析已有 Flink DLQ topic，但 lifecycle 消息仍缺少可运营的 DLQ/重放。持久并行/静态循环、手动触发和通用 HTTP Connector 基线已实现；生产仍缺凭据治理、mTLS/出口代理、限流/熔断/隔离、子流程、AI、长时间压测与跨地域恢复演练。
+6. Lifecycle publisher 已写入 PostgreSQL outbox，由 dispatcher 以 at-least-once 语义发布 Kafka；Kafka ACK 与数据库 completion 之间仍允许重复发送，下游依赖稳定 `message_id` 幂等。ES 告警更新与 outbox enqueue 之间仍存在 residual crash gap，需要 reconciliation；生产仍缺凭据治理、mTLS/出口代理、限流/熔断/隔离、子流程、AI、长时间压测与跨地域恢复演练。
 
 ## 文档使用规则
 

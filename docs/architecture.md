@@ -52,7 +52,7 @@ flowchart LR
     SOAR -->|"白名单业务动作"| API
 ```
 
-图中的实线表示当前存在的运行链路，不代表所有箭头都处于同一个事务。尤其是 PostgreSQL、Elasticsearch 与 Kafka 之间没有分布式事务：案件镜像依靠 outbox 和定时收敛，控制面 lifecycle 发布失败只记录指标并等待后续治理。
+图中的实线表示当前存在的运行链路，不代表所有箭头都处于同一个事务。尤其是 PostgreSQL、Elasticsearch 与 Kafka 之间没有分布式事务：案件镜像依靠 outbox 和定时收敛，lifecycle 事件先写 PostgreSQL outbox，再由 dispatcher 以 at-least-once 语义投递 Kafka。
 
 ## 2. 组件职责
 
@@ -82,7 +82,8 @@ flowchart LR
     FP -->|"否"| DLQ["Kafka<br/>siem-events-dlq"]
     FP -->|"是"| RULES["单事件 / 窗口 / CEP / 基线规则"]
     RULES --> ALERT[("Elasticsearch<br/>siem-alerts")]
-    ALERT -->|"写入确认后"| ALERT_LIFE["Kafka<br/>siem-alert-lifecycle"]
+    ALERT -->|"写入确认后"| ALERT_OUTBOX["PostgreSQL lifecycle_outbox"]
+    ALERT_OUTBOX --> ALERT_LIFE["Kafka<br/>siem-alert-lifecycle"]
     ALERT_LIFE --> SOAR["SOAR 匹配并创建 execution"]
 ```
 
@@ -94,14 +95,16 @@ raw 与 DLQ 是两个不同失败边界：`siem-events-raw-*` 隔离 Logstash �
 4. Logstash 输出:
    - ES:`siem-events-%{+YYYY.MM.dd}`(按日志日期分索引)
    - Kafka:topic `siem-events`(JSON)
-5. Flink `DetectionJob`（当前 6 条检测规则）:
+5. 规则发布不是把 YAML 直接交给 Flink：`infra/rules/*.yaml` → `RuleRevision` → `DetectionPlan` → `FlinkArtifactCompiler` → `RuleDecl` → `DetectionJob`。`RuleRevision` 和 canonical plan 是不可变编译输入。
+6. Flink `DetectionJob`（当前 6 条检测规则）:
    - 解析事件为扁平点分字段(`Event` POJO)；坏 JSON、缺失或非法 `@timestamp` 通过 side output 写入 `siem-events-dlq`，不进入检测分支
    - 单事件规则逐条匹配 → 每条命中生成一条告警
    - 时间窗口规则(事件时间窗口 + watermark)→ 窗口关闭时统计命中数,≥阈值生成关联告警
    - CEP 序列和基线异常分别处理攻击链、统计异常，并统一写入告警字段
-6. Flink 先写入 ES `siem-alerts`：新文档使用完整 upsert，重放或抑制更新只提交不含分析师处置字段的 partial doc；ES 确认成功后才将最小 `alert.created` 契约写入 Kafka `siem-alert-lifecycle`。
-7. 告警/案件控制面变更成功后分别发布 `alert.updated`、`case.created/updated` 到两个 lifecycle topic。SOAR 消费组只读取这两个 topic，匹配已发布且启用的 Playbook，执行 Start/End/Condition/Business/Human/Wait。
-8. 控制台写操作通过 Spring Security 鉴权；案件处置状态、SOAR Playbook/执行快照/逐 attempt I/O/审批/动作回执、用户会话、通知、审计和后台任务写入 PostgreSQL，Flyway 负责当前 V1-V15 迁移。
+7. Flink 先写入 ES `siem-alerts`：新文档使用完整 upsert，重放或抑制更新只提交不含分析师处置字段的 partial doc；ES 确认成功后将最小 `alert.created` 契约 enqueue 到 PostgreSQL `lifecycle_outbox`。ES 更新与 enqueue 不属于同一事务，reconciliation 负责暴露并收敛 crash gap。
+8. lifecycle outbox dispatcher 以租约批量 claim，等待 Kafka broker ACK 后再完成数据库记录；ACK 后、完成前进程崩溃允许重复发送，下游依赖稳定 `message_id` 幂等。告警/案件控制面变更成功后分别产生 `alert.updated`、`case.created/updated`。
+9. SOAR 消费组读取 lifecycle topic，匹配已发布且启用的 Playbook，执行 Start/End/Condition/Business/Human/Wait。
+10. 控制台写操作通过 Spring Security 鉴权；案件处置状态、SOAR Playbook/执行快照/逐 attempt I/O/审批/动作回执、用户会话、通知、审计和后台任务写入 PostgreSQL，Flyway 负责当前 V1-V19 迁移。
 
 ### 3.2 案件写入与最终一致性
 

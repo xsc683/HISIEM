@@ -1,6 +1,6 @@
 # 规则引擎使用与扩展（当前版本）
 
-> 定位：Flink 检测作业和 `infra/rules/*.yaml` 的实现指南。规则元数据以 YAML 为唯一来源；`RuleRegistry`、`DetectionFunction` 等 Java 类是执行实现，不是另一份规则配置。
+> 定位：规则 authoring、不可变 revision、DetectionPlan 编译和 Flink 执行的实现指南。YAML 是 authoring 输入，不是 Flink 的直接 runtime source；运行时链路为 `Rule YAML → RuleRevision → DetectionPlan → FlinkArtifactCompiler → RuleDecl → DetectionJob`。
 
 ## 1. 数据流和四类规则
 
@@ -49,7 +49,7 @@ version: "1.0"
 references: []
 ```
 
-`enabled: false` 的规则不会注册到作业。控制台启停只修改该字段，配置校验、部署和 Flink 作业重启完成后才生效。
+`enabled: false` 的规则不会进入期望的运行成员集合。控制台启停更新规则声明和 desired state；独立 detection-controller 负责 artifact、Flink apply/stop、精确 inspect 和 observed state，控制 API 不直接操作 Flink runtime。
 
 ### 2.1 单事件规则
 
@@ -107,7 +107,7 @@ baseline:
 1. 在 `infra/rules/` 新增或修改 YAML，保持 `id` 唯一并填写 `category`、规则元数据和引用。
 2. 运行 Flink 模块测试和规则 lint，确认 YAML 可加载、条件合法、声明与执行分支一致。
 3. 运行根项目测试；若改变 Schema 或告警字段，同时检查 `docs/event-alert-schema.md` 和 ES 模板。
-4. 通过规则部署流程同步到 Flink，再确认 savepoint/重启后的作业为 `RUNNING`。
+4. 通过规则部署流程生成并校验 DetectionPlan/Flink artifact，由 detection-controller reconcile；确认最终 observed state 与实际 Flink `RUNNING` 状态一致。
 5. 发送带有正确事件时间的正/负样例，检查 Kafka offset、Flink checkpoint、`siem-alerts` 和 partial update。
 6. 规则启停或阈值变化必须在审计中记录真实操作者；失败时保留旧 YAML、旧 job 和旧告警。
 
