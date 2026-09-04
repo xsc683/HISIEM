@@ -1,23 +1,22 @@
 package com.xscsiem.hsiem_platform.control;
 
+import java.util.List;
+import java.util.Map;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-import org.springframework.security.access.prepost.PreAuthorize;
-
-import java.util.List;
-import java.util.Map;
 
 /** 后台任务只读 API，供数据源异步生效等控制面任务轮询。 */
 @RestController
 @RequestMapping("/api/tasks")
 public class BackgroundTaskController {
 
-    private final ControlPlaneStore control;
+    private final TaskStore control;
 
-    public BackgroundTaskController(ControlPlaneStore control) {
+    public BackgroundTaskController(TaskStore control) {
         this.control = control;
     }
 

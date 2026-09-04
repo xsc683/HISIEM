@@ -1,17 +1,5 @@
 package com.xscsiem.hsiem_platform.soar;
 
-import com.xscsiem.hsiem_platform.control.ControlPlaneStore;
-import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
-import org.apache.kafka.clients.producer.Producer;
-import org.apache.kafka.clients.producer.RecordMetadata;
-import org.junit.jupiter.api.Test;
-
-import java.time.Duration;
-import java.time.Instant;
-import java.util.Map;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.Future;
-
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -20,39 +8,69 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.xscsiem.hsiem_platform.control.LifecycleOutboxStore;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Future;
+import org.apache.kafka.clients.producer.Producer;
+import org.apache.kafka.clients.producer.RecordMetadata;
+import org.junit.jupiter.api.Test;
+
 class LifecycleOutboxDispatcherTest {
 
     @Test
     void producerFailureCompletesFailedUsingPostClaimAttempts() {
-        ControlPlaneStore store = mock(ControlPlaneStore.class);
+        LifecycleOutboxStore store = mock(LifecycleOutboxStore.class);
         SoarKafkaProperties properties = mock(SoarKafkaProperties.class);
         Producer<String, String> producer = mock(Producer.class);
-        Future<RecordMetadata> failed = CompletableFuture.failedFuture(new IllegalStateException("broker down"));
+        Future<RecordMetadata> failed =
+                CompletableFuture.failedFuture(new IllegalStateException("broker down"));
         when(producer.send(any())).thenReturn(failed);
         Map<String, Object> item = item(3);
         when(store.claimLifecycleBatch(any(), any(), eq(10))).thenReturn(java.util.List.of(item));
-        LifecycleOutboxDispatcher dispatcher = new LifecycleOutboxDispatcher(store, properties,
-                new SimpleMeterRegistry(), true, Duration.ofMinutes(2), 10, producer);
+        LifecycleOutboxDispatcher dispatcher =
+                new LifecycleOutboxDispatcher(
+                        store,
+                        properties,
+                        new SimpleMeterRegistry(),
+                        true,
+                        Duration.ofMinutes(2),
+                        10,
+                        producer);
 
         dispatcher.dispatch();
 
         var retry = org.mockito.ArgumentCaptor.forClass(Instant.class);
-        verify(store).completeLifecycle(eq("message-1"), any(), eq(false), eq("broker down"), retry.capture());
+        verify(store)
+                .completeLifecycle(
+                        eq("message-1"), any(), eq(false), eq("broker down"), retry.capture());
         long delay = retry.getValue().getEpochSecond() - Instant.now().getEpochSecond();
         assertEquals(4L, delay, 1L);
     }
 
     @Test
     void ackCompletionFailureDoesNotPublishFalseOrHideCrashWindow() throws Exception {
-        ControlPlaneStore store = mock(ControlPlaneStore.class);
+        LifecycleOutboxStore store = mock(LifecycleOutboxStore.class);
         SoarKafkaProperties properties = mock(SoarKafkaProperties.class);
         Producer<String, String> producer = mock(Producer.class);
         when(producer.send(any())).thenReturn(CompletableFuture.completedFuture(null));
-        when(store.claimLifecycleBatch(any(), any(), eq(10))).thenReturn(java.util.List.of(item(1)));
+        when(store.claimLifecycleBatch(any(), any(), eq(10)))
+                .thenReturn(java.util.List.of(item(1)));
         doThrow(new IllegalStateException("db unavailable"))
-                .when(store).completeLifecycle(eq("message-1"), any(), eq(true), eq(null), any());
-        LifecycleOutboxDispatcher dispatcher = new LifecycleOutboxDispatcher(store, properties,
-                new SimpleMeterRegistry(), true, Duration.ofMinutes(2), 10, producer);
+                .when(store)
+                .completeLifecycle(eq("message-1"), any(), eq(true), eq(null), any());
+        LifecycleOutboxDispatcher dispatcher =
+                new LifecycleOutboxDispatcher(
+                        store,
+                        properties,
+                        new SimpleMeterRegistry(),
+                        true,
+                        Duration.ofMinutes(2),
+                        10,
+                        producer);
 
         dispatcher.dispatch();
 
@@ -63,7 +81,7 @@ class LifecycleOutboxDispatcherTest {
 
     @Test
     void restartedDispatcherReclaimsExpiredAckedRowAndMaySendDuplicate() {
-        ControlPlaneStore store = mock(ControlPlaneStore.class);
+        LifecycleOutboxStore store = mock(LifecycleOutboxStore.class);
         SoarKafkaProperties properties = mock(SoarKafkaProperties.class);
         Producer<String, String> firstProducer = mock(Producer.class);
         Producer<String, String> restartedProducer = mock(Producer.class);
@@ -75,10 +93,24 @@ class LifecycleOutboxDispatcherTest {
                 .thenThrow(new IllegalStateException("crash after ACK"))
                 .thenReturn(true);
 
-        LifecycleOutboxDispatcher first = new LifecycleOutboxDispatcher(store, properties,
-                new SimpleMeterRegistry(), true, Duration.ofMinutes(2), 10, firstProducer);
-        LifecycleOutboxDispatcher restarted = new LifecycleOutboxDispatcher(store, properties,
-                new SimpleMeterRegistry(), true, Duration.ofMinutes(2), 10, restartedProducer);
+        LifecycleOutboxDispatcher first =
+                new LifecycleOutboxDispatcher(
+                        store,
+                        properties,
+                        new SimpleMeterRegistry(),
+                        true,
+                        Duration.ofMinutes(2),
+                        10,
+                        firstProducer);
+        LifecycleOutboxDispatcher restarted =
+                new LifecycleOutboxDispatcher(
+                        store,
+                        properties,
+                        new SimpleMeterRegistry(),
+                        true,
+                        Duration.ofMinutes(2),
+                        10,
+                        restartedProducer);
 
         first.dispatch();
         restarted.dispatch();
@@ -102,9 +134,15 @@ class LifecycleOutboxDispatcherTest {
     @Test
     void closesInjectedProducerOnShutdown() {
         Producer<String, String> producer = mock(Producer.class);
-        LifecycleOutboxDispatcher dispatcher = new LifecycleOutboxDispatcher(mock(ControlPlaneStore.class),
-                mock(SoarKafkaProperties.class), new SimpleMeterRegistry(), true,
-                Duration.ofMinutes(2), 10, producer);
+        LifecycleOutboxDispatcher dispatcher =
+                new LifecycleOutboxDispatcher(
+                        mock(LifecycleOutboxStore.class),
+                        mock(SoarKafkaProperties.class),
+                        new SimpleMeterRegistry(),
+                        true,
+                        Duration.ofMinutes(2),
+                        10,
+                        producer);
 
         dispatcher.close();
 
@@ -112,7 +150,16 @@ class LifecycleOutboxDispatcherTest {
     }
 
     private static Map<String, Object> item(int attempts) {
-        return Map.of("messageId", "message-1", "topic", "alerts", "messageKey", "alert-1",
-                "payload", "{}", "attempts", attempts);
+        return Map.of(
+                "messageId",
+                "message-1",
+                "topic",
+                "alerts",
+                "messageKey",
+                "alert-1",
+                "payload",
+                "{}",
+                "attempts",
+                attempts);
     }
 }

@@ -746,23 +746,20 @@ for (String id : ids) {
 
 因此“只提交 verdict”的批量请求不会因为缺少版本号全部失败，单条并发冲突也会被明确返回，而不是静默覆盖。
 
-## 7. 案件一致性：PostgreSQL 事实、同步保护与 outbox 收敛
+## 7. 案件一致性：PostgreSQL 事实、outbox 镜像收敛
 
-当前实现不是“只写 PostgreSQL、完全异步镜像”的纯 outbox，也不是把 PostgreSQL 和 Elasticsearch 假装成一个事务。`CaseService` 仍保留同步 ES 路径，用于创建时立即建立可见镜像、更新时利用 `_seq_no/_primary_term` 拒绝并发覆盖，以及维护告警的 `alert.case_id`；同一笔 PostgreSQL 事务还写入 outbox，进程或网络故障后由 dispatcher 重试。准确的数据流如下：
+PostgreSQL 是案件事实源，正常写路径只落一份数据库事务，ES 中的 `siem-cases` 是 dispatcher 经 outbox 收敛出来的检索镜像——**正常业务写路径没有同步 ES 写**。`CaseService` 的每个 mutation 调用 `store.updateCase/createCase/deleteCase`（以 PG `_control_version` 作乐观锁），store 在同一事务内写 `case_mirror_outbox`；`CaseMirrorDispatcher` 领取并把镜像投递到 ES，失败按指数退避重试。唯一保留的 ES 直写是告警处置路径（`alert.case_id` marker），它不属于案件镜像范围。准确的数据流如下：
 
 ```mermaid
 flowchart TD
     CREATE["创建案件"] --> CPG["PG 事务<br/>cases + case_alerts + upsert outbox"]
-    CPG --> CES["同步创建 ES 案件镜像"]
-    CES --> CMARK["逐条写 alert.case_id"]
+    CPG --> CMARK["逐条写 alert.case_id"]
     CMARK --> CLIFE["发布 case.created"]
 
-    UPDATE["更新案件"] --> UES["ES 乐观锁更新<br/>seq_no + primary_term"]
-    UES --> UPG["PG version 更新<br/>+ upsert outbox"]
+    UPDATE["更新案件"] --> UPG["PG version 乐观更新<br/>+ upsert outbox"]
     UPG --> ULIFE["发布 case.updated"]
 
     DELETE["删除空案件"] --> DPG["PG 删除<br/>+ delete outbox"]
-    DPG --> DES["同步 ES 删除<br/>2xx / 404 均为成功"]
 
     CPG -.-> OUTBOX["CaseMirrorDispatcher<br/>失败退避重试"]
     UPG -.-> OUTBOX
@@ -771,25 +768,20 @@ flowchart TD
     RECON["定时全量 reconcile"] --> MIRROR
 ```
 
-这张图中的三条主路径顺序不同：创建以 PostgreSQL 为先，更新以 ES 乐观锁为先，删除以 PostgreSQL 为先。任何一条都不提供跨 PG/ES/Kafka 的原子提交；补偿、outbox 与定时 reconcile 只负责暴露失败并让状态收敛。
+创建、更新、删除都以 PostgreSQL 事务为先，顺序一致：PG 事实 + 关系 + outbox 原子提交，再由 dispatcher 收敛 ES。任一路径都不提供跨 PG/ES/Kafka 的分布式事务；outbox 与定时 reconcile 负责暴露失败并让状态收敛。
 
 ### 7.1 案件主表、关系表和 outbox 在同一数据库事务中落地
 
-实现位置：`modules/iam/src/main/java/com/xscsiem/hsiem_platform/control/JdbcControlPlaneStore.java`、`modules/platform-migrations/src/main/resources/db/migration/V*.sql`。
+实现位置：`modules/iam/src/main/java/com/xscsiem/hsiem_platform/control/MyBatisControlPlaneStore.java`、`modules/iam/src/main/resources/mybatis/control/*.xml`、`modules/platform-migrations/src/main/resources/db/migration/V*.sql`。
 
-JdbcControlPlaneStore.createCase 的核心 SQL（JDBC 参数映射省略）：
+`createCase` 经 MyBatis mapper 在同一事务内完成三条语句（见 store XML，参数映射省略）：
 
 ~~~java
 @Transactional
 public void createCase(Map<String, Object> document, List<String> alertIds) {
-    jdbc.update("""
-        INSERT INTO cases(id, title, status, aggregation, operator, owner, verdict,
-            created_at, updated_at, closed_at, alert_ids_json, entities_json,
-            evidence_json, collaborators_json, version)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
-        """, ...);
-    insertRelations(value(document, "case.id"), alertIds);
-    enqueueCaseMirror(value(document, "case.id"), "upsert", document);
+    mapper.insertCase(document, ...);            // cases 事实行
+    mapper.insertCaseRelations(caseId, alertIds); // case_alerts
+    mapper.insertCaseMirrorUpsert(caseId, document); // case_mirror_outbox
 }
 ~~~
 
@@ -801,11 +793,19 @@ SET ..., version = version + 1
 WHERE id = ? AND version = ?;
 ~~~
 
-更新行数为 0 即表示并发修改，业务层要求刷新后重试。case_alerts.alert_id 有唯一约束，告警不能同时归属多个案件。
+`updateCase` 经 mapper 以 PG `_control_version` 作乐观仲裁：
+
+~~~sql
+UPDATE cases
+SET ..., _control_version = _control_version + 1
+WHERE id = ? AND _control_version = ?;
+~~~
+
+更新行数为 0 即表示并发修改，store 抛出版本冲突，`CaseService` 将其映射为 HTTP 409（`ConflictException`）。case_alerts.alert_id 有唯一约束，告警不能同时归属多个案件。
 
 ### 7.2 outbox 合并、租约和退避分别解决三个问题
 
-实现位置：`modules/security-ops/src/main/java/com/xscsiem/hsiem_platform/investigation/CaseMirrorDispatcher.java`、`modules/iam/src/main/java/com/xscsiem/hsiem_platform/control/ControlPlaneStore.java`。
+实现位置：`modules/security-ops/src/main/java/com/xscsiem/hsiem_platform/investigation/CaseMirrorDispatcher.java`、`modules/iam/src/main/java/com/xscsiem/hsiem_platform/control/CaseStore.java`。
 
 case_mirror_outbox 的实际字段：
 
@@ -845,11 +845,9 @@ DELETE 镜像把任意 HTTP 2xx 和 404 都视为幂等成功：2xx 覆盖 Elast
 
 需要注意，当前 claim SQL 使用 `FOR UPDATE`，并没有使用 `SKIP LOCKED`；多个 dispatcher 实例不会同时成功处理同一行，但可能在领取阶段等待数据库行锁。这对当前规模可用，不应在架构文档中写成无阻塞的横向领取。
 
-### 7.3 同步 ES 路径承担即时校验，outbox 承担故障后收敛
+### 7.3 outbox 是正常写路径唯一的 ES 镜像机制
 
-创建时 `control.createCase` 会在 PostgreSQL 中写事实和 outbox，随后 `CaseService` 同步创建 ES 案件文档；如果同步 ES 写失败，会删除刚创建的 PostgreSQL 案件，并由 delete outbox 继续清理可能存在的镜像。更新的顺序相反：先对 ES 文档做 `_seq_no/_primary_term` 乐观锁更新，再以 PostgreSQL `version` 更新关系事实并排入最新镜像。删除则先删除 PostgreSQL 事实并排入 delete outbox，之后同步 ES 删除失败只记录警告，交给 dispatcher 重试。
-
-因此 outbox 是恢复机制，不是当前用户请求的唯一写路径。控制面读取优先使用 PostgreSQL；ES 中的 `siem-cases` 是兼容检索镜像，而事件时间线仍直接查询 `siem-events-*`。
+`CaseService` 的 mutation 只写 PostgreSQL 事实 + outbox（`store.createCase/updateCase/deleteCase`，均在事务内 `enqueueCaseMirror`），不再同步写 ES。进程或网络故障让一次镜像投递失败时，dispatcher 按退避重试，把 brief 不一致收敛掉，而不把用户请求卡在长事务里。ES 兼容镜像只在不存在的 legacy case 惰性导入、以及定时 `reconcileMirror` 全量重放两处被直接读写，均不属于正常业务写路径。控制面读取优先使用 PostgreSQL；ES 中的 `siem-cases` 是兼容检索镜像，而事件时间线仍直接查询 `siem-events-*`。
 
 ### 7.4 告警 case_id 是快速索引，业务层仍有补偿
 
@@ -898,7 +896,7 @@ record 对最终文件计算 SHA-256，审计目标形如 kind:path#revision-pre
 
 ### 8.2 任务租约让进程内 worker 具备可收敛状态
 
-实现位置：`modules/platform-operations/src/main/java/com/xscsiem/hsiem_platform/control/BackgroundTaskRecovery.java`、`modules/iam/src/main/java/com/xscsiem/hsiem_platform/control/ControlPlaneStore.java`、`modules/platform-migrations/src/main/resources/db/migration/V7__outbox_task_leases.sql`。
+实现位置：`modules/platform-operations/src/main/java/com/xscsiem/hsiem_platform/control/BackgroundTaskRecovery.java`、`modules/iam/src/main/java/com/xscsiem/hsiem_platform/control/TaskStore.java`、`modules/platform-migrations/src/main/resources/db/migration/V7__outbox_task_leases.sql`。
 
 background_tasks 在 V7 增加：
 
@@ -913,7 +911,7 @@ ALTER TABLE background_tasks ADD COLUMN max_attempts INTEGER NOT NULL DEFAULT 3;
 worker 领取任务、定期 heartbeat、最终更新状态；BackgroundTaskRecovery 在启动和每 60 秒扫描一次，把超过 stale-after（默认 5 分钟）的任务标记为 failed：
 
 ~~~java
-control.recoverStaleTasks(
+store.recoverStaleTasks(
         Instant.now().minus(staleAfter),
         "服务重启或任务心跳超时，任务未能完成；请重新提交");
 ~~~

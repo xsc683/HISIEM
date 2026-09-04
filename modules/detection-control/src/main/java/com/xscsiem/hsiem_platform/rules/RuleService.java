@@ -2,8 +2,8 @@ package com.xscsiem.hsiem_platform.rules;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
+import com.xscsiem.hsiem_platform.control.AuthStore;
 import com.xscsiem.hsiem_platform.control.ConfigRevisionJournal;
-import com.xscsiem.hsiem_platform.control.ControlPlaneStore;
 import com.xscsiem.hsiem_platform.onboarding.ConflictException;
 import com.xscsiem.hsiem_platform.onboarding.NotFoundException;
 import com.xscsiem.hsiem_platform.search.ElasticsearchGateway;
@@ -41,14 +41,14 @@ public class RuleService {
     private final String rulesDir;
     private final String esUrl;
     private final ElasticsearchGateway gateway;
-    private final ControlPlaneStore control;
+    private final AuthStore control;
 
     @Autowired
     public RuleService(
             @Value("${app.rules-dir:infra/rules}") String rulesDir,
             @Value("${app.elasticsearch.url:http://localhost:9200}") String esUrl,
             ElasticsearchGateway gateway,
-            ControlPlaneStore control) {
+            AuthStore control) {
         this.rulesDir = rulesDir;
         this.esUrl = esUrl;
         this.gateway = gateway;

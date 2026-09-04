@@ -2,13 +2,8 @@ package com.xscsiem.hsiem_platform.onboarding;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
+import com.xscsiem.hsiem_platform.control.AuthStore;
 import com.xscsiem.hsiem_platform.control.ConfigRevisionJournal;
-import com.xscsiem.hsiem_platform.control.ControlPlaneStore;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.stereotype.Service;
-
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Path;
@@ -16,10 +11,12 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.regex.Pattern;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.stereotype.Service;
 
-/**
- * 加载 infra/parser-templates/*.yaml 为解析模板;支持保存(Story 02,正负样本门禁)。
- */
+/** 加载 infra/parser-templates/*.yaml 为解析模板;支持保存(Story 02,正负样本门禁)。 */
 @Service
 public class ParserTemplateService {
 
@@ -28,12 +25,13 @@ public class ParserTemplateService {
     private final ObjectMapper yamlMapper = new ObjectMapper(new YAMLFactory());
     private final String templatesDir;
     private final GrokTestService grok;
-    private final ControlPlaneStore control;
+    private final AuthStore control;
 
     @Autowired
     public ParserTemplateService(
             @Value("${app.parser-templates-dir:infra/parser-templates}") String templatesDir,
-            GrokTestService grok, ControlPlaneStore control) {
+            GrokTestService grok,
+            AuthStore control) {
         this.templatesDir = templatesDir;
         this.grok = grok;
         this.control = control;
@@ -46,18 +44,15 @@ public class ParserTemplateService {
     }
 
     /**
-     * Resolve repository-level relative configuration when Maven or the app is
-     * launched from a child module directory. Absolute and existing paths keep
-     * their original behavior.
+     * Resolve repository-level relative configuration when Maven or the app is launched from a
+     * child module directory. Absolute and existing paths keep their original behavior.
      */
     File templatesDirectory() {
         File configured = new File(templatesDir);
         if (configured.isAbsolute() || configured.isDirectory()) {
             return configured;
         }
-        Path current = Path.of(System.getProperty("user.dir", "."))
-                .toAbsolutePath()
-                .normalize();
+        Path current = Path.of(System.getProperty("user.dir", ".")).toAbsolutePath().normalize();
         while (current != null) {
             Path candidate = current.resolve(templatesDir).normalize();
             if (candidate.toFile().isDirectory()) {
@@ -92,9 +87,8 @@ public class ParserTemplateService {
     }
 
     /**
-     * 保存模板(Story 02 FR-4,正负样本门禁):写 infra/parser-templates/&lt;id&gt;.yaml。
-     * 门禁:至少 1 个 grok 模式 + ≥1 正样本(全部命中且 expect 字段匹配)+ 负样本(如有)全部不命中。
-     * 校验通过才允许保存;失败抛 IllegalArgumentException(400)。
+     * 保存模板(Story 02 FR-4,正负样本门禁):写 infra/parser-templates/&lt;id&gt;.yaml。 门禁:至少 1 个 grok 模式 + ≥1
+     * 正样本(全部命中且 expect 字段匹配)+ 负样本(如有)全部不命中。 校验通过才允许保存;失败抛 IllegalArgumentException(400)。
      */
     public ParserTemplate save(ParserTemplate t) {
         validateGate(t);
@@ -132,8 +126,15 @@ public class ParserTemplateService {
                 for (var entry : test.expect.entrySet()) {
                     Object actual = r.fields().get(entry.getKey());
                     if (!Objects.equals(String.valueOf(actual), String.valueOf(entry.getValue()))) {
-                        throw new IllegalArgumentException("正样本字段不符: " + entry.getKey()
-                                + "=" + actual + "(期望 " + entry.getValue() + "),样例: " + test.sample);
+                        throw new IllegalArgumentException(
+                                "正样本字段不符: "
+                                        + entry.getKey()
+                                        + "="
+                                        + actual
+                                        + "(期望 "
+                                        + entry.getValue()
+                                        + "),样例: "
+                                        + test.sample);
                     }
                 }
             }
@@ -160,7 +161,8 @@ public class ParserTemplateService {
         if (requireIdentity && (t.name == null || t.name.isBlank())) {
             throw new IllegalArgumentException("模板名称不能为空");
         }
-        if (t.patterns == null || t.patterns.isEmpty()
+        if (t.patterns == null
+                || t.patterns.isEmpty()
                 || t.patterns.stream().anyMatch(pattern -> pattern == null || pattern.isBlank())) {
             throw new IllegalArgumentException("模板至少需要一个非空 grok 模式");
         }

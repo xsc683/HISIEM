@@ -1,26 +1,25 @@
 package com.xscsiem.hsiem_platform.onboarding;
 
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.beans.factory.annotation.Autowired;
+import com.xscsiem.hsiem_platform.control.AuthStore;
 import com.xscsiem.hsiem_platform.control.ConfigRevisionJournal;
-import com.xscsiem.hsiem_platform.control.ControlPlaneStore;
-import org.springframework.stereotype.Component;
-
 import java.io.IOException;
 import java.nio.file.Files;
-import java.nio.file.StandardCopyOption;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
 
 /**
  * 生效协调(Story 01 FR-3):把数据源落成 Logstash per-source pipeline 并同步生效。
  *
- * 链路(失败任一步回滚):生成完整 pipeline → 写 repo infra/logstash/pipeline/log-sources/&lt;id&gt;.conf
- *   + pipelines.yml 追加条目 → rsync 同步 WSL → 容器内 --config.test_and_exit 校验
- *   → 通过则重启 Logstash;校验/同步/重启失败 → 删除 conf + 还原 pipelines.yml → 抛 ActivationFailedException。
+ * <p>链路(失败任一步回滚):生成完整 pipeline → 写 repo infra/logstash/pipeline/log-sources/&lt;id&gt;.conf +
+ * pipelines.yml 追加条目 → rsync 同步 WSL → 容器内 --config.test_and_exit 校验 → 通过则重启 Logstash;校验/同步/重启失败 →
+ * 删除 conf + 还原 pipelines.yml → 抛 ActivationFailedException。
  *
- * 外部命令统一走 {@link LogstashDeployer}(可 mock);路径可由 application.properties 覆盖。
+ * <p>外部命令统一走 {@link LogstashDeployer}(可 mock);路径可由 application.properties 覆盖。
  */
 @Component
 public class ActivationCoordinator {
@@ -31,7 +30,7 @@ public class ActivationCoordinator {
     private final String configDir;
     private final String containerPipelineRoot;
     private final String composeFile;
-    private final ControlPlaneStore control;
+    private final AuthStore control;
 
     @Autowired
     public ActivationCoordinator(
@@ -39,9 +38,10 @@ public class ActivationCoordinator {
             LogstashDeployer deployer,
             @Value("${app.logstash.pipeline-dir:infra/logstash/pipeline}") String pipelineDir,
             @Value("${app.logstash.config-dir:infra/logstash/config}") String configDir,
-            @Value("${app.logstash.container-pipeline-root:/usr/share/logstash/pipeline}") String containerPipelineRoot,
+            @Value("${app.logstash.container-pipeline-root:/usr/share/logstash/pipeline}")
+                    String containerPipelineRoot,
             @Value("${app.logstash.compose-file:infra/docker-compose.yml}") String composeFile,
-            ControlPlaneStore control) {
+            AuthStore control) {
         this.generator = generator;
         this.deployer = deployer;
         this.pipelineDir = pipelineDir;
@@ -51,9 +51,13 @@ public class ActivationCoordinator {
         this.control = control;
     }
 
-    public ActivationCoordinator(LogstashConfigGenerator generator, LogstashDeployer deployer,
-                                 String pipelineDir, String configDir, String containerPipelineRoot,
-                                 String composeFile) {
+    public ActivationCoordinator(
+            LogstashConfigGenerator generator,
+            LogstashDeployer deployer,
+            String pipelineDir,
+            String configDir,
+            String containerPipelineRoot,
+            String composeFile) {
         this(generator, deployer, pipelineDir, configDir, containerPipelineRoot, composeFile, null);
     }
 
@@ -73,11 +77,20 @@ public class ActivationCoordinator {
             pipelinesBackup = Files.exists(pipelines) ? Files.readString(pipelines) : "";
             atomicWrite(confFile, conf);
 
-            String entry = "- pipeline.id: " + pipelineId(s) + "\n"
-                    + "  path.config: \"" + containerPath + "\"\n"
-                    + "  pipeline.ecs_compatibility: v8\n";
-            String base = (pipelinesBackup == null || pipelinesBackup.isEmpty())
-                    ? "" : (pipelinesBackup.endsWith("\n") ? pipelinesBackup : pipelinesBackup + "\n");
+            String entry =
+                    "- pipeline.id: "
+                            + pipelineId(s)
+                            + "\n"
+                            + "  path.config: \""
+                            + containerPath
+                            + "\"\n"
+                            + "  pipeline.ecs_compatibility: v8\n";
+            String base =
+                    (pipelinesBackup == null || pipelinesBackup.isEmpty())
+                            ? ""
+                            : (pipelinesBackup.endsWith("\n")
+                                    ? pipelinesBackup
+                                    : pipelinesBackup + "\n");
             atomicWrite(pipelines, base + entry);
 
             // 数据源端口映射到宿主机(路线B):把 "<port>:<port>" 加进 compose 的 logstash ports(幂等)。
@@ -142,8 +155,14 @@ public class ActivationCoordinator {
             ConfigRevisionJournal.record(control, "logstash-pipelines", pipelines, "system");
             ConfigRevisionJournal.record(control, "compose", compose, "system");
         } catch (IOException | RuntimeException e) {
-            restoreDeactivation(confFile, confExisted, confBackup, pipelines, pipelinesBackup,
-                    compose, composeBackup);
+            restoreDeactivation(
+                    confFile,
+                    confExisted,
+                    confBackup,
+                    pipelines,
+                    pipelinesBackup,
+                    compose,
+                    composeBackup);
             throw new ActivationFailedException("停用失败(" + s.id + "),已回滚: " + e.getMessage(), e);
         }
     }
@@ -169,9 +188,14 @@ public class ActivationCoordinator {
         return original.replace(line + "\r\n", "").replace(line + "\n", "");
     }
 
-    private static void restoreDeactivation(Path confFile, boolean confExisted, String confBackup,
-                                            Path pipelines, String pipelinesBackup,
-                                            Path compose, String composeBackup) {
+    private static void restoreDeactivation(
+            Path confFile,
+            boolean confExisted,
+            String confBackup,
+            Path pipelines,
+            String pipelinesBackup,
+            Path compose,
+            String composeBackup) {
         try {
             if (confExisted) {
                 Files.createDirectories(confFile.getParent());
@@ -191,10 +215,7 @@ public class ActivationCoordinator {
         }
     }
 
-    /**
-     * 把数据源端口映射加进 compose 的 logstash ports(幂等:已存在则不动)。
-     * 返回修改前的完整内容(供回滚);若未修改返回 null。
-     */
+    /** 把数据源端口映射加进 compose 的 logstash ports(幂等:已存在则不动)。 返回修改前的完整内容(供回滚);若未修改返回 null。 */
     private String addPortToCompose(Path compose, Integer port) throws IOException {
         if (port == null || port <= 0) {
             return null;
@@ -212,8 +233,9 @@ public class ActivationCoordinator {
         if (!original.contains(needle)) {
             throw new IllegalStateException("compose 找不到 logstash 基准端口 5000,无法插入映射");
         }
-        String updated = original.replaceFirst(needle.replace("\\", "\\\\"),
-                needle + "      - " + mapping + "\n");
+        String updated =
+                original.replaceFirst(
+                        needle.replace("\\", "\\\\"), needle + "      - " + mapping + "\n");
         if (updated.equals(original)) {
             throw new IllegalStateException("compose 端口插入失败: " + compose);
         }
@@ -222,8 +244,12 @@ public class ActivationCoordinator {
     }
 
     /** 回滚:删除新 conf,还原 pipelines.yml 与 compose 原内容。失败不掩盖原始错误。 */
-    private void rollback(Path confFile, Path pipelines, String pipelinesBackup,
-                          Path compose, String composeBackup) {
+    private void rollback(
+            Path confFile,
+            Path pipelines,
+            String pipelinesBackup,
+            Path compose,
+            String composeBackup) {
         try {
             Files.deleteIfExists(confFile);
             if (pipelinesBackup != null) {
@@ -241,10 +267,13 @@ public class ActivationCoordinator {
         }
     }
 
-    /** 回滚仓库文件后再次同步,避免 deployer 已经同步成功但后续校验/重启失败时,
-     * WSL 部署目录继续残留半套配置。同步失败只记录日志,不掩盖原始激活错误。 */
-    private void rollbackAndResync(Path confFile, Path pipelines, String pipelinesBackup,
-                                   Path compose, String composeBackup) {
+    /** 回滚仓库文件后再次同步,避免 deployer 已经同步成功但后续校验/重启失败时, WSL 部署目录继续残留半套配置。同步失败只记录日志,不掩盖原始激活错误。 */
+    private void rollbackAndResync(
+            Path confFile,
+            Path pipelines,
+            String pipelinesBackup,
+            Path compose,
+            String composeBackup) {
         rollback(confFile, pipelines, pipelinesBackup, compose, composeBackup);
         try {
             deployer.syncLogstash();
@@ -258,7 +287,8 @@ public class ActivationCoordinator {
     }
 
     private static boolean portProtocol(LogSource s) {
-        return s.port > 0 && ("tcp".equalsIgnoreCase(s.protocol) || "syslog".equalsIgnoreCase(s.protocol));
+        return s.port > 0
+                && ("tcp".equalsIgnoreCase(s.protocol) || "syslog".equalsIgnoreCase(s.protocol));
     }
 
     /** 写临时文件后替换目标，避免 Logstash 读取到半截 YAML/conf。调用方已持有生命周期锁。 */
@@ -269,7 +299,11 @@ public class ActivationCoordinator {
         try {
             Files.writeString(temp, content);
             try {
-                Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+                Files.move(
+                        temp,
+                        target,
+                        StandardCopyOption.REPLACE_EXISTING,
+                        StandardCopyOption.ATOMIC_MOVE);
             } catch (java.nio.file.AtomicMoveNotSupportedException e) {
                 Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING);
             }

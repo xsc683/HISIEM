@@ -132,8 +132,7 @@ function sourceOf(record) {
 function documentOf(record) {
   const source = sourceOf(record)
   if (source !== record) return source
-  const { _rowKey, ...document } = source
-  return document
+  return source
 }
 async function loadFields() {
   fieldsLoading.value = true

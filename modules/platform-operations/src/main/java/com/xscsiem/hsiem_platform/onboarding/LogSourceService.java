@@ -1,30 +1,32 @@
 package com.xscsiem.hsiem_platform.onboarding;
 
-import com.xscsiem.hsiem_platform.control.ControlPlaneStore;
+import com.xscsiem.hsiem_platform.control.TaskStore;
 import jakarta.annotation.PreDestroy;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.stereotype.Service;
-
 import java.time.Instant;
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.UUID;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
 
 /**
- * 数据源生命周期(Story 01):CRUD + 状态机(creating → active/failed → stopped)+ 生效。
- * 生效异步执行(后台线程),前端轮询 GET /api/log-sources/{id} 观察状态变化。
+ * 数据源生命周期(Story 01):CRUD + 状态机(creating → active/failed → stopped)+ 生效。 生效异步执行(后台线程),前端轮询 GET
+ * /api/log-sources/{id} 观察状态变化。
  */
 @Service
 public class LogSourceService {
 
-    private static final ExecutorService ACTIVATOR = Executors.newFixedThreadPool(2, r -> {
-        Thread t = new Thread(r, "log-source-activate");
-        t.setDaemon(true);
-        return t;
-    });
+    private static final ExecutorService ACTIVATOR =
+            Executors.newFixedThreadPool(
+                    2,
+                    r -> {
+                        Thread t = new Thread(r, "log-source-activate");
+                        t.setDaemon(true);
+                        return t;
+                    });
     private static final String TASK_OWNER = "source-worker-" + UUID.randomUUID();
     private final Set<String> lifecycleInFlight = ConcurrentHashMap.newKeySet();
     private final Object portLock = new Object();
@@ -32,18 +34,24 @@ public class LogSourceService {
     private final LogSourceStore store;
     private final ParserTemplateService templates;
     private final ActivationCoordinator coordinator;
-    private final ControlPlaneStore control;
+    private final TaskStore control;
     private final IngestFailedListener ingestFailed;
 
-    public LogSourceService(LogSourceStore store, ParserTemplateService templates,
-                            ActivationCoordinator coordinator, ControlPlaneStore control) {
+    public LogSourceService(
+            LogSourceStore store,
+            ParserTemplateService templates,
+            ActivationCoordinator coordinator,
+            TaskStore control) {
         this(store, templates, coordinator, control, null);
     }
 
     @Autowired
-    public LogSourceService(LogSourceStore store, ParserTemplateService templates,
-                            ActivationCoordinator coordinator, ControlPlaneStore control,
-                            IngestFailedListener ingestFailed) {
+    public LogSourceService(
+            LogSourceStore store,
+            ParserTemplateService templates,
+            ActivationCoordinator coordinator,
+            TaskStore control,
+            IngestFailedListener ingestFailed) {
         this.store = store;
         this.templates = templates;
         this.coordinator = coordinator;
@@ -52,8 +60,10 @@ public class LogSourceService {
     }
 
     /** 轻量构造器仅供不启动 Spring/数据库的单元测试使用。 */
-    public LogSourceService(LogSourceStore store, ParserTemplateService templates,
-                            ActivationCoordinator coordinator) {
+    public LogSourceService(
+            LogSourceStore store,
+            ParserTemplateService templates,
+            ActivationCoordinator coordinator) {
         this(store, templates, coordinator, null);
     }
 
@@ -70,7 +80,8 @@ public class LogSourceService {
         return create(name, protocol, templateId, port, null);
     }
 
-    public LogSource create(String name, String protocol, String templateId, int port, String path) {
+    public LogSource create(
+            String name, String protocol, String templateId, int port, String path) {
         templates.find(templateId); // 模板不存在 → 404
         if (protocol == null || protocol.isBlank()) {
             protocol = "tcp";
@@ -80,7 +91,10 @@ public class LogSourceService {
             throw new IllegalArgumentException("协议必须是 tcp/syslog/file");
         }
         if ("file".equals(protocol)) {
-            if (path == null || path.isBlank() || path.indexOf('\n') >= 0 || path.indexOf('\r') >= 0) {
+            if (path == null
+                    || path.isBlank()
+                    || path.indexOf('\n') >= 0
+                    || path.indexOf('\r') >= 0) {
                 throw new IllegalArgumentException("file 协议必须提供不含换行的 path");
             }
             port = 0;
@@ -89,8 +103,14 @@ public class LogSourceService {
         }
         final int requestedPort = port;
         synchronized (portLock) {
-            boolean taken = requestedPort > 0 && store.list().stream()
-                    .anyMatch(s -> s.port == requestedPort && !"file".equalsIgnoreCase(s.protocol));
+            boolean taken =
+                    requestedPort > 0
+                            && store.list().stream()
+                                    .anyMatch(
+                                            s ->
+                                                    s.port == requestedPort
+                                                            && !"file"
+                                                                    .equalsIgnoreCase(s.protocol));
             if (taken) {
                 throw new PortConflictException(requestedPort);
             }
@@ -103,8 +123,11 @@ public class LogSourceService {
     /** 预览与创建共用的输入校验，不产生文件和端口占用。 */
     public void validate(String name, String protocol, String templateId, int port, String path) {
         templates.find(templateId);
-        if (name == null || name.isBlank() || name.length() > 128
-                || name.indexOf('\n') >= 0 || name.indexOf('\r') >= 0) {
+        if (name == null
+                || name.isBlank()
+                || name.length() > 128
+                || name.indexOf('\n') >= 0
+                || name.indexOf('\r') >= 0) {
             throw new IllegalArgumentException("数据源名称不能为空、不能含换行且最长 128 字符");
         }
         String normalized = protocol == null || protocol.isBlank() ? "tcp" : protocol.toLowerCase();
@@ -112,7 +135,10 @@ public class LogSourceService {
             throw new IllegalArgumentException("协议必须是 tcp/syslog/file");
         }
         if ("file".equals(normalized)) {
-            if (path == null || path.isBlank() || path.indexOf('\n') >= 0 || path.indexOf('\r') >= 0) {
+            if (path == null
+                    || path.isBlank()
+                    || path.indexOf('\n') >= 0
+                    || path.indexOf('\r') >= 0) {
                 throw new IllegalArgumentException("file 协议必须提供不含换行的 path");
             }
             return;
@@ -120,8 +146,9 @@ public class LogSourceService {
         if (port < 1 || port > 65535) {
             throw new IllegalArgumentException("端口需在 1-65535 之间");
         }
-        boolean taken = store.list().stream()
-                .anyMatch(s -> s.port == port && !"file".equalsIgnoreCase(s.protocol));
+        boolean taken =
+                store.list().stream()
+                        .anyMatch(s -> s.port == port && !"file".equalsIgnoreCase(s.protocol));
         if (taken) {
             throw new PortConflictException(port);
         }
@@ -138,8 +165,10 @@ public class LogSourceService {
         }
         final String taskId;
         try {
-            taskId = control == null ? null
-                    : control.createTask("log_source_activate", id, "等待数据源配置生效");
+            taskId =
+                    control == null
+                            ? null
+                            : control.createTask("log_source_activate", id, "等待数据源配置生效");
         } catch (RuntimeException e) {
             lifecycleInFlight.remove(id);
             throw e;
@@ -150,25 +179,42 @@ public class LogSourceService {
             s.taskId = taskId;
             s.lastError = null;
             store.save(s);
-            ACTIVATOR.execute(() -> {
-                try {
-                    if (taskId != null && !control.claimTask(taskId, TASK_OWNER, Instant.now().plusSeconds(600))) {
-                        return;
-                    }
-                    if (taskId != null) control.heartbeatTask(taskId, TASK_OWNER,
-                            Instant.now().plusSeconds(600), 10, "正在生成 Logstash 配置");
-                    if (taskId != null) control.heartbeatTask(taskId, TASK_OWNER,
-                            Instant.now().plusSeconds(600), 40, "正在校验并同步 Logstash 配置");
-                    LogSource result = activateSync(id);
-                    if (taskId != null) {
-                        boolean success = "active".equals(result.status);
-                        control.updateTask(taskId, success ? "succeeded" : "failed", 100,
-                                success ? "数据源已生效" : "数据源生效失败", success ? null : result.lastError);
-                    }
-                } finally {
-                    lifecycleInFlight.remove(id);
-                }
-            });
+            ACTIVATOR.execute(
+                    () -> {
+                        try {
+                            if (taskId != null
+                                    && !control.claimTask(
+                                            taskId, TASK_OWNER, Instant.now().plusSeconds(600))) {
+                                return;
+                            }
+                            if (taskId != null)
+                                control.heartbeatTask(
+                                        taskId,
+                                        TASK_OWNER,
+                                        Instant.now().plusSeconds(600),
+                                        10,
+                                        "正在生成 Logstash 配置");
+                            if (taskId != null)
+                                control.heartbeatTask(
+                                        taskId,
+                                        TASK_OWNER,
+                                        Instant.now().plusSeconds(600),
+                                        40,
+                                        "正在校验并同步 Logstash 配置");
+                            LogSource result = activateSync(id);
+                            if (taskId != null) {
+                                boolean success = "active".equals(result.status);
+                                control.updateTask(
+                                        taskId,
+                                        success ? "succeeded" : "failed",
+                                        100,
+                                        success ? "数据源已生效" : "数据源生效失败",
+                                        success ? null : result.lastError);
+                            }
+                        } finally {
+                            lifecycleInFlight.remove(id);
+                        }
+                    });
         } catch (RuntimeException e) {
             lifecycleInFlight.remove(id);
             markTaskFailed(taskId, "数据源生效任务未能排队", e);
@@ -222,8 +268,10 @@ public class LogSourceService {
         }
         final String taskId;
         try {
-            taskId = control == null ? null
-                    : control.createTask("log_source_deactivate", id, "等待数据源停用");
+            taskId =
+                    control == null
+                            ? null
+                            : control.createTask("log_source_deactivate", id, "等待数据源停用");
         } catch (RuntimeException e) {
             lifecycleInFlight.remove(id);
             throw e;
@@ -232,29 +280,40 @@ public class LogSourceService {
             s.taskId = taskId;
             s.lastError = null;
             store.save(s);
-            ACTIVATOR.execute(() -> {
-                try {
-                    if (taskId != null && !control.claimTask(taskId, TASK_OWNER, Instant.now().plusSeconds(600))) {
-                        return;
-                    }
-                    if (taskId != null) control.heartbeatTask(taskId, TASK_OWNER,
-                            Instant.now().plusSeconds(600), 20, "正在移除 Logstash pipeline");
-                    try {
-                        coordinator.deactivate(s);
-                        s.status = "stopped";
-                        s.updatedAt = Instant.now().toString();
-                        store.save(s);
-                        if (taskId != null) control.updateTask(taskId, "succeeded", 100, "数据源已停用", null);
-                    } catch (Exception e) {
-                        s.lastError = e.getMessage();
-                        s.updatedAt = Instant.now().toString();
-                        store.save(s);
-                        if (taskId != null) control.updateTask(taskId, "failed", 100, "数据源停用失败", e.getMessage());
-                    }
-                } finally {
-                    lifecycleInFlight.remove(id);
-                }
-            });
+            ACTIVATOR.execute(
+                    () -> {
+                        try {
+                            if (taskId != null
+                                    && !control.claimTask(
+                                            taskId, TASK_OWNER, Instant.now().plusSeconds(600))) {
+                                return;
+                            }
+                            if (taskId != null)
+                                control.heartbeatTask(
+                                        taskId,
+                                        TASK_OWNER,
+                                        Instant.now().plusSeconds(600),
+                                        20,
+                                        "正在移除 Logstash pipeline");
+                            try {
+                                coordinator.deactivate(s);
+                                s.status = "stopped";
+                                s.updatedAt = Instant.now().toString();
+                                store.save(s);
+                                if (taskId != null)
+                                    control.updateTask(taskId, "succeeded", 100, "数据源已停用", null);
+                            } catch (Exception e) {
+                                s.lastError = e.getMessage();
+                                s.updatedAt = Instant.now().toString();
+                                store.save(s);
+                                if (taskId != null)
+                                    control.updateTask(
+                                            taskId, "failed", 100, "数据源停用失败", e.getMessage());
+                            }
+                        } finally {
+                            lifecycleInFlight.remove(id);
+                        }
+                    });
         } catch (RuntimeException e) {
             lifecycleInFlight.remove(id);
             markTaskFailed(taskId, "数据源停用任务未能排队", e);
@@ -266,7 +325,10 @@ public class LogSourceService {
     private void markTaskFailed(String taskId, String message, RuntimeException failure) {
         if (taskId == null || control == null) return;
         try {
-            String detail = failure.getMessage() == null ? failure.getClass().getSimpleName() : failure.getMessage();
+            String detail =
+                    failure.getMessage() == null
+                            ? failure.getClass().getSimpleName()
+                            : failure.getMessage();
             control.updateTask(taskId, "failed", 100, message, detail);
         } catch (RuntimeException ignored) {
             // 任务已无法排队；保留原始异常，启动恢复器仍可收敛该记录。

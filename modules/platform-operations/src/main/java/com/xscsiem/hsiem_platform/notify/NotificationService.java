@@ -1,10 +1,7 @@
 package com.xscsiem.hsiem_platform.notify;
 
+import com.xscsiem.hsiem_platform.control.NotificationStore;
 import com.xscsiem.hsiem_platform.onboarding.NotFoundException;
-import com.xscsiem.hsiem_platform.control.ControlPlaneStore;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.stereotype.Service;
-
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -12,25 +9,25 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicLong;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
 
 /**
- * 通知中心(story-10,MVP):控制台内横幅+日志通知,不投递外部。
- * - 触发:检测规则部署、实体风险重算、数据源健康异常(高 FP/接入失败/健康异常)。
- * - 频控:同 type+target 1h 内最多 1 条(防轰炸)。
- * - 存储:生产使用 PostgreSQL;轻量构造器保留内存实现供单元测试使用。
+ * 通知中心(story-10,MVP):控制台内横幅+日志通知,不投递外部。 - 触发:检测规则部署、实体风险重算、数据源健康异常(高 FP/接入失败/健康异常)。 - 频控:同
+ * type+target 1h 内最多 1 条(防轰炸)。 - 存储:生产使用 PostgreSQL;轻量构造器保留内存实现供单元测试使用。
  */
 @Service
 public class NotificationService {
 
-    private static final long FREQ_MS = 3600_000;   // 1h
+    private static final long FREQ_MS = 3600_000; // 1h
 
     private final List<Map<String, Object>> notifications = new CopyOnWriteArrayList<>();
     private final Map<String, Long> lastNotify = new ConcurrentHashMap<>();
     private final AtomicLong idSeq = new AtomicLong();
-    private final ControlPlaneStore control;
+    private final NotificationStore control;
 
     @Autowired
-    public NotificationService(ControlPlaneStore control) {
+    public NotificationService(NotificationStore control) {
         this.control = control;
     }
 
@@ -44,7 +41,11 @@ public class NotificationService {
             return control.listNotifications(unread);
         }
         return notifications.stream()
-                .filter(n -> unread == null || !Boolean.TRUE.equals(unread) || !Boolean.TRUE.equals(n.get("read")))
+                .filter(
+                        n ->
+                                unread == null
+                                        || !Boolean.TRUE.equals(unread)
+                                        || !Boolean.TRUE.equals(n.get("read")))
                 .toList();
     }
 
@@ -83,8 +84,10 @@ public class NotificationService {
             return control.deleteReadNotificationsBefore(before);
         }
         int beforeSize = notifications.size();
-        notifications.removeIf(n -> Boolean.TRUE.equals(n.get("read"))
-                && timestamp(n.get("timestamp")).isBefore(before));
+        notifications.removeIf(
+                n ->
+                        Boolean.TRUE.equals(n.get("read"))
+                                && timestamp(n.get("timestamp")).isBefore(before));
         return beforeSize - notifications.size();
     }
 

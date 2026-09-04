@@ -3,19 +3,12 @@ package com.xscsiem.hsiem_platform.investigation;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.xscsiem.hsiem_platform.alert.AlertService;
-import com.xscsiem.hsiem_platform.control.ControlPlaneStore;
+import com.xscsiem.hsiem_platform.control.CaseStore;
 import com.xscsiem.hsiem_platform.lifecycle.LifecycleEventPort;
 import com.xscsiem.hsiem_platform.onboarding.ConflictException;
 import com.xscsiem.hsiem_platform.onboarding.NotFoundException;
 import com.xscsiem.hsiem_platform.search.ElasticsearchGateway;
 import com.xscsiem.hsiem_platform.tenant.TenantContext;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.dao.DataIntegrityViolationException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Service;
-
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -32,35 +25,42 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.stereotype.Service;
 
 /**
- * 调查台·案件聚合(story-07):
- * - 案件 CRUD(建/查/删),状态机 open→investigating→resolved
- * - 手动聚合(≥2 条 open 告警)、追加/移出
- * - 结案联动:resolved → 案内告警批量 closed + verdict(逐条乐观锁)
- * - 乐观锁(_seq_no/_primary_term,并发 409)+ operator 审计
- * - 实体提取(source.ip 优先,退 user.name)
+ * 调查台·案件聚合(story-07): - 案件 CRUD(建/查/删),状态机 open→investigating→resolved - 手动聚合(≥2 条 open 告警)、追加/移出 -
+ * 结案联动:resolved → 案内告警批量 closed + verdict(逐条乐观锁) - 乐观锁(_seq_no/_primary_term,并发 409)+ operator 审计 -
+ * 实体提取(source.ip 优先,退 user.name)
  */
 @Service
 public class CaseService {
 
     public static final List<String> STATUSES = List.of("open", "investigating", "resolved");
     private static final Logger LOG = LoggerFactory.getLogger(CaseService.class);
-    private static final ObjectMapper MAPPER = new ObjectMapper().findAndRegisterModules()
-            .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
-    private static final HttpClient CLIENT = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(3)).build();
+    private static final ObjectMapper MAPPER =
+            new ObjectMapper()
+                    .findAndRegisterModules()
+                    .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+    private static final HttpClient CLIENT =
+            HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build();
 
     private final String esUrl;
     private final AlertService alerts;
-    private final ControlPlaneStore control;
+    private final CaseStore control;
     private final ElasticsearchGateway gateway;
     private LifecycleEventPort lifecyclePublisher;
 
     @Autowired
-    public CaseService(@Value("${app.elasticsearch.url:http://localhost:9200}") String esUrl,
-                       AlertService alerts, ControlPlaneStore control,
-                       ElasticsearchGateway gateway) {
+    public CaseService(
+            @Value("${app.elasticsearch.url:http://localhost:9200}") String esUrl,
+            AlertService alerts,
+            CaseStore control,
+            ElasticsearchGateway gateway) {
         this.esUrl = esUrl;
         this.alerts = alerts;
         this.control = control;
@@ -73,8 +73,9 @@ public class CaseService {
     }
 
     /** 轻量构造器仅供不启动 Spring/数据库的状态机单元测试使用。 */
-    public CaseService(@Value("${app.elasticsearch.url:http://localhost:9200}") String esUrl,
-                       AlertService alerts) {
+    public CaseService(
+            @Value("${app.elasticsearch.url:http://localhost:9200}") String esUrl,
+            AlertService alerts) {
         this.esUrl = esUrl;
         this.alerts = alerts;
         this.control = null;
@@ -105,7 +106,8 @@ public class CaseService {
     /** 大屏案件口径：数据库全量计数并附带按更新时间倒序的最近 7 条。 */
     public Map<String, Object> summary() {
         List<Map<String, Object>> recent = list(null, null, 7);
-        Map<String, Long> statuses = control != null ? control.caseStatusCounts() : legacyCaseStatusCounts();
+        Map<String, Long> statuses =
+                control != null ? control.caseStatusCounts() : legacyCaseStatusCounts();
         long total = statuses.values().stream().mapToLong(Long::longValue).sum();
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("total", total);
@@ -115,7 +117,8 @@ public class CaseService {
     }
 
     private Map<String, Long> legacyCaseStatusCounts() {
-        String body = """
+        String body =
+                """
                 {"size":0,"track_total_hits":true,
                  "aggs":{"statuses":{"filters":{"filters":{
                    "open":{"term":{"case.status":"open"}},
@@ -149,13 +152,18 @@ public class CaseService {
             String[] parts = entity.split(":", 2);
             String type = parts.length > 1 ? parts[0] : "ip";
             String value = parts.length > 1 ? parts[1] : parts[0];
-            must.add("{\"nested\":{\"path\":\"entities\",\"query\":{\"bool\":{\"must\":["
-                    + "{\"term\":{\"entities.type\":\"%s\"}},{\"term\":{\"entities.value\":\"%s\"}}]}}}}"
-                    .formatted(type, value));
+            must.add(
+                    "{\"nested\":{\"path\":\"entities\",\"query\":{\"bool\":{\"must\":["
+                            + "{\"term\":{\"entities.type\":\"%s\"}},{\"term\":{\"entities.value\":\"%s\"}}]}}}}"
+                                    .formatted(type, value));
         }
-        String query = must.isEmpty() ? "" : "\"query\":{\"bool\":{\"must\":[%s]}},".formatted(String.join(",", must));
-        String body = "{\"size\":%d,%s\"sort\":[{\"case.updated_at\":{\"order\":\"desc\"}}]}"
-                .formatted(Math.min(size, 200), query);
+        String query =
+                must.isEmpty()
+                        ? ""
+                        : "\"query\":{\"bool\":{\"must\":[%s]}},".formatted(String.join(",", must));
+        String body =
+                "{\"size\":%d,%s\"sort\":[{\"case.updated_at\":{\"order\":\"desc\"}}]}"
+                        .formatted(Math.min(size, 200), query);
         Map<String, Object> resp = esCallLenient("POST", "/siem-cases/_search", body);
         return extractHits(resp);
     }
@@ -191,7 +199,8 @@ public class CaseService {
     }
 
     /** 建案(aggregation=manual 手动 / auto 自动聚合)。 */
-    public Map<String, Object> create(List<String> alertIds, String title, String operator, String aggregation) {
+    public Map<String, Object> create(
+            List<String> alertIds, String title, String operator, String aggregation) {
         return createInternal(alertIds, title, operator, aggregation, 2);
     }
 
@@ -200,8 +209,12 @@ public class CaseService {
         return createInternal(List.of(alertId), title, operator, "soar", 1);
     }
 
-    private Map<String, Object> createInternal(List<String> alertIds, String title, String operator,
-                                               String aggregation, int minimumAlerts) {
+    private Map<String, Object> createInternal(
+            List<String> alertIds,
+            String title,
+            String operator,
+            String aggregation,
+            int minimumAlerts) {
         if (alertIds == null || alertIds.size() < minimumAlerts) {
             throw new IllegalArgumentException("手动聚合至少需要 2 条告警");
         }
@@ -216,8 +229,11 @@ public class CaseService {
             alertsDoc.add(a);
         }
         Set<Map<String, Object>> entities = extractEntities(alertsDoc);
-        String caseId = "case-" + LocalDate.now().format(DateTimeFormatter.BASIC_ISO_DATE) + "-"
-                + Integer.toHexString(UUID.randomUUID().hashCode() & 0xffff);
+        String caseId =
+                "case-"
+                        + LocalDate.now().format(DateTimeFormatter.BASIC_ISO_DATE)
+                        + "-"
+                        + Integer.toHexString(UUID.randomUUID().hashCode() & 0xffff);
         String now = Instant.now().toString();
         Map<String, Object> doc = new LinkedHashMap<>();
         doc.put("@timestamp", now);
@@ -233,33 +249,19 @@ public class CaseService {
         doc.put("alert_ids", uniqueAlertIds);
         doc.put("entities", new ArrayList<>(entities));
         doc.put("evidence", List.of());
-        boolean controlCreated = false;
-        try {
-            if (control != null) {
+        // PostgreSQL 是案件事实源;store 在同一事务内写入 outbox,ES 镜像由 dispatcher 收敛。
+        if (control != null) {
+            try {
                 control.createCase(doc, uniqueAlertIds);
-                controlCreated = true;
-            }
-            esCall("POST", "/siem-cases/_doc/" + caseId + "?refresh=wait_for",
-                    MAPPER.writeValueAsString(doc));
-        } catch (Exception e) {
-            if (controlCreated) {
-                control.deleteCase(caseId);
-            }
-            if (e instanceof DataIntegrityViolationException) {
+            } catch (DataIntegrityViolationException e) {
                 throw new ConflictException("告警已归属其他案件,案件创建被拒绝");
             }
-            throw new IllegalStateException("案件序列化失败", e);
         }
         // 给案内告警写 alert.case_id 标记(聚合幂等根基:同批告警只入一案)
         try {
             markAlertsInCase(uniqueAlertIds, caseId);
         } catch (RuntimeException e) {
-            // ES 没有跨索引事务:关联失败时删除已创建的空壳案件,并尽力清理已写入的标记。
-            try {
-                esCallCode("DELETE", "/siem-cases/_doc/" + caseId, null);
-            } catch (Exception cleanup) {
-                e.addSuppressed(cleanup);
-            }
+            // ES 没有跨索引事务:关联失败时删除已创建的案件,并尽力清理已写入的标记。
             if (control != null) {
                 control.deleteCase(caseId);
             }
@@ -277,7 +279,8 @@ public class CaseService {
         for (String id : alertIds) {
             try {
                 String body = "{\"doc\":{\"alert.case_id\":\"" + caseId + "\"}}";
-                int code = esCallCode("POST", "/siem-alerts/_update/" + id + "?refresh=false", body);
+                int code =
+                        esCallCode("POST", "/siem-alerts/_update/" + id + "?refresh=false", body);
                 if (code / 100 != 2) {
                     throw new IllegalStateException("ES 返回 " + code);
                 }
@@ -356,8 +359,11 @@ public class CaseService {
     /** 清除告警的 case_id(移出案件时;告警回到 open 待聚合池)。 */
     private void clearAlertCase(String alertId) {
         try {
-            int code = esCallCode("POST", "/siem-alerts/_update/" + alertId + "?refresh=false",
-                    "{\"doc\":{\"alert.case_id\":null}}");
+            int code =
+                    esCallCode(
+                            "POST",
+                            "/siem-alerts/_update/" + alertId + "?refresh=false",
+                            "{\"doc\":{\"alert.case_id\":null}}");
             if (code / 100 != 2) {
                 throw new IllegalStateException("ES 返回 " + code);
             }
@@ -368,13 +374,15 @@ public class CaseService {
     }
 
     /** 状态流转(open→investigating→resolved);resolved 触发结案联动。 */
-    public Map<String, Object> updateStatus(String caseId, String status, String verdict, String operator) {
+    public Map<String, Object> updateStatus(
+            String caseId, String status, String verdict, String operator) {
         if (status == null || !STATUSES.contains(status)) {
             throw new IllegalArgumentException("案件状态非法(open/investigating/resolved): " + status);
         }
         if ("resolved".equals(status)
                 && (verdict == null || !AlertService.VERDICTS.contains(verdict))) {
-            throw new IllegalArgumentException("结案必选 verdict(true_positive/false_positive/duplicate)");
+            throw new IllegalArgumentException(
+                    "结案必选 verdict(true_positive/false_positive/duplicate)");
         }
         Map<String, Object> cur = detail(caseId);
         validateStatusTransition(str(cur.get("case.status")), status);
@@ -417,16 +425,23 @@ public class CaseService {
     }
 
     /** 更新负责人和证据。ES 作为兼容镜像，控制面保存可查询事实。 */
-    public Map<String, Object> updateMetadata(String caseId, String owner,
-                                              List<Map<String, Object>> evidence, String operator) {
+    public Map<String, Object> updateMetadata(
+            String caseId, String owner, List<Map<String, Object>> evidence, String operator) {
         detail(caseId);
         if (owner != null && owner.isBlank()) {
             throw new IllegalArgumentException("负责人不能为空字符串");
         }
-        List<Map<String, Object>> safeEvidence = evidence == null ? List.of() : evidence.stream()
-                .limit(100)
-                .map(item -> item == null ? Map.<String, Object>of() : new LinkedHashMap<>(item))
-                .toList();
+        List<Map<String, Object>> safeEvidence =
+                evidence == null
+                        ? List.of()
+                        : evidence.stream()
+                                .limit(100)
+                                .map(
+                                        item ->
+                                                item == null
+                                                        ? Map.<String, Object>of()
+                                                        : new LinkedHashMap<>(item))
+                                .toList();
         Map<String, Object> extra = new LinkedHashMap<>();
         if (owner != null) {
             extra.put("case.owner", owner);
@@ -438,15 +453,19 @@ public class CaseService {
     /** 服务层案件状态机:允许结案后重开,禁止从调查中直接回到 open。 */
     static void validateStatusTransition(String currentStatus, String targetStatus) {
         if (targetStatus == null || !STATUSES.contains(targetStatus)) {
-            throw new IllegalArgumentException("案件状态非法(open/investigating/resolved): " + targetStatus);
+            throw new IllegalArgumentException(
+                    "案件状态非法(open/investigating/resolved): " + targetStatus);
         }
         String current = currentStatus == null ? "open" : currentStatus;
-        boolean allowed = switch (current) {
-            case "open" -> List.of("open", "investigating", "resolved").contains(targetStatus);
-            case "investigating" -> List.of("investigating", "resolved").contains(targetStatus);
-            case "resolved" -> List.of("resolved", "open").contains(targetStatus);
-            default -> false;
-        };
+        boolean allowed =
+                switch (current) {
+                    case "open" ->
+                            List.of("open", "investigating", "resolved").contains(targetStatus);
+                    case "investigating" ->
+                            List.of("investigating", "resolved").contains(targetStatus);
+                    case "resolved" -> List.of("resolved", "open").contains(targetStatus);
+                    default -> false;
+                };
         if (!allowed) {
             throw new IllegalArgumentException("不允许从 " + current + " 流转到 " + targetStatus);
         }
@@ -469,21 +488,14 @@ public class CaseService {
             throw new IllegalArgumentException("案件仍包含告警，请先移出全部告警后再删除");
         }
         if (control != null) {
-            // PostgreSQL 是控制面事实源；ES 只保留兼容镜像，避免 ES 删除成功后 PG 冲突造成反向不一致。
+            // PostgreSQL 是控制面事实源；store 在同一事务内 enqueue 删除,ES 镜像由 dispatcher 清理。
             if (!control.deleteCase(caseId)) {
                 throw new NotFoundException("案件不存在: " + caseId);
             }
         }
-        int code = esCallCode("DELETE", "/siem-cases/_doc/" + caseId, null);
-        if (code / 100 != 2 && code != 404) {
-            LOG.warn("案件 {} 已从控制面删除，但 ES 兼容镜像清理失败，状态码 {}", caseId, code);
-        }
     }
 
-    /**
-     * PostgreSQL 是案件事实源；ES 只作为检索镜像。进程或网络故障可能让一次镜像更新失败，
-     * 定时全量按控制面重放可自动收敛这类短暂不一致，而不把用户请求卡在长事务里。
-     */
+    /** PostgreSQL 是案件事实源；ES 只作为检索镜像。进程或网络故障可能让一次镜像更新失败， 定时全量按控制面重放可自动收敛这类短暂不一致，而不把用户请求卡在长事务里。 */
     public void reconcileMirror() {
         if (control == null) return;
         try {
@@ -493,7 +505,9 @@ public class CaseService {
                 Map<String, Object> mirror = new LinkedHashMap<>(row);
                 mirror.remove("_id");
                 mirror.remove("_control_version");
-                esCall("PUT", "/siem-cases/_doc/" + id + "?refresh=false",
+                esCall(
+                        "PUT",
+                        "/siem-cases/_doc/" + id + "?refresh=false",
                         MAPPER.writeValueAsString(mirror));
             }
         } catch (Exception e) {
@@ -508,22 +522,29 @@ public class CaseService {
     }
 
     /** 可配置聚合窗口、阈值和是否按规则分组。 */
-    public int aggregateAuto(int lookbackMinutes, boolean groupByRule, int threshold, String ruleId) {
+    public int aggregateAuto(
+            int lookbackMinutes, boolean groupByRule, int threshold, String ruleId) {
         if (lookbackMinutes < 1 || lookbackMinutes > 24 * 60) {
             throw new IllegalArgumentException("聚合窗口需在 1-1440 分钟之间");
         }
         if (threshold < 2 || threshold > 1000) {
             throw new IllegalArgumentException("聚合阈值需在 2-1000 之间");
         }
-        String ruleFilter = ruleId == null || ruleId.isBlank()
-                ? "" : "{\"term\":{\"alert.rule_id.keyword\":\"" + ruleId.replace("\"", "") + "\"}},";
-        String body = """
+        String ruleFilter =
+                ruleId == null || ruleId.isBlank()
+                        ? ""
+                        : "{\"term\":{\"alert.rule_id.keyword\":\""
+                                + ruleId.replace("\"", "")
+                                + "\"}},";
+        String body =
+                """
                 {"size":200,"query":{"bool":{"must":[
                   {"term":{"alert.status":"open"}},
                   %s
                   {"range":{"alert.created_at":{"gte":"now-%dm"}}},
                   {"bool":{"must_not":[{"exists":{"field":"alert.case_id"}}]}}]}},"_source":["alert.id","alert.rule_id","source.ip","user.name","alert.risk_score"]}
-                """.formatted(ruleFilter, lookbackMinutes);
+                """
+                        .formatted(ruleFilter, lookbackMinutes);
         Map<String, Object> resp = esCall("POST", "/siem-alerts/_search", body);
         List<Map<String, Object>> hits = new ArrayList<>();
         Object hh = resp.get("hits");
@@ -542,7 +563,8 @@ public class CaseService {
         for (Map<String, Object> a : hits) {
             String baseEntity = entityKey(a);
             if (baseEntity != null) {
-                String groupKey = (groupByRule ? str(a.get("alert.rule_id")) + "|" : "") + baseEntity;
+                String groupKey =
+                        (groupByRule ? str(a.get("alert.rule_id")) + "|" : "") + baseEntity;
                 groups.computeIfAbsent(groupKey, k -> new ArrayList<>()).add(a);
             }
         }
@@ -551,10 +573,13 @@ public class CaseService {
             if (e.getValue().size() < threshold) {
                 continue;
             }
-            List<String> ids = e.getValue().stream()
-                    .map(a -> str(a.get("_id"))).distinct().toList();
+            List<String> ids =
+                    e.getValue().stream().map(a -> str(a.get("_id"))).distinct().toList();
             // 防重复:查已有案件是否已含这些告警(实体已有 open 案 或 任一告警已入他案 → 跳过)
-            String entityOnly = e.getKey().contains("|") ? e.getKey().substring(e.getKey().indexOf('|') + 1) : e.getKey();
+            String entityOnly =
+                    e.getKey().contains("|")
+                            ? e.getKey().substring(e.getKey().indexOf('|') + 1)
+                            : e.getKey();
             if (entityHasOpenCase(entityOnly) || anyAlertInCase(ids)) {
                 continue;
             }
@@ -571,16 +596,22 @@ public class CaseService {
     }
 
     /** 更新案件协作负责人列表；主负责人仍由 case.owner 保留兼容。 */
-    public Map<String, Object> updateCollaborators(String caseId, List<String> usernames, String operator) {
+    public Map<String, Object> updateCollaborators(
+            String caseId, List<String> usernames, String operator) {
         detail(caseId);
-        List<String> safe = usernames == null ? List.of() : usernames.stream()
-                .filter(u -> u != null && !u.isBlank())
-                .map(String::trim).distinct().limit(20).toList();
+        List<String> safe =
+                usernames == null
+                        ? List.of()
+                        : usernames.stream()
+                                .filter(u -> u != null && !u.isBlank())
+                                .map(String::trim)
+                                .distinct()
+                                .limit(20)
+                                .toList();
         if (usernames != null && usernames.size() > 20) {
             throw new IllegalArgumentException("协作负责人最多 20 人");
         }
-        return optimisticUpdate(caseId, null,
-                Map.of("case.collaborators", safe), operator);
+        return optimisticUpdate(caseId, null, Map.of("case.collaborators", safe), operator);
     }
 
     /** 时间线:按实体 + 案件时间窗实时查 siem-events-*(MVP 实时关联,不物化存储)。 */
@@ -596,12 +627,14 @@ public class CaseService {
         String type = str(first.get("type"));
         String value = str(first.get("value"));
         String field = "ip".equals(type) ? "source.ip" : "user.name";
-        String body = """
+        String body =
+                """
                 {"size":%d,"query":{"bool":{"must":[
                   {"term":{"%s":"%s"}},
                   {"range":{"@timestamp":{"gte":"now-24h"}}}]}},"sort":[{"@timestamp":"desc"}],
                   "_source":["@timestamp","message","event.action","source.ip","user.name","host.name","log.source_name"]}
-                """.formatted(Math.min(size, 50), field, value);
+                """
+                        .formatted(Math.min(size, 50), field, value);
         Map<String, Object> resp = esCall("POST", "/siem-events-*/_search", body);
         List<Map<String, Object>> hits = list(resp, "hits", "hits");
         for (Map<String, Object> h : hits) {
@@ -624,10 +657,13 @@ public class CaseService {
         if (control != null) {
             return ids.stream().anyMatch(control::hasAlert);
         }
-        String terms = ids.stream().map(i -> "\"" + i + "\"").reduce((a, b) -> a + "," + b).orElse("");
-        String body = """
+        String terms =
+                ids.stream().map(i -> "\"" + i + "\"").reduce((a, b) -> a + "," + b).orElse("");
+        String body =
+                """
                 {"size":1,"query":{"terms":{"alert_ids":[%s]}}}
-                """.formatted(terms);
+                """
+                        .formatted(terms);
         Map<String, Object> resp = esCallLenient("POST", "/siem-cases/_search", body);
         Object total = map(resp, "hits").get("total");
         return total instanceof Number n && n.longValue() > 0;
@@ -640,12 +676,14 @@ public class CaseService {
         String[] parts = entityKey.split(":", 2);
         String type = parts[0];
         String value = parts[1];
-        String body = """
+        String body =
+                """
                 {"size":1,"query":{"bool":{"must":[
                   {"term":{"case.status":"open"}},
                   {"nested":{"path":"entities","query":{"bool":{"must":[
                     {"term":{"entities.type":"%s"}},{"term":{"entities.value":"%s"}}]}}}}]}}}
-                """.formatted(type, value);
+                """
+                        .formatted(type, value);
         Map<String, Object> resp = esCallLenient("POST", "/siem-cases/_search", body);
         Object total = map(resp, "hits").get("total");
         return total instanceof Number n && n.longValue() > 0;
@@ -688,22 +726,30 @@ public class CaseService {
     }
 
     private static String autoTitle(Set<Map<String, Object>> entities, String now) {
-        String entity = entities.isEmpty() ? "unknown"
-                : entities.iterator().next().get("value") + " (" + entities.iterator().next().get("type") + ")";
+        String entity =
+                entities.isEmpty()
+                        ? "unknown"
+                        : entities.iterator().next().get("value")
+                                + " ("
+                                + entities.iterator().next().get("type")
+                                + ")";
         return "案件 " + entity + " " + now.substring(0, 10);
     }
 
-    /** 乐观锁更新:alert_ids 或自定义字段,带 _seq_no/_primary_term,冲突 409。 */
-    private Map<String, Object> optimisticUpdate(String caseId, List<String> alertIds,
-                                                 Map<String, Object> extra, String operator) {
-        Map<String, Object> cur = esGet("/siem-cases/_doc/" + caseId);
+    /** 乐观锁更新:alert_ids 或自定义字段,以 PostgreSQL {@code _control_version} 为仲裁,冲突 409。 */
+    private Map<String, Object> optimisticUpdate(
+            String caseId, List<String> alertIds, Map<String, Object> extra, String operator) {
+        Map<String, Object> cur = control != null ? control.findCase(caseId) : null;
+        if (cur == null && control != null) {
+            // 兼容迁移期写入 ES 的案件:更新前先把 ES 文档导入控制面作为基线。
+            Map<String, Object> legacy = esGet("/siem-cases/_doc/" + caseId);
+            if (legacy == null) {
+                throw new NotFoundException("案件不存在: " + caseId);
+            }
+            cur = control.importCaseDocument(legacy);
+        }
         if (cur == null) {
             throw new NotFoundException("案件不存在: " + caseId);
-        }
-        Object seq = cur.get("_seq_no");
-        Object pt = cur.get("_primary_term");
-        if (seq == null || pt == null) {
-            throw new IllegalStateException("案件缺 _seq_no/_primary_term: " + caseId);
         }
         Map<String, Object> doc = new LinkedHashMap<>();
         if (alertIds != null) {
@@ -715,35 +761,18 @@ public class CaseService {
         if (!doc.containsKey("case.updated_at")) {
             doc.put("case.updated_at", Instant.now().toString());
         }
-        String body;
-        try {
-            body = "{\"doc\":" + MAPPER.writeValueAsString(doc) + "}";
-        } catch (Exception e) {
-            throw new IllegalStateException("序列化失败", e);
-        }
-        int code = esCallCode("POST",
-                "/siem-cases/_update/" + caseId + "?if_seq_no=" + seq + "&if_primary_term=" + pt, body);
-        if (code == 409) {
-            throw new ConflictException("案件 " + caseId + " 已被其他分析师更新,请刷新后重试");
-        }
-        if (code / 100 != 2) {
-            throw new IllegalStateException("案件更新失败 " + code + ": " + caseId);
-        }
-        Map<String, Object> updated = esGet("/siem-cases/_doc/" + caseId);
+        Map<String, Object> updated;
         if (control != null) {
-            Map<String, Object> controlCurrent = control.findCase(caseId);
-            if (controlCurrent == null) {
-                controlCurrent = control.importCaseDocument(cur);
-            }
-            long version = controlCurrent.get("_control_version") instanceof Number n
-                    ? n.longValue() : 0L;
-            List<String> finalAlertIds = alertIds == null
-                    ? strList(updated.get("alert_ids")) : alertIds;
+            long version = cur.get("_control_version") instanceof Number n ? n.longValue() : 0L;
+            List<String> finalAlertIds =
+                    alertIds == null ? strList(cur.get("alert_ids")) : alertIds;
             try {
-                updated = control.updateCase(caseId, version, updated, finalAlertIds);
+                updated = control.updateCase(caseId, version, doc, finalAlertIds);
             } catch (IllegalStateException e) {
-                throw new ConflictException("案件控制面更新冲突,请刷新后重试: " + caseId);
+                throw new ConflictException("案件 " + caseId + " 已被其他分析师更新,请刷新后重试");
             }
+        } else {
+            updated = doc;
         }
         publishCase("case.updated", updated);
         return updated;
@@ -768,8 +797,7 @@ public class CaseService {
 
     // ---- ES 底层(与 AlertService 同款) ----
 
-    private record EsResponse(int code, Map<String, Object> body) {
-    }
+    private record EsResponse(int code, Map<String, Object> body) {}
 
     private EsResponse esRequest(String method, String path, String body) {
         if (gateway != null) {
@@ -784,9 +812,10 @@ public class CaseService {
             } else {
                 builder.method(method, HttpRequest.BodyPublishers.noBody());
             }
-            HttpResponse<String> resp = CLIENT.send(builder.build(), HttpResponse.BodyHandlers.ofString());
-            Map<String, Object> parsed = resp.body().isBlank()
-                    ? Map.of() : MAPPER.readValue(resp.body(), Map.class);
+            HttpResponse<String> resp =
+                    CLIENT.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+            Map<String, Object> parsed =
+                    resp.body().isBlank() ? Map.of() : MAPPER.readValue(resp.body(), Map.class);
             return new EsResponse(resp.statusCode(), parsed);
         } catch (Exception e) {
             throw new IllegalStateException("ES 不可达: " + e.getMessage(), e);
@@ -874,7 +903,8 @@ public class CaseService {
     }
 
     @SuppressWarnings("unchecked")
-    private static List<Map<String, Object>> list(Map<String, Object> root, String key, String sub) {
+    private static List<Map<String, Object>> list(
+            Map<String, Object> root, String key, String sub) {
         Object v = root.get(key);
         if (v instanceof Map<?, ?> m && m.get(sub) instanceof List<?> l) {
             return (List<Map<String, Object>>) l;

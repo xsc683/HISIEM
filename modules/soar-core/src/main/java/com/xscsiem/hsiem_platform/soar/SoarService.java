@@ -1,23 +1,25 @@
 package com.xscsiem.hsiem_platform.soar;
 
-import com.xscsiem.hsiem_platform.control.ControlPlaneStore;
+import com.xscsiem.hsiem_platform.control.AuthStore;
 import com.xscsiem.hsiem_platform.tenant.TenantContext;
-import org.springframework.stereotype.Service;
-
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.springframework.stereotype.Service;
 
 @Service
 public class SoarService {
 
     private final SoarStore store;
     private final SoarPlaybookValidator validator;
-    private final ControlPlaneStore control;
+    private final AuthStore control;
     private final SoarGraphRouter router;
 
-    public SoarService(SoarStore store, SoarPlaybookValidator validator,
-                       ControlPlaneStore control, SoarGraphRouter router) {
+    public SoarService(
+            SoarStore store,
+            SoarPlaybookValidator validator,
+            AuthStore control,
+            SoarGraphRouter router) {
         this.store = store;
         this.validator = validator;
         this.control = control;
@@ -32,28 +34,54 @@ public class SoarService {
         return store.getPlaybook(TenantContext.id(), id);
     }
 
-    public SoarPlaybook createPlaybook(String name, String description, String entryType,
-                                       List<String> eventTypes, String actor) {
+    public SoarPlaybook createPlaybook(
+            String name,
+            String description,
+            String entryType,
+            List<String> eventTypes,
+            String actor) {
         requireName(name);
         String normalizedType = normalizeType(entryType);
         List<String> normalizedEvents = normalizeEvents(normalizedType, eventTypes);
         PlaybookGraph graph = starterGraph();
         validator.validate(normalizedType, normalizedEvents, graph);
-        SoarPlaybook created = store.createPlaybook(TenantContext.id(), name.trim(), description,
-                normalizedType, normalizedEvents, graph, actor);
+        SoarPlaybook created =
+                store.createPlaybook(
+                        TenantContext.id(),
+                        name.trim(),
+                        description,
+                        normalizedType,
+                        normalizedEvents,
+                        graph,
+                        actor);
         audit(actor, "soar.playbook.create", created.id());
         return created;
     }
 
-    public SoarPlaybook updatePlaybook(String id, String name, String description, String entryType,
-                                       List<String> eventTypes, PlaybookGraph graph,
-                                       long revision, String actor) {
+    public SoarPlaybook updatePlaybook(
+            String id,
+            String name,
+            String description,
+            String entryType,
+            List<String> eventTypes,
+            PlaybookGraph graph,
+            long revision,
+            String actor) {
         requireName(name);
         String normalizedType = normalizeType(entryType);
         List<String> normalizedEvents = normalizeEvents(normalizedType, eventTypes);
         validator.validateDraft(normalizedType, normalizedEvents, graph);
-        SoarPlaybook updated = store.updatePlaybook(TenantContext.id(), id, name.trim(), description,
-                normalizedType, normalizedEvents, graph, revision, actor);
+        SoarPlaybook updated =
+                store.updatePlaybook(
+                        TenantContext.id(),
+                        id,
+                        name.trim(),
+                        description,
+                        normalizedType,
+                        normalizedEvents,
+                        graph,
+                        revision,
+                        actor);
         audit(actor, "soar.playbook.update", id + "@" + updated.revision());
         return updated;
     }
@@ -90,22 +118,30 @@ public class SoarService {
     }
 
     /** Starts one published playbook from the control plane. */
-    public SoarExecution triggerExecution(String playbookId, String requestId,
-                                          String objectType, String objectId,
-                                          String eventType, Map<String, Object> payload,
-                                          String actor) {
+    public SoarExecution triggerExecution(
+            String playbookId,
+            String requestId,
+            String objectType,
+            String objectId,
+            String eventType,
+            Map<String, Object> payload,
+            String actor) {
         SoarPlaybook playbook = store.getPlaybook(TenantContext.id(), playbookId);
         if (!"published".equals(playbook.status()) || !playbook.enabled()) {
             throw new com.xscsiem.hsiem_platform.onboarding.ConflictException(
                     "只有已发布且启用的 Playbook 才能手动触发");
         }
-        String normalizedObjectType = objectType == null || objectType.isBlank()
-                ? playbook.entryType() : objectType.trim().toLowerCase();
+        String normalizedObjectType =
+                objectType == null || objectType.isBlank()
+                        ? playbook.entryType()
+                        : objectType.trim().toLowerCase();
         if (!playbook.entryType().equals(normalizedObjectType)) {
             throw new IllegalArgumentException("手动触发对象类型必须与 Playbook 入口一致");
         }
-        String normalizedEvent = eventType == null || eventType.isBlank()
-                ? normalizedObjectType + ".created" : eventType.trim().toLowerCase();
+        String normalizedEvent =
+                eventType == null || eventType.isBlank()
+                        ? normalizedObjectType + ".created"
+                        : eventType.trim().toLowerCase();
         if (!playbook.eventTypes().contains(normalizedEvent)) {
             throw new IllegalArgumentException("手动触发事件不在 Playbook 订阅范围内");
         }
@@ -115,17 +151,24 @@ public class SoarService {
         if (objectId.trim().length() > 256) {
             throw new IllegalArgumentException("手动触发 objectId 不能超过 256 个字符");
         }
-        Map<String, Object> normalizedPayload = normalizeManualPayload(
-                normalizedObjectType, objectId.trim(), payload);
-        SoarTriggerEnvelope trigger = SoarTriggerEnvelope.manual(requestId, normalizedEvent,
-                TenantContext.id(), normalizedObjectType, objectId.trim(), normalizedPayload, actor);
+        Map<String, Object> normalizedPayload =
+                normalizeManualPayload(normalizedObjectType, objectId.trim(), payload);
+        SoarTriggerEnvelope trigger =
+                SoarTriggerEnvelope.manual(
+                        requestId,
+                        normalizedEvent,
+                        TenantContext.id(),
+                        normalizedObjectType,
+                        objectId.trim(),
+                        normalizedPayload,
+                        actor);
         store.createExecution(playbook, trigger, "manual:" + actor, "MANUAL");
         audit(actor, "soar.execution.manual", playbookId + ":" + trigger.messageId());
         return store.findExecutionByTrigger(TenantContext.id(), playbookId, trigger.messageId());
     }
 
-    private Map<String, Object> normalizeManualPayload(String objectType, String objectId,
-                                                       Map<String, Object> payload) {
+    private Map<String, Object> normalizeManualPayload(
+            String objectType, String objectId, Map<String, Object> payload) {
         Map<String, Object> source = payload == null ? Map.of() : payload;
         Map<String, Object> result = new LinkedHashMap<>();
         Map<String, Object> object = new LinkedHashMap<>();
@@ -162,22 +205,31 @@ public class SoarService {
         SoarExecution execution = store.getExecution(TenantContext.id(), approval.executionId());
         String branch = approved ? "approve" : "reject";
         String nextNodeId = router.next(execution.graphSnapshot(), approval.nodeId(), branch);
-        SoarApproval decided = store.decideApproval(TenantContext.id(), id,
-                approved ? "approved" : "rejected", actor, note, nextNodeId);
+        SoarApproval decided =
+                store.decideApproval(
+                        TenantContext.id(),
+                        id,
+                        approved ? "approved" : "rejected",
+                        actor,
+                        note,
+                        nextNodeId);
         audit(actor, approved ? "soar.approval.approve" : "soar.approval.reject", id);
         return decided;
     }
 
     private PlaybookGraph starterGraph() {
-        return new PlaybookGraph(List.of(
-                new PlaybookGraph.Node("start", "开始", "start", Map.of(), 80, 180),
-                new PlaybookGraph.Node("end", "结束", "end", Map.of(), 520, 180)),
+        return new PlaybookGraph(
+                List.of(
+                        new PlaybookGraph.Node("start", "开始", "start", Map.of(), 80, 180),
+                        new PlaybookGraph.Node("end", "结束", "end", Map.of(), 520, 180)),
                 List.of(new PlaybookGraph.Edge("edge-start-end", "start", "end", "next")));
     }
 
     private List<String> normalizeEvents(String entryType, List<String> events) {
-        List<String> result = events == null || events.isEmpty()
-                ? List.of(entryType + ".created") : events.stream().distinct().toList();
+        List<String> result =
+                events == null || events.isEmpty()
+                        ? List.of(entryType + ".created")
+                        : events.stream().distinct().toList();
         return result;
     }
 

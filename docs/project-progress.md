@@ -36,7 +36,7 @@ flowchart LR
 | 事件检测 | 已完成开发闭环 | YAML 规则、单事件/滑动窗口/CEP/基线四类分支、事件时间/watermark、告警抑制、确定性 ID、安全 partial update | CEP/基线仍只读维护；尚未做生产规模基准和规则热升级治理 |
 | Managed Detection Runtime | 已完成单集群开发闭环 | Phase 5A durable claim/lease/fencing；Phase 5B immutable job-group artifact、structured Flink identity、真实 job/artifact observation、savepoint replacement/rollback、启动 manifest/rule-ID verification 和 opt-in process adapter | 默认 disabled；process path 仅支持单配置集群，生产 HA、多集群编排、分布式 artifact 锁和灾备治理未完成 |
 | 数据质量 | 已完成基础保护 | Logstash 解析失败进入 `siem-events-raw-*`；Flink 坏 JSON/非法时间戳进入 `siem-events-dlq` | DLQ 没有管理页面、审批式重放和积压告警 |
-| 告警与调查 | 已完成主要旅程 | 告警筛选/详情/批量处置、自动聚合、案件状态/负责人/证据/时间线、告警与案件关联 | PostgreSQL、ES 与告警 marker 仍是补偿 + 最终一致性模型 |
+| 告警与调查 | 已完成主要旅程 | 告警筛选/详情/批量处置、自动聚合、案件状态/负责人/证据/时间线、告警与案件关联 | Case 正常写路径已单轨收敛到 PG 事务 + outbox → ES 镜像；告警 marker 仍是跨索引补偿，故障注入与差异扫描待补 |
 | 控制面与权限 | 已完成基础闭环 | Spring Security、Bearer 会话、RBAC、首次改密、审计、通知、Flyway V19、后台任务租约与 lifecycle outbox；控制面业务 SQL 已统一为 MyBatis（control/detection/soar 三域工厂，见 CLAUDE.md） | 数据面尚未形成完整 tenant 隔离；生产密钥与统一身份源未接入 |
 | SOAR | 已完成持久编排扩展 | lifecycle/人工触发、11 类 Handler、持久并行/静态循环、Connector SPI/HTTP、验证器链、逐 attempt、幂等回执、续租与 fencing | 无 Cron/Webhook、子 Playbook、AI、凭据库、Connector 生产隔离和事务 lifecycle outbox |
 | Vue 控制台 | 已完成主要页面重构 | Vue 3 路由、模块拆分、统一请求错误、结构化详情、规则编辑、Vue Flow 设计器、离开保存保护 | 浏览器 E2E 目前只覆盖一个使用 mock API 的 Playbook 编辑旅程 |
@@ -51,7 +51,10 @@ flowchart LR
 - SOAR Worker 每次只领取一条执行，长节点持续续租，所有状态提交校验 owner、未过期租约和 fencing token；旧 Worker 不能覆盖新 owner。
 - Playbook 新建后可稳定进入草稿，路由离开等待最新保存；保存失败阻止导航，刷新/关闭提示未保存内容。
 - Flink 严格解析 `@timestamp`，毒消息进入独立 DLQ，不再回退到处理时间或触发 restart loop。
-- CI 并行执行 Spring、Flink、前端单元测试、生产构建和浏览器 E2E。
+- Case 正常写路径已收敛为单一 ES 镜像机制：mutation 只写 PostgreSQL 事实 + `case_mirror_outbox`（乐观锁以 PG `_control_version` 仲裁），同步 ES 写已从创建/更新/删除路径移除，镜像由 CaseMirrorDispatcher 收敛。
+- 控制面按有界上下文拆出持久化端口（AuthStore/CaseStore/NotificationStore/TaskStore/LifecycleOutboxStore），业务 Service 只注入自己需要的窄端口；审计 actor 改从已认证 SecurityContext 读取，不再手工解析 Authorization。
+- 告警查询改用对象树构建 ES DSL，并对 status/size 做输入边界校验。
+- CI 并行执行 Spring、Flink、前端单元测试、生产构建和浏览器 E2E；前端已补 ESLint 检查。
 - 架构图已补齐 raw、DLQ、案件 outbox、lifecycle、SOAR 上下文/租约和真实规则分支；历史图已标记为不可复用快照。
 
 ## 4. 遗留问题总表
@@ -63,7 +66,7 @@ flowchart LR
 | SEC-01 | P0 | 未开始 | ES/Kafka 默认明文，PostgreSQL 使用开发口令并暴露宿主端口 | 数据与凭据可能被未授权访问 |
 | HA-01 | P0 | 未开始 | ES/Kafka 为单节点，Kafka RF=1，Flink 也是单 JobManager 基线 | 任一核心节点故障可能中断或丢失服务 |
 | REL-01 | P0 | 部分完成 | Spring Boot 与前端未纳入统一生产编排、反向代理和发布回滚 | 无法形成可重复的生产交付物 |
-| CON-01 | P1 | 部分完成 | Case 采用 PG 事实 + 同步 ES 保护 + outbox/reconcile 混合一致性 | 故障窗口可能产生暂时不一致或孤儿 marker |
+| CON-01 | P1 | 部分完成 | Case 正常写路径已收敛为「PG 事实 + Case Mirror Outbox + dispatcher」单一镜像机制（乐观锁以 PG `_control_version` 仲裁，无同步 ES 兜底）；故障注入、差异扫描和 outbox 指标告警仍未补齐 | 镜像收敛尚未被故障演练证明，极端窗口仍可能产生孤儿 marker |
 | CON-02 | P1 | 部分完成 | lifecycle publisher 已进入 PostgreSQL outbox 并由 dispatcher 以 at-least-once 语义投递；ES 更新与 outbox enqueue 仍非原子 | Kafka 瞬时故障可恢复，但 ES crash gap 仍需 reconciliation；ACK 后 completion 崩溃允许幂等重投 |
 | TASK-01 | P1 | 部分完成 | 后台任务有租约和恢复，但 handler 重放/幂等策略未统一 | 进程崩溃后部分任务仍需人工判断 |
 | DLQ-01 | P1 | 部分完成 | 事件 DLQ 只有隔离/只读观测；lifecycle 没有运营型 DLQ | 毒消息处置、审批重放和积压治理不完整 |

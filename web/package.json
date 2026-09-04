@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "lint": "eslint .",
     "test": "node --test src/components/soar/soarGraph.test.js src/views/logs/logSearchQuery.test.js src/utils/navigation.test.js",
     "test:e2e": "playwright test",
     "build": "vite build",
@@ -21,6 +22,9 @@
   "devDependencies": {
     "@playwright/test": "^1.55.0",
     "@vitejs/plugin-vue": "^5.2.1",
+    "eslint": "^9.39.4",
+    "eslint-plugin-vue": "^9.33.0",
+    "globals": "^15.15.0",
     "unplugin-vue-components": "^32.1.0",
     "vite": "^6.0.7"
   }

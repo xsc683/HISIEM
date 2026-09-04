@@ -1,21 +1,15 @@
 package com.xscsiem.hsiem_platform.auth;
 
+import com.xscsiem.hsiem_platform.control.AuthStore;
 import com.xscsiem.hsiem_platform.onboarding.NotFoundException;
-import jakarta.annotation.PostConstruct;
-import com.xscsiem.hsiem_platform.control.ControlPlaneStore;
+import com.xscsiem.hsiem_platform.tenant.TenantService;
 import io.micrometer.core.instrument.MeterRegistry;
-import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Service;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
-
+import jakarta.annotation.PostConstruct;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.time.Instant;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -24,47 +18,63 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
-import com.xscsiem.hsiem_platform.tenant.TenantService;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.stereotype.Service;
 
 /**
- * 控制台认证与权限(story-08 RBAC):
- * - 登录 → 内存会话 token;密码 BCrypt 哈希,存 infra/auth/users.yaml(文件 + Git)。
- * - 角色矩阵(admin/analyst/ops/audit)见 ROLE_PERMS;敏感操作(设置/部署/用户管理)需 admin。
- * - 审计:登录/用户/角色变更写审计日志(who/when/what)。
- * 首次启动无用户时创建需要轮换密码的 bootstrap admin；生产环境应通过管理 API 完成密码轮换。
+ * 控制台认证与权限(story-08 RBAC): - 登录 → 内存会话 token;密码 BCrypt 哈希,存 infra/auth/users.yaml(文件 + Git)。 -
+ * 角色矩阵(admin/analyst/ops/audit)见 ROLE_PERMS;敏感操作(设置/部署/用户管理)需 admin。 -
+ * 审计:登录/用户/角色变更写审计日志(who/when/what)。 首次启动无用户时创建需要轮换密码的 bootstrap admin；生产环境应通过管理 API 完成密码轮换。
  */
 @Service
 public class AuthService {
 
-    public static final Map<String, Set<String>> ROLE_PERMS = Map.of(
-            "admin", Set.of("all"),
-            "analyst", Set.of("alerts:read", "alerts:write", "soar:read", "soar:execute", "soar:approve"),
-            "ops", Set.of("sources:write", "health:read"),
-            "audit", Set.of("read", "soar:read"));
+    public static final Map<String, Set<String>> ROLE_PERMS =
+            Map.of(
+                    "admin", Set.of("all"),
+                    "analyst",
+                            Set.of(
+                                    "alerts:read",
+                                    "alerts:write",
+                                    "soar:read",
+                                    "soar:execute",
+                                    "soar:approve"),
+                    "ops", Set.of("sources:write", "health:read"),
+                    "audit", Set.of("read", "soar:read"));
 
     private final BCryptPasswordEncoder encoder = new BCryptPasswordEncoder();
     private final UserStore store;
-    private final ControlPlaneStore control;
-    private final Map<String, String> sessions = new ConcurrentHashMap<>();       // token -> username
+    private final AuthStore control;
+    private final Map<String, String> sessions = new ConcurrentHashMap<>(); // token -> username
     private final List<Map<String, String>> auditLogs = new CopyOnWriteArrayList<>();
     private final Map<String, LoginAttempt> localLoginAttempts = new ConcurrentHashMap<>();
+
     @Value("${app.auth.session-ttl:PT8H}")
     private Duration sessionTtl = Duration.ofHours(8);
+
     @Value("${app.auth.login-window:PT15M}")
     private Duration loginWindow = Duration.ofMinutes(15);
+
     @Value("${app.auth.login-lockout:PT15M}")
     private Duration loginLockout = Duration.ofMinutes(15);
+
     @Value("${app.auth.max-login-failures:5}")
     private int maxLoginFailures = 5;
+
     /** 生产首启必须显式注入；轻量单测构造器使用隔离 fixture 口令。 */
     @Value("${app.auth.bootstrap-password:}")
     private String bootstrapPassword;
+
     private MeterRegistry metrics;
     private TenantService tenants;
 
     /** 生产构造器:用户、角色、审计均落 PostgreSQL。 */
     @Autowired
-    public AuthService(UserStore store, ControlPlaneStore control) {
+    public AuthService(UserStore store, AuthStore control) {
         this.store = store;
         this.control = control;
     }
@@ -98,7 +108,8 @@ public class AuthService {
             if (!legacy.isEmpty()) {
                 legacy.forEach(user -> user.passwordChangeRequired = true);
                 legacy.forEach(control::insertUser);
-                if (tenants != null) legacy.forEach(user -> tenants.ensureDefaultMembership(user.username));
+                if (tenants != null)
+                    legacy.forEach(user -> tenants.ensureDefaultMembership(user.username));
                 audit("migration_users", "users.yaml");
                 return;
             }
@@ -158,9 +169,17 @@ public class AuthService {
         }
         audit("login", loginName);
         counter("hsiem.auth.login.success");
-        return Map.of("token", token, "username", u.username, "role", u.role,
-                "expiresAt", expiresAt.toString(),
-                "passwordChangeRequired", u.passwordChangeRequired);
+        return Map.of(
+                "token",
+                token,
+                "username",
+                u.username,
+                "role",
+                u.role,
+                "expiresAt",
+                expiresAt.toString(),
+                "passwordChangeRequired",
+                u.passwordChangeRequired);
     }
 
     public void logout(String token) {
@@ -200,7 +219,8 @@ public class AuthService {
         Set<String> permissions = ROLE_PERMS.getOrDefault(user.role, Set.of("read"));
         Set<String> result = new java.util.HashSet<>();
         result.add("ROLE_" + user.role.toUpperCase());
-        permissions.forEach(permission -> result.add("PERM_" + permission.toUpperCase().replace(':', '_')));
+        permissions.forEach(
+                permission -> result.add("PERM_" + permission.toUpperCase().replace(':', '_')));
         return Set.copyOf(result);
     }
 
@@ -211,7 +231,9 @@ public class AuthService {
     /** 当前用户修改自己的密码；成功后清除首次登录轮换标记。 */
     public AuthUser changePassword(String username, String currentPassword, String newPassword) {
         AuthUser user = findOrNull(username);
-        if (user == null || currentPassword == null || !encoder.matches(currentPassword, user.passwordHash)) {
+        if (user == null
+                || currentPassword == null
+                || !encoder.matches(currentPassword, user.passwordHash)) {
             throw new UnauthorizedException("当前密码错误");
         }
         validatePassword(newPassword);
@@ -265,13 +287,16 @@ public class AuthService {
     private void persistUser(AuthUser user) {
         if (control == null) {
             List<AuthUser> users = store.list();
-            users.stream().filter(x -> x.username.equals(user.username)).findFirst()
-                    .ifPresent(existing -> {
-                        existing.passwordHash = user.passwordHash;
-                        existing.passwordChangeRequired = user.passwordChangeRequired;
-                        existing.role = user.role;
-                        existing.status = user.status;
-                    });
+            users.stream()
+                    .filter(x -> x.username.equals(user.username))
+                    .findFirst()
+                    .ifPresent(
+                            existing -> {
+                                existing.passwordHash = user.passwordHash;
+                                existing.passwordChangeRequired = user.passwordChangeRequired;
+                                existing.role = user.role;
+                                existing.status = user.status;
+                            });
             store.save(users);
         } else {
             control.updateUser(user);
@@ -305,7 +330,10 @@ public class AuthService {
         u.role = role;
         if (control == null) {
             List<AuthUser> users = store.list();
-            users.stream().filter(x -> x.username.equals(username)).findFirst().ifPresent(x -> x.role = role);
+            users.stream()
+                    .filter(x -> x.username.equals(username))
+                    .findFirst()
+                    .ifPresent(x -> x.role = role);
             store.save(users);
         } else {
             control.updateUser(u);
@@ -353,7 +381,8 @@ public class AuthService {
 
     private static String currentActor() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-        if (authentication == null || !authentication.isAuthenticated()
+        if (authentication == null
+                || !authentication.isAuthenticated()
                 || authentication.getName() == null
                 || "anonymousUser".equals(authentication.getName())) {
             return "system";
@@ -406,14 +435,19 @@ public class AuthService {
             control.recordLoginFailure(username, now, maxLoginFailures, loginWindow, loginLockout);
             return;
         }
-        localLoginAttempts.compute(username, (key, current) -> {
-            if (current == null || current.firstFailureAt.isBefore(now.minus(loginWindow))) {
-                return new LoginAttempt(1, now, null);
-            }
-            int failures = current.failureCount + 1;
-            return new LoginAttempt(failures, current.firstFailureAt,
-                    failures >= maxLoginFailures ? now.plus(loginLockout) : null);
-        });
+        localLoginAttempts.compute(
+                username,
+                (key, current) -> {
+                    if (current == null
+                            || current.firstFailureAt.isBefore(now.minus(loginWindow))) {
+                        return new LoginAttempt(1, now, null);
+                    }
+                    int failures = current.failureCount + 1;
+                    return new LoginAttempt(
+                            failures,
+                            current.firstFailureAt,
+                            failures >= maxLoginFailures ? now.plus(loginLockout) : null);
+                });
     }
 
     private void resetLoginFailures(String username) {
@@ -432,8 +466,9 @@ public class AuthService {
 
     private static String hashToken(String token) {
         try {
-            byte[] digest = MessageDigest.getInstance("SHA-256")
-                    .digest(token.getBytes(StandardCharsets.UTF_8));
+            byte[] digest =
+                    MessageDigest.getInstance("SHA-256")
+                            .digest(token.getBytes(StandardCharsets.UTF_8));
             StringBuilder out = new StringBuilder(digest.length * 2);
             for (byte value : digest) {
                 out.append(String.format("%02x", value));
@@ -444,6 +479,5 @@ public class AuthService {
         }
     }
 
-    private record LoginAttempt(int failureCount, Instant firstFailureAt, Instant lockedUntil) {
-    }
+    private record LoginAttempt(int failureCount, Instant firstFailureAt, Instant lockedUntil) {}
 }

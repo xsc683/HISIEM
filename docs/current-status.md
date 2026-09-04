@@ -50,7 +50,7 @@ HISIEM 已完成检测链路、控制面、接入向导、告警处置、调查�
 这些事项不阻塞开发环境使用，但不能标记为生产级已完成：
 
 1. Elasticsearch/Kafka 默认仍是单节点、明文和低副本配置，需按部署环境启用认证、TLS、持久化和 RF≥2。
-2. Case 的 PostgreSQL 事实源与 Elasticsearch 镜像依赖 outbox/重放，仍需持续演练断点、重试和告警清理。
+2. Case 的正常写路径已统一为「PostgreSQL 事实 + Case Mirror Outbox + dispatcher」单一镜像机制（乐观锁以 PG `_control_version` 仲裁）；仍需持续演练断点、重试和告警清理场景下的收敛。
 3. 后台任务已有租约和启动恢复，但具体 handler 的自动重放、幂等键和跨实例协调仍需补齐。
 4. SOAR 控制面按 tenant 隔离 Playbook/执行/审批；告警、案件和 ES 数据面仍缺少完整 tenant 字段、索引隔离和文档级权限。
 5. 真实生产负载下的容量、保留策略、升级回滚和灾备 RTO/RPO 还需要环境级压测与演练。

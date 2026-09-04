@@ -1,15 +1,13 @@
 package com.xscsiem.hsiem_platform.alert;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.xscsiem.hsiem_platform.lifecycle.LifecycleEventPort;
 import com.xscsiem.hsiem_platform.onboarding.ConflictException;
 import com.xscsiem.hsiem_platform.onboarding.NotFoundException;
 import com.xscsiem.hsiem_platform.search.ElasticsearchGateway;
 import com.xscsiem.hsiem_platform.tenant.TenantContext;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Service;
-
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -20,32 +18,35 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
 
 /**
- * 告警三线处置(story-04,替代 triage-alert.py 的交互版):
- * - 列表(open 默认,risk_score DESC)/详情(含 related_events、event.raw)
- * - 三线流转(5 态 open→acknowledged→investigating→resolved/closed)+ 结案强制 verdict
- * - 乐观锁更新(_seq_no/_primary_term,并发冲突 409)+ 操作审计(alert.operator/status_updated_at)
- * - 批量 ack/close(close 前置 verdict)+ 按规则 FP 率(FP/(TP+FP) 不含 duplicate)
+ * 告警三线处置(story-04,替代 triage-alert.py 的交互版): - 列表(open 默认,risk_score DESC)/详情(含
+ * related_events、event.raw) - 三线流转(5 态 open→acknowledged→investigating→resolved/closed)+ 结案强制
+ * verdict - 乐观锁更新(_seq_no/_primary_term,并发冲突 409)+ 操作审计(alert.operator/status_updated_at) - 批量
+ * ack/close(close 前置 verdict)+ 按规则 FP 率(FP/(TP+FP) 不含 duplicate)
  */
 @Service
 public class AlertService {
 
-    public static final List<String> STATUSES = List.of(
-            "open", "acknowledged", "investigating", "resolved", "closed");
-    public static final List<String> VERDICTS = List.of(
-            "true_positive", "false_positive", "duplicate");
+    public static final List<String> STATUSES =
+            List.of("open", "acknowledged", "investigating", "resolved", "closed");
+    public static final List<String> VERDICTS =
+            List.of("true_positive", "false_positive", "duplicate");
     private static final ObjectMapper MAPPER = new ObjectMapper();
-    private static final HttpClient CLIENT = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(3)).build();
+    private static final HttpClient CLIENT =
+            HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build();
 
     private final String esUrl;
     private final ElasticsearchGateway gateway;
     private LifecycleEventPort lifecyclePublisher;
 
     @Autowired
-    public AlertService(@Value("${app.elasticsearch.url:http://localhost:9200}") String esUrl,
-                        ElasticsearchGateway gateway) {
+    public AlertService(
+            @Value("${app.elasticsearch.url:http://localhost:9200}") String esUrl,
+            ElasticsearchGateway gateway) {
         this.esUrl = esUrl;
         this.gateway = gateway;
     }
@@ -63,11 +64,28 @@ public class AlertService {
 
     /** 告警列表(open 默认,按 risk_score DESC + 时间倒序)。 */
     public List<Map<String, Object>> list(String status, int size) {
-        String query = status != null && !status.isBlank()
-                ? String.format("\"query\":{\"term\":{\"alert.status\":\"%s\"}},", status) : "";
-        String body = "{\"size\":%d,%s\"sort\":[{\"alert.risk_score\":{\"order\":\"desc\"}},{\"@timestamp\":{\"order\":\"desc\"}}]}"
-                .formatted(Math.min(size, 200), query);
-        Map<String, Object> resp = esCall("POST", "/siem-alerts/_search", body);
+        if (status != null && !status.isBlank() && !STATUSES.contains(status)) {
+            throw new IllegalArgumentException(
+                    "非法告警状态(open/acknowledged/investigating/resolved/closed): " + status);
+        }
+        if (size < 1 || size > 200) {
+            throw new IllegalArgumentException("分页大小需在 1-200 之间: " + size);
+        }
+        ObjectNode body = MAPPER.createObjectNode();
+        body.put("size", size);
+        if (status != null && !status.isBlank()) {
+            body.putObject("query").putObject("term").put("alert.status", status);
+        }
+        ArrayNode sort = body.putArray("sort");
+        sort.addObject().putObject("alert.risk_score").put("order", "desc");
+        sort.addObject().putObject("@timestamp").put("order", "desc");
+        String json;
+        try {
+            json = MAPPER.writeValueAsString(body);
+        } catch (Exception e) {
+            throw new IllegalStateException("告警查询序列化失败", e);
+        }
+        Map<String, Object> resp = esCall("POST", "/siem-alerts/_search", json);
         List<Map<String, Object>> out = new ArrayList<>();
         Object hits = resp.get("hits");
         if (hits instanceof Map<?, ?> hm && hm.get("hits") instanceof List<?> list) {
@@ -75,7 +93,7 @@ public class AlertService {
                 if (h instanceof Map<?, ?> hm2 && hm2.get("_source") instanceof Map<?, ?> src) {
                     @SuppressWarnings("unchecked")
                     Map<String, Object> s = new LinkedHashMap<>((Map<String, Object>) src);
-                    s.put("_id", hm2.get("_id"));   // 详情/更新 API 用 ES _id
+                    s.put("_id", hm2.get("_id")); // 详情/更新 API 用 ES _id
                     out.add(s);
                 }
             }
@@ -84,11 +102,11 @@ public class AlertService {
     }
 
     /**
-     * 大屏告警口径：状态与归案数量由 Elasticsearch 全量聚合，最新告警按创建时间取前 7 条。
-     * 与风险优先的告警工作队列分离，防止把高风险前 200 条错误解释为总体或最新数据。
+     * 大屏告警口径：状态与归案数量由 Elasticsearch 全量聚合，最新告警按创建时间取前 7 条。 与风险优先的告警工作队列分离，防止把高风险前 200 条错误解释为总体或最新数据。
      */
     public Map<String, Object> summary() {
-        String body = """
+        String body =
+                """
                 {"size":7,"track_total_hits":true,
                  "sort":[{"alert.created_at":{"order":"desc","unmapped_type":"date"}},
                          {"@timestamp":{"order":"desc","unmapped_type":"date"}}],
@@ -111,16 +129,19 @@ public class AlertService {
         Object hitsObject = response.get("hits");
         if (hitsObject instanceof Map<?, ?> hits) {
             Object totalObject = hits.get("total");
-            if (totalObject instanceof Map<?, ?> totalMap && totalMap.get("value") instanceof Number number) {
+            if (totalObject instanceof Map<?, ?> totalMap
+                    && totalMap.get("value") instanceof Number number) {
                 total = number.longValue();
             } else if (totalObject instanceof Number number) {
                 total = number.longValue();
             }
             if (hits.get("hits") instanceof List<?> rows) {
                 for (Object row : rows) {
-                    if (row instanceof Map<?, ?> hit && hit.get("_source") instanceof Map<?, ?> source) {
+                    if (row instanceof Map<?, ?> hit
+                            && hit.get("_source") instanceof Map<?, ?> source) {
                         @SuppressWarnings("unchecked")
-                        Map<String, Object> item = new LinkedHashMap<>((Map<String, Object>) source);
+                        Map<String, Object> item =
+                                new LinkedHashMap<>((Map<String, Object>) source);
                         item.put("_id", hit.get("_id"));
                         recent.add(item);
                     }
@@ -161,10 +182,12 @@ public class AlertService {
     /** 更新状态/verdict(乐观锁,操作审计)。status 与 verdict 至少给一个。 */
     public Map<String, Object> update(String id, String status, String verdict, String operator) {
         if (status != null && !STATUSES.contains(status)) {
-            throw new IllegalArgumentException("状态非法(open/acknowledged/investigating/resolved/closed): " + status);
+            throw new IllegalArgumentException(
+                    "状态非法(open/acknowledged/investigating/resolved/closed): " + status);
         }
         if (verdict != null && !VERDICTS.contains(verdict)) {
-            throw new IllegalArgumentException("verdict 非法(true_positive/false_positive/duplicate): " + verdict);
+            throw new IllegalArgumentException(
+                    "verdict 非法(true_positive/false_positive/duplicate): " + verdict);
         }
         if (status == null && verdict == null) {
             throw new IllegalArgumentException("status 或 verdict 至少给一个");
@@ -173,8 +196,11 @@ public class AlertService {
         if (cur == null) {
             throw new NotFoundException("告警不存在: " + id);
         }
-        validateStatusTransition(str(cur.get("alert.status")), status,
-                str(cur.get("alert.analyst_verdict")), verdict);
+        validateStatusTransition(
+                str(cur.get("alert.status")),
+                status,
+                str(cur.get("alert.analyst_verdict")),
+                verdict);
         Map<String, Object> doc = new LinkedHashMap<>();
         doc.put("alert.status_updated_at", Instant.now().toString());
         doc.put("alert.operator", operator == null ? "anonymous" : operator);
@@ -184,7 +210,9 @@ public class AlertService {
         if (verdict != null) {
             doc.put("alert.analyst_verdict", verdict);
         }
-        if ("open".equals(status) && !"open".equals(str(cur.get("alert.status"))) && verdict == null) {
+        if ("open".equals(status)
+                && !"open".equals(str(cur.get("alert.status")))
+                && verdict == null) {
             // 重开意味着重新分诊,清掉旧 verdict,避免 FP/TP 统计继续使用过时结论。
             doc.put("alert.analyst_verdict", null);
         }
@@ -194,7 +222,8 @@ public class AlertService {
     }
 
     /** 批量处置:批量 close 前置 verdict;逐条乐观锁更新,收集成功/失败。 */
-    public Map<String, Object> batch(List<String> ids, String status, String verdict, String operator) {
+    public Map<String, Object> batch(
+            List<String> ids, String status, String verdict, String operator) {
         if (ids == null || ids.isEmpty()) {
             throw new IllegalArgumentException("ids 不能为空");
         }
@@ -221,12 +250,16 @@ public class AlertService {
                     continue;
                 }
                 if (("resolved".equals(status) || "closed".equals(status))
-                        && verdict == null && a.get("alert.analyst_verdict") == null) {
+                        && verdict == null
+                        && a.get("alert.analyst_verdict") == null) {
                     missingVerdict.add(id);
                 }
                 try {
-                    validateStatusTransition(str(a.get("alert.status")), status,
-                            str(a.get("alert.analyst_verdict")), verdict);
+                    validateStatusTransition(
+                            str(a.get("alert.status")),
+                            status,
+                            str(a.get("alert.analyst_verdict")),
+                            verdict);
                 } catch (IllegalArgumentException e) {
                     invalidTransitions.add(id + ": " + e.getMessage());
                 }
@@ -244,8 +277,10 @@ public class AlertService {
             try {
                 Map<String, Object> current = currentById.get(id);
                 Map<String, Object> doc = buildDoc(status, verdict, operator);
-                if ("open".equals(status) && current != null
-                        && !"open".equals(str(current.get("alert.status"))) && verdict == null) {
+                if ("open".equals(status)
+                        && current != null
+                        && !"open".equals(str(current.get("alert.status")))
+                        && verdict == null) {
                     doc.put("alert.analyst_verdict", null);
                 }
                 Map<String, Object> updated = optimisticUpdate(id, doc, current);
@@ -270,7 +305,8 @@ public class AlertService {
 
     /** 按规则 FP 率(FP/(TP+FP) 不含 duplicate,>50% 高亮由前端/通知处理)。 */
     public List<Map<String, Object>> fpRate() {
-        String body = """
+        String body =
+                """
                 {"size":0,"aggs":{"rules":{"terms":{"field":"alert.rule_id.keyword","size":50},
                   "aggs":{
                     "fp":{"filter":{"term":{"alert.analyst_verdict.keyword":"false_positive"}}},
@@ -279,7 +315,8 @@ public class AlertService {
         Map<String, Object> resp = esCall("POST", "/siem-alerts/_search", body);
         List<Map<String, Object>> out = new ArrayList<>();
         Object aggs = resp.get("aggregations");
-        if (aggs instanceof Map<?, ?> am && am.get("rules") instanceof Map<?, ?> rm
+        if (aggs instanceof Map<?, ?> am
+                && am.get("rules") instanceof Map<?, ?> rm
                 && rm.get("buckets") instanceof List<?> buckets) {
             for (Object b : buckets) {
                 if (!(b instanceof Map<?, ?> bm)) {
@@ -314,12 +351,12 @@ public class AlertService {
         return doc;
     }
 
-    /**
-     * 服务层告警状态机。允许设计文档中的快捷结案和复查重开路径,
-     * 但禁止跳过调查阶段的逆向流转；resolved/closed 必须有有效 verdict。
-     */
-    static void validateStatusTransition(String currentStatus, String targetStatus,
-                                         String currentVerdict, String requestedVerdict) {
+    /** 服务层告警状态机。允许设计文档中的快捷结案和复查重开路径, 但禁止跳过调查阶段的逆向流转；resolved/closed 必须有有效 verdict。 */
+    static void validateStatusTransition(
+            String currentStatus,
+            String targetStatus,
+            String currentVerdict,
+            String requestedVerdict) {
         if (targetStatus == null) {
             return;
         }
@@ -327,20 +364,27 @@ public class AlertService {
         if (!STATUSES.contains(current)) {
             throw new IllegalArgumentException("当前状态非法: " + current);
         }
-        boolean allowed = switch (current) {
-            case "open" -> List.of("open", "acknowledged", "resolved", "closed").contains(targetStatus);
-            case "acknowledged" -> List.of("acknowledged", "investigating", "closed").contains(targetStatus);
-            case "investigating" -> List.of("investigating", "resolved", "closed").contains(targetStatus);
-            case "resolved", "closed" -> List.of(current, "open").contains(targetStatus);
-            default -> false;
-        };
+        boolean allowed =
+                switch (current) {
+                    case "open" ->
+                            List.of("open", "acknowledged", "resolved", "closed")
+                                    .contains(targetStatus);
+                    case "acknowledged" ->
+                            List.of("acknowledged", "investigating", "closed")
+                                    .contains(targetStatus);
+                    case "investigating" ->
+                            List.of("investigating", "resolved", "closed").contains(targetStatus);
+                    case "resolved", "closed" -> List.of(current, "open").contains(targetStatus);
+                    default -> false;
+                };
         if (!allowed) {
             throw new IllegalArgumentException("不允许从 " + current + " 流转到 " + targetStatus);
         }
         String effectiveVerdict = requestedVerdict == null ? currentVerdict : requestedVerdict;
         if (("resolved".equals(targetStatus) || "closed".equals(targetStatus))
                 && (effectiveVerdict == null || !VERDICTS.contains(effectiveVerdict))) {
-            throw new IllegalArgumentException("结案必选 verdict(true_positive/false_positive/duplicate)");
+            throw new IllegalArgumentException(
+                    "结案必选 verdict(true_positive/false_positive/duplicate)");
         }
     }
 
@@ -354,8 +398,8 @@ public class AlertService {
         return optimisticUpdate(id, doc, cur);
     }
 
-    private Map<String, Object> optimisticUpdate(String id, Map<String, Object> doc,
-                                                  Map<String, Object> cur) {
+    private Map<String, Object> optimisticUpdate(
+            String id, Map<String, Object> doc, Map<String, Object> cur) {
         if (cur == null) {
             throw new NotFoundException("告警不存在: " + id);
         }
@@ -370,8 +414,16 @@ public class AlertService {
         } catch (Exception e) {
             throw new IllegalStateException("序列化失败", e);
         }
-        int code = esCallCode("POST",
-                "/siem-alerts/_update/" + id + "?if_seq_no=" + seqObj + "&if_primary_term=" + ptObj, body);
+        int code =
+                esCallCode(
+                        "POST",
+                        "/siem-alerts/_update/"
+                                + id
+                                + "?if_seq_no="
+                                + seqObj
+                                + "&if_primary_term="
+                                + ptObj,
+                        body);
         if (code == 409) {
             throw new ConflictException("告警 " + id + " 已被其他分析师更新,请刷新后重试");
         }
@@ -420,9 +472,10 @@ public class AlertService {
             } else {
                 builder.method(method, HttpRequest.BodyPublishers.noBody());
             }
-            HttpResponse<String> resp = CLIENT.send(builder.build(), HttpResponse.BodyHandlers.ofString());
-            Map<String, Object> parsed = resp.body().isBlank()
-                    ? Map.of() : MAPPER.readValue(resp.body(), Map.class);
+            HttpResponse<String> resp =
+                    CLIENT.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+            Map<String, Object> parsed =
+                    resp.body().isBlank() ? Map.of() : MAPPER.readValue(resp.body(), Map.class);
             return new EsResponse(resp.statusCode(), parsed);
         } catch (Exception e) {
             throw new IllegalStateException("ES 不可达: " + e.getMessage(), e);
@@ -441,6 +494,5 @@ public class AlertService {
         return esRequest(method, path, body).code();
     }
 
-    private record EsResponse(int code, Map<String, Object> body) {
-    }
+    private record EsResponse(int code, Map<String, Object> body) {}
 }
