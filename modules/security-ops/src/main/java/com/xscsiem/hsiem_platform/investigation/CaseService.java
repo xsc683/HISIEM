@@ -2,6 +2,8 @@ package com.xscsiem.hsiem_platform.investigation;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.xscsiem.hsiem_platform.alert.AlertService;
 import com.xscsiem.hsiem_platform.control.CaseStore;
 import com.xscsiem.hsiem_platform.lifecycle.LifecycleEventPort;
@@ -84,6 +86,12 @@ public class CaseService {
 
     /** 案件列表(按 updated_at 倒序;可按 status/entity 过滤)。 */
     public List<Map<String, Object>> list(String status, String entity, int size) {
+        if (status != null && !status.isBlank() && !STATUSES.contains(status)) {
+            throw new IllegalArgumentException("案件状态非法(open/investigating/resolved): " + status);
+        }
+        if (size < 1 || size > 200) {
+            throw new IllegalArgumentException("分页大小需在 1-200 之间: " + size);
+        }
         if (control != null) {
             List<Map<String, Object>> rows = control.listCases(status, entity, size);
             if (!rows.isEmpty()) {
@@ -143,28 +151,35 @@ public class CaseService {
     }
 
     private List<Map<String, Object>> esList(String status, String entity, int size) {
-        StringBuilder q = new StringBuilder();
-        List<String> must = new ArrayList<>();
+        ObjectNode root = MAPPER.createObjectNode();
+        root.put("size", size);
+        ArrayNode must = root.putObject("query").putObject("bool").putArray("must");
         if (status != null && !status.isBlank()) {
-            must.add("{\"term\":{\"case.status\":\"%s\"}}".formatted(status));
+            must.addObject().putObject("term").put("case.status", status);
         }
         if (entity != null && !entity.isBlank()) {
             String[] parts = entity.split(":", 2);
             String type = parts.length > 1 ? parts[0] : "ip";
             String value = parts.length > 1 ? parts[1] : parts[0];
-            must.add(
-                    "{\"nested\":{\"path\":\"entities\",\"query\":{\"bool\":{\"must\":["
-                            + "{\"term\":{\"entities.type\":\"%s\"}},{\"term\":{\"entities.value\":\"%s\"}}]}}}}"
-                                    .formatted(type, value));
+            ObjectNode nested =
+                    must.addObject()
+                            .putObject("nested")
+                            .put("path", "entities")
+                            .putObject("query")
+                            .putObject("bool");
+            ArrayNode nestedMust = nested.putArray("must");
+            nestedMust.addObject().putObject("term").put("entities.type", type);
+            nestedMust.addObject().putObject("term").put("entities.value", value);
         }
-        String query =
-                must.isEmpty()
-                        ? ""
-                        : "\"query\":{\"bool\":{\"must\":[%s]}},".formatted(String.join(",", must));
-        String body =
-                "{\"size\":%d,%s\"sort\":[{\"case.updated_at\":{\"order\":\"desc\"}}]}"
-                        .formatted(Math.min(size, 200), query);
-        Map<String, Object> resp = esCallLenient("POST", "/siem-cases/_search", body);
+        ArrayNode sort = root.putArray("sort");
+        sort.addObject().putObject("case.updated_at").put("order", "desc");
+        String json;
+        try {
+            json = MAPPER.writeValueAsString(root);
+        } catch (Exception e) {
+            throw new IllegalStateException("案件 ES 查询序列化失败", e);
+        }
+        Map<String, Object> resp = esCallLenient("POST", "/siem-cases/_search", json);
         return extractHits(resp);
     }
 

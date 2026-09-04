@@ -19,6 +19,7 @@ import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 /** 调查台案件(story-07)校验逻辑(纯逻辑,不触 ES): 手动聚合 ≥2 条、结案必带 verdict、状态/verdict 枚举。 */
 class CaseServiceTest {
@@ -46,6 +47,18 @@ class CaseServiceTest {
         assertThrows(
                 IllegalArgumentException.class,
                 () -> svc.updateStatus("x", "bogus", null, "alice"));
+    }
+
+    @Test
+    void list_invalidStatus_rejected() {
+        assertThrows(IllegalArgumentException.class, () -> svc.list("bogus", null, 50));
+    }
+
+    @Test
+    void list_outOfRangeSize_rejected() {
+        assertThrows(IllegalArgumentException.class, () -> svc.list(null, null, 0));
+        assertThrows(IllegalArgumentException.class, () -> svc.list(null, null, 201));
+        assertThrows(IllegalArgumentException.class, () -> svc.list(null, null, -5));
     }
 
     @Test
@@ -101,6 +114,29 @@ class CaseServiceTest {
 
         assertEquals(20L, summary.get("total"));
         assertEquals(List.of(newest), summary.get("recent"));
+    }
+
+    @Test
+    void legacyEsList_buildsCleanObjectNodeDsl() {
+        ElasticsearchGateway gateway = mock(ElasticsearchGateway.class);
+        when(gateway.request(eq("POST"), eq("/siem-cases/_search"), any()))
+                .thenReturn(
+                        new ElasticsearchGateway.Response(
+                                200, Map.of("hits", Map.of("hits", List.of()))));
+        // control=null + gateway 的构造走 legacy ES 查询路径(数据面先建案、控制面尚未启用时的兼容回退)。
+        CaseService service =
+                new CaseService("http://unused", mock(AlertService.class), null, gateway);
+
+        service.list("open", "ip:10.0.0.1", 50);
+
+        var captor = ArgumentCaptor.forClass(String.class);
+        verify(gateway).request(eq("POST"), eq("/siem-cases/_search"), captor.capture());
+        assertEquals(
+                "{\"size\":50,\"query\":{\"bool\":{\"must\":[{\"term\":{\"case.status\":\"open\"}},"
+                        + "{\"nested\":{\"path\":\"entities\",\"query\":{\"bool\":{\"must\":"
+                        + "[{\"term\":{\"entities.type\":\"ip\"}},{\"term\":{\"entities.value\":\"10.0.0.1\"}}]}}}}]}},"
+                        + "\"sort\":[{\"case.updated_at\":{\"order\":\"desc\"}}]}",
+                captor.getValue());
     }
 
     @Test
