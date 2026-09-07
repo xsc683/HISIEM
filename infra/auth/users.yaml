@@ -1,7 +1,6 @@
 ---
-- id: "admin"
-  username: "admin"
-  passwordHash: "$2a$10$mF4GLYvymSAPRqhITUxnwuk1ll.JgUhpdnx2j.bRr64vhniBwLV0u"
-  role: "admin"
-  status: "active"
-  createdAt: "2026-08-16T07:07:41.237189200Z"
+# Local HISIEM auth bootstrap seed. Intentionally EMPTY so a fresh control-plane
+# (empty PostgreSQL users store) takes the SIEM_BOOTSTRAP_PASSWORD first-run
+# bootstrap branch instead of importing a legacy hard-coded user/hash. Real
+# users are created at runtime through the official auth API only.
+[]
