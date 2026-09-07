@@ -10,6 +10,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.regex.Pattern;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
@@ -41,6 +42,8 @@ public class ProcessLogstashDeployer implements LogstashDeployer {
     private final String composeName;
     private final CommandExecutor commandExecutor;
 
+    /** Production injection constructor: explicit single Spring injection point. */
+    @Autowired
     public ProcessLogstashDeployer(
             @Value("${app.logstash.wsl-repo-path:/mnt/d/Project/SIEM}") String wslRepoPath,
             @Value("${app.logstash.deploy-dir:~/projects/mini-siem}") String deployDir,
