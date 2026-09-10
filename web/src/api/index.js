@@ -155,6 +155,12 @@ export const batchAlertStatus = (ids, status) => request('/alerts/batch-status',
 export const batchAlertVerdict = (ids, verdict) => request('/alerts/batch-verdict', json('POST', { ids, verdict }))
 export const fpRate = () => request('/alerts/fp-rate')
 
+// SOC Copilot 调查工作台（浏览器只访问 HISIEM BFF；租户/操作人由服务端派生）
+export const lookupAlertInvestigation = (alertId) => request(`/alerts/${segment(alertId)}/agent-investigation`)
+export const getAgentInvestigation = (id) => request(`/agent-investigations/${segment(id)}`)
+export const getAgentInvestigationWorkspace = (id) => request(`/agent-investigations/${segment(id)}/workspace`)
+export const cancelAgentInvestigation = (id) => request(`/agent-investigations/${segment(id)}/cancel`, { method: 'POST' })
+
 // 案件
 export function listCases(status, entity, size = 100) {
   const query = new URLSearchParams({ size })

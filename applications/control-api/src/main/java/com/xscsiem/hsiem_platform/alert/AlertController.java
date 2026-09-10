@@ -1,9 +1,11 @@
 package com.xscsiem.hsiem_platform.alert;
 
+import com.xscsiem.hsiem_platform.agent.AgentInvestigationService;
 import com.xscsiem.hsiem_platform.agent.AgentLaunchResponse;
 import com.xscsiem.hsiem_platform.agent.AgentLaunchService;
 import java.util.List;
 import java.util.Map;
+import org.springframework.http.MediaType;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -22,10 +24,13 @@ public class AlertController {
 
     private final AlertService service;
     private final AgentLaunchService agentLaunch;
+    private final AgentInvestigationService agentInvestigation;
 
-    public AlertController(AlertService service, AgentLaunchService agentLaunch) {
+    public AlertController(AlertService service, AgentLaunchService agentLaunch,
+                           AgentInvestigationService agentInvestigation) {
         this.service = service;
         this.agentLaunch = agentLaunch;
+        this.agentInvestigation = agentInvestigation;
     }
 
     /** 告警列表(open 默认,risk_score DESC)。 */
@@ -57,6 +62,20 @@ public class AlertController {
     public AgentLaunchResponse investigateWithAgent(
             @PathVariable String id, Authentication authentication) {
         return agentLaunch.launch("alert_investigation", "alert", id, authentication.getName());
+    }
+
+    /**
+     * 告警再进入：查询该来源告警的活动/最近一次 Agent 调查(服务端权威，非前端 localStorage)。
+     * 返回 {@code {active, latest}}；两者都可能为 null。
+     *
+     * <p>与 BFF 其它只读代理一致，返回原始 JSON 文本而非 Jackson 节点：控制面 HTTP 序列化由
+     * Jackson 3 完成，而本模块解析上游响应使用 Jackson 2 的 {@code JsonNode}，直接返回节点会被
+     * 当作 POJO 序列化。</p>
+     */
+    @GetMapping(value = "/{id}/agent-investigation", produces = MediaType.APPLICATION_JSON_VALUE)
+    @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST', 'AUDIT')")
+    public String agentInvestigation(@PathVariable String id) {
+        return agentInvestigation.lookupForAlert("hisiem", "alert", id).toString();
     }
 
     /** 三线流转(open→ack→investigating→resolved/closed)。 */

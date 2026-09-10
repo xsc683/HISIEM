@@ -13,6 +13,7 @@ const routes = [
       { path: 'logs', component: () => import('../views/logs/LogSearchView.vue'), meta: { title: '日志检索', menu: '/logs', roles: ['admin', 'analyst', 'audit'] } },
       { path: 'alerts', component: () => import('../views/alerts/AlertListView.vue'), meta: { title: '告警台', menu: '/alerts', roles: ['admin', 'analyst', 'audit'] } },
       { path: 'alerts/:id', component: () => import('../views/alerts/AlertDetailView.vue'), meta: { title: '告警详情', menu: '/alerts', roles: ['admin', 'analyst', 'audit'] } },
+      { path: 'copilot/investigations/:investigationId', component: () => import('../views/copilot/InvestigationWorkspaceView.vue'), meta: { title: 'AI 调查工作台', menu: '/alerts', roles: ['admin', 'analyst', 'audit'] } },
       { path: 'cases', component: () => import('../views/cases/CaseListView.vue'), meta: { title: '调查案件', menu: '/cases', roles: ['admin', 'analyst', 'audit'] } },
       { path: 'cases/new', component: () => import('../views/cases/CaseCreateView.vue'), meta: { title: '手动建案', menu: '/cases', roles: ['admin', 'analyst'] } },
       { path: 'cases/:id', component: () => import('../views/cases/CaseDetailView.vue'), meta: { title: '案件详情', menu: '/cases', roles: ['admin', 'analyst', 'audit'] } },

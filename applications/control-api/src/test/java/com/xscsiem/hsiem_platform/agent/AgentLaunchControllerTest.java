@@ -18,14 +18,15 @@ class AgentLaunchControllerTest {
     void alertLaunchUsesAlertProviderIdAndAuthenticatedUser() {
         AgentLaunchService launch = mock(AgentLaunchService.class);
         when(launch.launch("alert_investigation", "alert", "alert-doc-7", "analyst"))
-                .thenReturn(new AgentLaunchResponse("run-7", "https://agent/ui/runs/run-7"));
-        AlertController controller = new AlertController(mock(AlertService.class), launch);
+                .thenReturn(new AgentLaunchResponse("inv-7", "/copilot/investigations/inv-7"));
+        AlertController controller = new AlertController(mock(AlertService.class), launch,
+                mock(AgentInvestigationService.class));
 
         AgentLaunchResponse result =
                 controller.investigateWithAgent(
                         "alert-doc-7", new UsernamePasswordAuthenticationToken("analyst", "token"));
 
-        assertEquals("run-7", result.runId());
+        assertEquals("inv-7", result.investigationId());
         verify(launch).launch("alert_investigation", "alert", "alert-doc-7", "analyst");
     }
 
@@ -33,14 +34,14 @@ class AgentLaunchControllerTest {
     void caseLaunchUsesCaseProviderIdAndAuthenticatedUser() {
         AgentLaunchService launch = mock(AgentLaunchService.class);
         when(launch.launch("case_investigation", "case", "case-42", "admin"))
-                .thenReturn(new AgentLaunchResponse("run-42", "https://agent/ui/runs/run-42"));
+                .thenReturn(new AgentLaunchResponse("inv-42", "/copilot/investigations/inv-42"));
         CaseController controller = new CaseController(mock(CaseService.class), launch);
 
         AgentLaunchResponse result =
                 controller.investigateWithAgent(
                         "case-42", new UsernamePasswordAuthenticationToken("admin", "token"));
 
-        assertEquals("run-42", result.runId());
+        assertEquals("inv-42", result.investigationId());
         verify(launch).launch("case_investigation", "case", "case-42", "admin");
     }
 }
