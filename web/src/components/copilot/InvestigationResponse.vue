@@ -89,6 +89,14 @@
         </p>
       </div>
 
+      <div v-if="proposalAwaitingSubmission(proposal)" class="awaiting-submission">
+        <a-divider orientation="left">执行</a-divider>
+        <a-alert
+          type="info" show-icon
+          message="已批准 / 等待提交"
+          description="人工批准已绑定上面的精确契约，提交命令已进入持久化队列；在 HISIEM 返回真实的执行 ID 之前，这里不会显示任何外部执行编号。" />
+      </div>
+
       <template v-if="proposal.execution">
         <a-divider orientation="left">执行</a-divider>
         <a-descriptions size="small" :column="2">
@@ -118,6 +126,7 @@ import TimeText from '../common/TimeText.vue'
 import {
   canDecideProposal,
   executionStatusColor,
+  proposalAwaitingSubmission,
   executionStatusLabel,
   policyDecisionColor,
   policyDecisionLabel,
@@ -159,4 +168,5 @@ function shortHash(hash) {
 .decision-meta { color: #5b6b76; font-size: 12px; margin-left: 8px; }
 .decision-reason, .execution-error { margin: 0; color: #5b6b76; }
 .execution-error { color: #cf1322; }
+.awaiting-submission { display: grid; gap: 8px; }
 </style>

@@ -5,6 +5,7 @@ import com.xscsiem.hsiem_platform.tenant.TenantContext;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -162,9 +163,46 @@ public class SoarService {
                         objectId.trim(),
                         normalizedPayload,
                         actor);
-        store.createExecution(playbook, trigger, "manual:" + actor, "MANUAL");
+        boolean created = store.createExecution(playbook, trigger, "manual:" + actor, "MANUAL");
+        SoarExecution execution =
+                store.findExecutionByTrigger(TenantContext.id(), playbookId, trigger.messageId());
+        if (!created) {
+            // The key is already taken. Either it is the SAME contract (idempotent
+            // replay, converges on the existing execution) or a DIFFERENT one, which
+            // is a deterministic conflict. Audit only AFTER this: recording a manual
+            // execution that we then refuse to honour would assert an execution that
+            // never happened.
+            requireSameContract(
+                    execution, playbookId, normalizedObjectType, objectId.trim(),
+                    normalizedEvent, normalizedPayload);
+        }
         audit(actor, "soar.execution.manual", playbookId + ":" + trigger.messageId());
-        return store.findExecutionByTrigger(TenantContext.id(), playbookId, trigger.messageId());
+        return execution;
+    }
+
+    /**
+     * 同一个去重键(tenant + playbook + trigger message id)必须始终对应同一份不可变契约。
+     *
+     * <p>重放同一个请求会命中唯一约束并复用既有执行 —— 这是期望的幂等收敛。但若调用方在
+     * 同一个键下换了目标对象、事件或 payload,静默返回既有执行会把动作落到错误的目标上。
+     * 这里改成确定性的冲突(409),绝不"静默映射到别的目标/playbook"。</p>
+     */
+    private void requireSameContract(
+            SoarExecution execution,
+            String playbookId,
+            String objectType,
+            String objectId,
+            String eventType,
+            Map<String, Object> payload) {
+        boolean same = Objects.equals(execution.playbookId(), playbookId)
+                && Objects.equals(execution.objectType(), objectType)
+                && Objects.equals(execution.objectId(), objectId)
+                && Objects.equals(execution.eventType(), eventType)
+                && Objects.equals(execution.payloadSnapshot(), payload);
+        if (!same) {
+            throw new com.xscsiem.hsiem_platform.onboarding.ConflictException(
+                    "Idempotency-Key 已用于另一份执行契约");
+        }
     }
 
     private Map<String, Object> normalizeManualPayload(

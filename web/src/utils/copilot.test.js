@@ -1,7 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  RESPONSE_PROPOSAL_ACTION_KEY,
+  RESPONSE_REASON_MAX_LENGTH,
   TIMELINE_FILTERS,
+  buildProposalRequest,
+  canCreateResponseProposal,
   canDecideProposal,
   confidencePercent,
   durationText,
@@ -15,17 +19,22 @@ import {
   isExecutionTerminal,
   isInvestigationActive,
   isInvestigationTerminal,
+  needsResponsePolling,
   policyDecisionLabel,
+  proposalAwaitingSubmission,
   responseActionLabel,
   responseProposalStatusColor,
   responseProposalStatusLabel,
+  selectablePlaybooks,
+  timelineEntryLabel,
   timelineKindLabel,
+  timelineStatusLabel,
   verdictColor,
   verdictLabel,
 } from './copilot.js'
 
 test('活动与终态判定互斥且覆盖全部调查状态', () => {
-  for (const status of ['CREATED', 'RUNNING', 'WAITING_APPROVAL', 'EXECUTING_RESPONSE']) {
+  for (const status of ['CREATED', 'RUNNING']) {
     assert.equal(isInvestigationActive(status), true)
     assert.equal(isInvestigationTerminal(status), false)
   }
@@ -35,6 +44,96 @@ test('活动与终态判定互斥且覆盖全部调查状态', () => {
   }
   assert.equal(isInvestigationActive(undefined), false)
   assert.equal(isInvestigationTerminal(''), false)
+})
+
+test('响应工作流状态不属于调查生命周期', () => {
+  // §5：审批/执行是调查 COMPLETED 之后独立的聚合生命周期；调查状态永远不会变成这些值。
+  for (const status of ['WAITING_APPROVAL', 'EXECUTING_RESPONSE', 'APPROVED', 'SUBMITTED', 'REJECTED']) {
+    assert.equal(isInvestigationActive(status), false)
+    assert.equal(isInvestigationTerminal(status), false)
+  }
+})
+
+test('已批准但未提交的提案不编造外部执行 ID，且仍驱动轮询', () => {
+  const awaiting = { status: 'APPROVED', execution: null }
+  assert.equal(proposalAwaitingSubmission(awaiting), true)
+  assert.equal(proposalAwaitingSubmission({ status: 'APPROVED', execution: { external_execution_id: 'x' } }), false)
+  assert.equal(proposalAwaitingSubmission({ status: 'SUBMITTED', execution: null }), false)
+  assert.equal(proposalAwaitingSubmission(null), false)
+
+  assert.equal(needsResponsePolling([awaiting]), true)
+  assert.equal(needsResponsePolling([{ status: 'SUBMITTED', execution: { status: 'RUNNING' } }]), true)
+  assert.equal(needsResponsePolling([{ status: 'SUBMITTED', execution: { status: 'SUCCEEDED' } }]), false)
+  assert.equal(needsResponsePolling([{ status: 'REJECTED', execution: null }]), false)
+  assert.equal(needsResponsePolling([]), false)
+  assert.equal(needsResponsePolling(null), false)
+})
+
+test('已批准等待提交的时间线显示状态而不是执行身份', () => {
+  assert.equal(timelineEntryLabel({ kind: 'RESPONSE_APPROVED', status: 'AWAITING_SUBMISSION' }), '已批准 / 等待提交')
+  assert.equal(timelineEntryLabel({ kind: 'RESPONSE_APPROVED' }), '已批准')
+  assert.equal(timelineEntryLabel({ kind: 'RESPONSE_EXECUTION_SUCCEEDED' }), '执行成功')
+  assert.equal(timelineStatusLabel('AWAITING_SUBMISSION'), '等待提交')
+  assert.equal(timelineStatusLabel('REQUIRE_APPROVAL'), '需要人工审批')
+  assert.equal(timelineStatusLabel('DENY'), '策略拒绝')
+  assert.equal(timelineStatusLabel(''), '')
+})
+
+test('剧本下拉只暴露已发布且已启用的剧本', () => {
+  const playbooks = [
+    { id: 'p1', name: '隔离主机', status: 'published', enabled: true },
+    { id: 'p2', name: '草稿剧本', status: 'draft', enabled: false },
+    { id: 'p3', name: '已停用', status: 'disabled', enabled: false },
+    { id: 'p4', name: '已发布未启用', status: 'published', enabled: false },
+    null,
+  ]
+  assert.deepEqual(selectablePlaybooks(playbooks), [{ value: 'p1', label: '隔离主机' }])
+  assert.deepEqual(selectablePlaybooks(null), [])
+})
+
+test('创建表单仅对有权限、已完成、尚无提案且有证据的调查开放', () => {
+  const base = { status: 'COMPLETED', proposals: [], role: 'analyst', evidenceCount: 2 }
+  assert.equal(canCreateResponseProposal(base), true)
+  assert.equal(canCreateResponseProposal({ ...base, role: 'admin' }), true)
+  assert.equal(canCreateResponseProposal({ ...base, role: 'audit' }), false)
+  assert.equal(canCreateResponseProposal({ ...base, status: 'RUNNING' }), false)
+  assert.equal(canCreateResponseProposal({ ...base, proposals: [{ proposal_id: 'x' }] }), false)
+  assert.equal(canCreateResponseProposal({ ...base, evidenceCount: 0 }), false)
+  assert.equal(canCreateResponseProposal(), false)
+})
+
+test('提案请求体只有有界契约，绝不携带目标/租户/操作人', () => {
+  const body = buildProposalRequest({
+    playbookId: 'pb-1',
+    evidenceIds: ['e1', 'e2'],
+    reason: '  确认暴力破解  ',
+  })
+  assert.deepEqual(body, {
+    action_key: 'START_SOAR_PLAYBOOK',
+    evidence_ids: ['e1', 'e2'],
+    parameters: { playbook_id: 'pb-1' },
+    reason: '确认暴力破解',
+  })
+  assert.deepEqual(Object.keys(body).sort(), ['action_key', 'evidence_ids', 'parameters', 'reason'])
+  assert.deepEqual(Object.keys(body.parameters), ['playbook_id'])
+  assert.equal(RESPONSE_PROPOSAL_ACTION_KEY, body.action_key)
+  for (const forbidden of ['target', 'tenant_id', 'actor', 'provider', 'resource_type', 'address_id', 'business_id']) {
+    assert.equal(forbidden in body, false)
+  }
+})
+
+test('提案请求体在缺项或超长时抛错', () => {
+  assert.throws(() => buildProposalRequest({ playbookId: '', evidenceIds: ['e1'], reason: 'x' }), /剧本/)
+  assert.throws(() => buildProposalRequest({ playbookId: 'pb', evidenceIds: [], reason: 'x' }), /证据/)
+  assert.throws(() => buildProposalRequest({ playbookId: 'pb', evidenceIds: ['e1'], reason: ' ' }), /理由/)
+  assert.throws(
+    () => buildProposalRequest({
+      playbookId: 'pb',
+      evidenceIds: ['e1'],
+      reason: 'x'.repeat(RESPONSE_REASON_MAX_LENGTH + 1),
+    }),
+    /理由不能超过/,
+  )
 })
 
 test('状态、阶段、结论、假设标签与颜色映射', () => {

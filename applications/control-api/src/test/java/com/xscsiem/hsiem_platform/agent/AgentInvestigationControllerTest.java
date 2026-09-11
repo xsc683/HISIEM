@@ -68,12 +68,8 @@ class AgentInvestigationControllerTest {
     @Test
     void createResponseProposalUsesServerDerivedOperator() throws Exception {
         AgentInvestigationService service = mock(AgentInvestigationService.class);
-        var body = new AgentInvestigationService.CreateProposal(
-                "START_SOAR_PLAYBOOK",
-                new AgentInvestigationService.ResponseTarget("hisiem", "alert", "alert-1", null),
-                java.util.List.of("ev-1"),
-                java.util.Map.of("playbook_id", "pb-9"),
-                "contain");
+        String body = "{\"action_key\":\"START_SOAR_PLAYBOOK\",\"evidence_ids\":[\"ev-1\"],"
+                + "\"parameters\":{\"playbook_id\":\"pb-9\"},\"reason\":\"contain\"}";
         when(service.createResponseProposal(ID, "analyst", body))
                 .thenReturn(MAPPER.readTree("{\"proposal\":{\"status\":\"WAITING_APPROVAL\"}}"));
         SecurityContextHolder.getContext().setAuthentication(

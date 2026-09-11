@@ -1,5 +1,6 @@
 package com.xscsiem.hsiem_platform.agent;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -17,8 +18,11 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * HISIEM 到 SOC Copilot 调查工作台的服务端读取/取消代理。
@@ -88,47 +92,106 @@ public class AgentInvestigationService {
         return send(request("GET", "/lookup" + query, actor, null), "告警调查查询");
     }
 
+    /** 浏览器可提交的响应提案字段白名单：越界字段一律显式失败，绝不静默丢弃。 */
+    private static final Set<String> PROPOSAL_FIELDS =
+            Set.of("action_key", "evidence_ids", "parameters", "reason");
+
+    /**
+     * {@code parameters} 内部同样必须有界：唯一可执行的 START_SOAR_PLAYBOOK 只接受 playbook_id。
+     *
+     * <p>只白名单顶层字段是不够的 —— 调用方可以把 target/provider 塞进 parameters 里；若那里
+     * 被静默过滤或静默透传，浏览器都会看到一次“成功”的请求，却无法知道自己的输入被改写或丢弃。</p>
+     */
+    private static final Set<String> PROPOSAL_PARAMETER_FIELDS = Set.of("playbook_id");
+
     /**
      * POST /api/v1/investigations/{id}/response-proposals — 派生并持久化一条类型化响应提案。
      *
-     * <p>浏览器只能提交有界的动作契约；租户/操作人一律由服务端上下文派生，请求体不接受这两项，
-     * 因此浏览器无法把提案归到别的租户或冒充他人。此处仅做传输层转发，不代替 Copilot 的
-     * 策略/审批判定。</p>
+     * <p>浏览器只能提交有界的动作契约：动作/证据/参数/理由。没有 target —— 执行目标由 Copilot
+     * 从调查持久化的 {@code source_alert_ref} 派生，浏览器无法自行指定作用对象；也没有
+     * tenant_id/actor，这两者一律取自服务端上下文，因此浏览器既不能把提案归到别的租户，也不能
+     * 冒充他人。越界字段返回 400 而不是被丢弃后“看起来提交成功”。此处仅做传输层转发，不代替
+     * Copilot 的策略/审批判定。</p>
      */
-    public JsonNode createResponseProposal(String investigationId, String actor, CreateProposal body) {
-        if (body == null || body.actionKey() == null || body.actionKey().isBlank()) {
+    public JsonNode createResponseProposal(String investigationId, String actor, String rawBody) {
+        JsonNode body = parseBoundedProposal(rawBody);
+        String actionKey = body.path("action_key").asText("");
+        if (actionKey.isBlank()) {
             throw new IllegalArgumentException("响应提案必须携带 action_key");
         }
         ObjectNode node = mapper.createObjectNode();
-        node.put("action_key", body.actionKey().trim());
-        if (body.target() != null) {
-            ObjectNode target = node.putObject("target");
-            target.put("provider", body.target().provider());
-            target.put("resource_type", body.target().resourceType());
-            target.put("address_id", body.target().addressId());
-            if (body.target().businessId() != null) {
-                target.put("business_id", body.target().businessId());
-            }
-        }
+        node.put("action_key", actionKey.trim());
         ArrayNode evidence = node.putArray("evidence_ids");
-        if (body.evidenceIds() != null) {
-            for (String id : body.evidenceIds()) {
-                if (id != null && !id.isBlank()) {
-                    evidence.add(id.trim());
+        JsonNode evidenceIds = body.path("evidence_ids");
+        if (!evidenceIds.isMissingNode() && !evidenceIds.isNull() && !evidenceIds.isArray()) {
+            throw new IllegalArgumentException("响应提案的 evidence_ids 必须是数组");
+        }
+        if (evidenceIds.isArray()) {
+            for (JsonNode item : evidenceIds) {
+                if (!item.isTextual() || item.asText().isBlank()) {
+                    throw new IllegalArgumentException("响应提案的 evidence_ids 只能是非空字符串");
                 }
+                evidence.add(item.asText().trim());
             }
         }
-        ObjectNode parameters = node.putObject("parameters");
-        if (body.parameters() != null) {
-            body.parameters().forEach((key, value) -> {
-                if (key != null && value != null) {
-                    parameters.put(key, value);
-                }
-            });
+        if (evidence.isEmpty()) {
+            throw new IllegalArgumentException("响应提案至少需要引用一条证据");
         }
-        node.put("reason", body.reason() == null ? "" : body.reason().trim());
+
+        ObjectNode parameters = node.putObject("parameters");
+        JsonNode rawParameters = body.path("parameters");
+        if (!rawParameters.isMissingNode() && !rawParameters.isNull() && !rawParameters.isObject()) {
+            throw new IllegalArgumentException("响应提案的 parameters 必须是 JSON 对象");
+        }
+        if (rawParameters.isObject()) {
+            Iterator<Map.Entry<String, JsonNode>> fields = rawParameters.fields();
+            while (fields.hasNext()) {
+                Map.Entry<String, JsonNode> entry = fields.next();
+                String name = entry.getKey();
+                if (name == null || !PROPOSAL_PARAMETER_FIELDS.contains(name)) {
+                    throw new IllegalArgumentException("响应提案不接受的参数：" + name);
+                }
+                JsonNode value = entry.getValue();
+                if (value == null || !value.isValueNode() || value.isNull()) {
+                    throw new IllegalArgumentException("响应提案的参数 " + name + " 必须是标量值");
+                }
+                parameters.put(name, value.asText());
+            }
+        }
+
+        String reason = body.path("reason").asText("").trim();
+        if (reason.isEmpty()) {
+            throw new IllegalArgumentException("响应提案必须携带响应理由");
+        }
+        node.put("reason", reason);
         return send(request("POST", path(investigationId) + "/response-proposals", actor, node.toString()),
                 "响应提案");
+    }
+
+    /** 解析并校验提案正文：必须是对象，且只能出现白名单字段。 */
+    private JsonNode parseBoundedProposal(String rawBody) {
+        if (rawBody == null || rawBody.isBlank()) {
+            throw new IllegalArgumentException("响应提案正文不能为空");
+        }
+        JsonNode body;
+        try {
+            body = mapper.readTree(rawBody);
+        } catch (IOException e) {
+            throw new IllegalArgumentException("响应提案正文不是合法 JSON");
+        }
+        if (body == null || !body.isObject()) {
+            throw new IllegalArgumentException("响应提案正文必须是 JSON 对象");
+        }
+        List<String> unknown = new ArrayList<>();
+        body.fieldNames().forEachRemaining(name -> {
+            if (!PROPOSAL_FIELDS.contains(name)) {
+                unknown.add(name);
+            }
+        });
+        if (!unknown.isEmpty()) {
+            throw new IllegalArgumentException("响应提案不接受字段：" + String.join(", ", unknown));
+        }
+        return body;
     }
 
     /**
@@ -159,14 +222,16 @@ public class AgentInvestigationService {
                 node.toString()), "响应审批");
     }
 
-    /** 浏览器可提交的响应提案契约(仅动作/目标/证据/参数/理由;无租户、无操作人)。 */
-    public record CreateProposal(String actionKey, ResponseTarget target, List<String> evidenceIds,
-                                 Map<String, String> parameters, String reason) { }
-
-    public record ResponseTarget(String provider, String resourceType, String addressId, String businessId) { }
-
-    /** 一次人类审批的绑定契约。 */
-    public record ApprovalDecisionInput(long expectedRevision, String expectedContentHash, String reason) { }
+    /**
+     * 一次人类审批的绑定契约：精确版本 + 精确内容指纹，另可附有界理由。
+     *
+     * <p>字段名与浏览器/Copilot 契约一致(snake_case)：{@code expected_revision} 是用户在界面上
+     * 看到并确认的那一版内容，缺省或错版会被 Copilot 以 409 拒绝，而不是退回“按最新版执行”。</p>
+     */
+    public record ApprovalDecisionInput(
+            @JsonProperty("expected_revision") long expectedRevision,
+            @JsonProperty("expected_content_hash") String expectedContentHash,
+            @JsonProperty("reason") String reason) { }
 
     private static String path(String investigationId) {
         return "/" + enc(investigationId);

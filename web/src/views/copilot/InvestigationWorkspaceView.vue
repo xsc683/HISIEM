@@ -40,8 +40,16 @@
             <InvestigationTimeline :timeline="workspace.timeline" @select-evidence="openEvidence" />
           </a-tab-pane>
           <a-tab-pane key="response" tab="响应">
-            <InvestigationResponse
-              :response="workspace.response" :can-decide="canDecide" @decide="decideResponse" />
+            <div class="response-panes">
+              <InvestigationResponse
+                :response="workspace.response" :can-decide="canDecide" @decide="decideResponse" />
+              <ResponseProposalForm
+                v-if="canCreateProposal"
+                :source-alert-ref="workspace.source_alert_ref"
+                :evidence="workspace.evidence"
+                :submitting="creatingProposal"
+                @create="createProposal" />
+            </div>
           </a-tab-pane>
         </a-tabs>
       </template>
@@ -65,15 +73,17 @@ import ToolActivityList from '../../components/copilot/ToolActivityList.vue'
 import InvestigationTimeline from '../../components/copilot/InvestigationTimeline.vue'
 import EvidenceDetailDrawer from '../../components/copilot/EvidenceDetailDrawer.vue'
 import InvestigationResponse from '../../components/copilot/InvestigationResponse.vue'
+import ResponseProposalForm from '../../components/copilot/ResponseProposalForm.vue'
 import {
   approveAgentResponse,
   cancelAgentInvestigation,
+  createAgentResponseProposal,
   getAgentInvestigationWorkspace,
   rejectAgentResponse,
 } from '../../api/index.js'
 import { useAuth } from '../../composables/useAuth.js'
 import { formatTime } from '../../utils/display.js'
-import { isExecutionTerminal, isInvestigationActive } from '../../utils/copilot.js'
+import { canCreateResponseProposal, isInvestigationActive, needsResponsePolling } from '../../utils/copilot.js'
 
 // §25：进行中约 2.5s 轮询；终态停止；页面隐藏暂停；失败保留上次快照并标注过期。
 const POLL_INTERVAL_MS = 2500
@@ -88,6 +98,7 @@ const refreshing = ref(false)
 const error = ref('')
 const stale = ref(false)
 const cancelling = ref(false)
+const creatingProposal = ref(false)
 const activeTab = ref('overview')
 const selectedEvidenceId = ref('')
 const drawerOpen = ref(false)
@@ -112,12 +123,16 @@ const selectedEvidence = computed(
 
 // 审批权限：仅管理员/分析师可决策，审计角色只读（与后端 @PreAuthorize 一致，前端只是不显示按钮）。
 const canDecide = computed(() => ['admin', 'analyst'].includes(authState.user?.role))
-// 执行中的响应仍需要轮询，即便调查本身已是终态。
-const hasPendingExecution = computed(
-  () => (workspace.value?.response?.proposals || []).some(
-    (proposal) => proposal.execution && !isExecutionTerminal(proposal.execution.status),
-  ),
-)
+const proposals = computed(() => workspace.value?.response?.proposals || [])
+// 创建提案同样是写操作：只有调查已 COMPLETED、本次调查尚无提案、且至少有证据可引用时才出现表单。
+const canCreateProposal = computed(() => canCreateResponseProposal({
+  status: status.value,
+  proposals: proposals.value,
+  role: authState.user?.role,
+  evidenceCount: (workspace.value?.evidence || []).length,
+}))
+// 响应仍在推进（已批准等待提交 / 非终态执行）时仍要轮询，即便调查本身已是终态。
+const responseInFlight = computed(() => needsResponsePolling(proposals.value))
 
 function clearTimer() {
   if (timer) { window.clearTimeout(timer); timer = null }
@@ -125,7 +140,7 @@ function clearTimer() {
 
 function scheduleNext() {
   clearTimer()
-  if (!active.value && !hasPendingExecution.value) return
+  if (!active.value && !responseInFlight.value) return
   if (typeof document !== 'undefined' && document.hidden) return
   timer = window.setTimeout(() => { void poll() }, POLL_INTERVAL_MS)
 }
@@ -157,7 +172,7 @@ async function fetchWorkspace({ manual = false } = {}) {
 
 function onVisibilityChange() {
   if (document.hidden) clearTimer()
-  else if (active.value || hasPendingExecution.value) void poll()
+  else if (active.value || responseInFlight.value) void poll()
 }
 
 function openEvidence(evidenceId) {
@@ -184,6 +199,20 @@ async function cancel() {
     message.error(`取消失败：${cause?.message || '未知错误'}`)
   } finally {
     cancelling.value = false
+  }
+}
+
+async function createProposal(body) {
+  if (creatingProposal.value) return
+  creatingProposal.value = true
+  try {
+    await createAgentResponseProposal(investigationId.value, body)
+    message.success('响应提案已创建，等待策略判定与人工审批')
+    await fetchWorkspace({ manual: true })
+  } catch (cause) {
+    message.error(`创建提案失败：${cause?.message || '未知错误'}`)
+  } finally {
+    creatingProposal.value = false
   }
 }
 
@@ -218,5 +247,5 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .workspace-tabs { margin-top: 4px; }
-.investigation-panes { display: grid; gap: 16px; }
+.investigation-panes, .response-panes { display: grid; gap: 16px; }
 </style>

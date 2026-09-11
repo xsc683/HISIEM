@@ -59,13 +59,12 @@ public class AgentInvestigationController {
      * 派生一条类型化响应提案(CREATED/WAITING_APPROVAL/DENIED)。
      *
      * <p>仅持有审计只读角色的用户不得创建：发起响应属于分析/管理职责。租户与操作人由服务端
-     * 上下文派生，浏览器请求体无法覆盖。</p>
+     * 上下文派生，浏览器请求体无法覆盖；正文只接受有界字段(action_key/evidence_ids/parameters/
+     * reason)，出现 target/tenant_id/actor 等越界字段时返回 400，绝不静默丢弃。</p>
      */
     @PostMapping(value = "/{id}/response-proposals", produces = MediaType.APPLICATION_JSON_VALUE)
     @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST')")
-    public String createResponseProposal(
-            @PathVariable String id,
-            @RequestBody AgentInvestigationService.CreateProposal body) {
+    public String createResponseProposal(@PathVariable String id, @RequestBody String body) {
         return service.createResponseProposal(id, operator(), body).toString();
     }
 

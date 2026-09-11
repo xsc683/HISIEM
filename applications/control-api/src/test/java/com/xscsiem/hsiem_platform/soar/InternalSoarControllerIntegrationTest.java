@@ -71,6 +71,37 @@ class InternalSoarControllerIntegrationTest {
     }
 
     @Test
+    void sameIdempotencyKeyWithADifferentContractIsAConflictNotAWrongTarget() throws Exception {
+        SoarPlaybook playbook = published("alert", List.of("alert.created"));
+        String key = "copilot-fixed-key";
+        String firstId = JsonPath.read(mvc.perform(triggerRequest(playbook.id(), "alert-42", key, TENANT))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.execution_id").isString())
+                .andReturn().getResponse().getContentAsString(), "$.execution_id");
+
+        // (a) Replaying the SAME immutable contract converges on the same execution.
+        mvc.perform(triggerRequest(playbook.id(), "alert-42", key, TENANT))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.execution_id").value(firstId));
+
+        // (b) The SAME key with a DIFFERENT target must NOT silently return the first
+        // execution — that would land the operator's approved action on the wrong alert.
+        mvc.perform(triggerRequest(playbook.id(), "alert-99", key, TENANT))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("CONFLICT"));
+        assertEquals(1, executionCount(playbook.id(), key), "冲突请求不得产生新的执行");
+
+        // (c) The first execution is untouched: still pointed at the originally approved alert.
+        assertEquals("alert-42", store.getExecution(TENANT, firstId).objectId());
+    }
+
+    private int executionCount(String playbookId, String messageId) {
+        Integer count = jdbc.queryForObject("SELECT COUNT(*) FROM soar_execution WHERE playbook_id = ? "
+                + "AND trigger_message_id = ?", Integer.class, playbookId, messageId);
+        return count == null ? 0 : count;
+    }
+
+    @Test
     void missingBearerIsUnauthorized() throws Exception {
         mvc.perform(post("/api/internal/soar/executions")
                         .header("X-Tenant-ID", TENANT)

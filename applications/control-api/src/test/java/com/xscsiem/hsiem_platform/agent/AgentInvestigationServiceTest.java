@@ -106,12 +106,9 @@ class AgentInvestigationServiceTest {
                 org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<String>>any())).thenReturn(response);
         TenantContext.set("tenant-a");
 
-        var proposal = new AgentInvestigationService.CreateProposal(
-                "START_SOAR_PLAYBOOK",
-                new AgentInvestigationService.ResponseTarget("hisiem", "alert", "alert-1", null),
-                java.util.List.of("ev-1", "ev-2"),
-                java.util.Map.of("playbook_id", "pb-9"),
-                "contain");
+        String proposal = "{\"action_key\":\"START_SOAR_PLAYBOOK\","
+                + "\"evidence_ids\":[\"ev-1\",\"ev-2\"],"
+                + "\"parameters\":{\"playbook_id\":\"pb-9\"},\"reason\":\"contain\"}";
 
         JsonNode body = service("agent-secret").createResponseProposal(ID, "analyst", proposal);
 
@@ -132,6 +129,11 @@ class AgentInvestigationServiceTest {
         // 浏览器身份不可注入：租户/操作人只走服务端头，绝不出现在请求体。
         assertTrue(!sent.contains("tenant"), sent);
         assertTrue(!sent.contains("actor"), sent);
+        // 且不得携带任何浏览器可自行选择的目标字段：目标由 Copilot 从 source_alert_ref 派生。
+        for (String forbidden : java.util.List.of(
+                "target", "provider", "resource_type", "address_id", "business_id")) {
+            assertTrue(!sent.contains(forbidden), sent);
+        }
     }
 
     @Test
@@ -179,9 +181,47 @@ class AgentInvestigationServiceTest {
         TenantContext.set("tenant-a");
         assertThrows(IllegalArgumentException.class,
                 () -> service("agent-secret").createResponseProposal(ID, "analyst",
-                        new AgentInvestigationService.CreateProposal("  ", null, java.util.List.of(), java.util.Map.of(), "x")));
+                        "{\"action_key\":\"  \",\"reason\":\"x\"}"));
         assertThrows(IllegalArgumentException.class,
                 () -> service("agent-secret").createResponseProposal(ID, "analyst", null));
+    }
+
+    @Test
+    void createResponseProposalRejectsAnyOutOfBoundsField() throws Exception {
+        TenantContext.set("tenant-a");
+        String base = "\"action_key\":\"START_SOAR_PLAYBOOK\",\"reason\":\"x\"";
+        for (String forbidden : java.util.List.of(
+                "\"target\":{\"provider\":\"hisiem\",\"resource_type\":\"alert\",\"address_id\":\"a-9\"}",
+                "\"tenant_id\":\"tenant-b\"",
+                "\"actor\":\"someone-else\"",
+                "\"provider\":\"hisiem\"")) {
+            IllegalArgumentException failure = assertThrows(IllegalArgumentException.class,
+                    () -> service("agent-secret").createResponseProposal(
+                            ID, "analyst", "{" + base + "," + forbidden + "}"));
+            assertTrue(failure.getMessage().contains("不接受字段"), failure.getMessage());
+        }
+        // 目标/身份既不能被提交，也不能被静默忽略成一次“成功”的请求。
+        verify(client, org.mockito.Mockito.never()).send(any(), any());
+    }
+
+    @Test
+    void createResponseProposalRejectsUnboundedParametersAndEmptyInput() throws Exception {
+        TenantContext.set("tenant-a");
+        String good = "\"action_key\":\"START_SOAR_PLAYBOOK\",\"evidence_ids\":[\"ev-1\"],"
+                + "\"parameters\":{\"playbook_id\":\"pb-9\"},\"reason\":\"contain\"";
+        // 每一种都必须在传输层显式失败：越界的参数键、非标量参数值、空证据、空理由。
+        for (String bad : java.util.List.of(
+                good.replace("\"playbook_id\":\"pb-9\"",
+                        "\"playbook_id\":\"pb-9\",\"target\":\"evil\""),
+                good.replace("\"playbook_id\":\"pb-9\"", "\"playbook_id\":{\"x\":1}"),
+                good.replace("\"evidence_ids\":[\"ev-1\"]", "\"evidence_ids\":[]"),
+                good.replace("\"reason\":\"contain\"", "\"reason\":\"   \""),
+                good.replace("\"playbook_id\":\"pb-9\"", "\"provider\":\"hisiem\""))) {
+            assertThrows(IllegalArgumentException.class,
+                    () -> service("agent-secret").createResponseProposal(
+                            ID, "analyst", "{" + bad + "}"));
+        }
+        verify(client, org.mockito.Mockito.never()).send(any(), any());
     }
 
     private static String bodyOf(HttpRequest request) throws Exception {

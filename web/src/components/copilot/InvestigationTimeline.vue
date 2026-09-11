@@ -11,12 +11,12 @@
     <a-timeline v-else class="timeline">
       <a-timeline-item v-for="(entry, index) in filtered" :key="`${entry.kind}-${entry.ref_id}-${index}`" :color="kindColor(entry.kind)">
         <div class="timeline-head">
-          <a-tag color="default" class="timeline-kind">{{ timelineKindLabel(entry.kind) }}</a-tag>
+          <a-tag color="default" class="timeline-kind">{{ timelineEntryLabel(entry) }}</a-tag>
           <span class="timeline-title">{{ entry.title || '—' }}</span>
           <span class="timeline-time"><TimeText :value="entry.occurred_at" /></span>
         </div>
         <div class="timeline-foot">
-          <a-tag v-if="entry.status" :color="toolStatusColor(entry.status)">{{ entry.status }}</a-tag>
+          <a-tag v-if="entry.status" :color="toolStatusColor(entry.status)">{{ timelineStatusLabel(entry.status) }}</a-tag>
           <a-tag
             v-if="entry.ref_type === 'evidence' && entry.ref_id" color="blue" class="ref-chip"
             @click="emit('select-evidence', entry.ref_id)">
@@ -33,7 +33,13 @@
 import { computed, ref } from 'vue'
 import { Empty } from 'ant-design-vue'
 import TimeText from '../common/TimeText.vue'
-import { TIMELINE_FILTERS, filterTimeline, timelineKindLabel, toolStatusColor } from '../../utils/copilot.js'
+import {
+  TIMELINE_FILTERS,
+  filterTimeline,
+  timelineEntryLabel,
+  timelineStatusLabel,
+  toolStatusColor,
+} from '../../utils/copilot.js'
 
 const props = defineProps({ timeline: { type: Array, default: () => [] } })
 const emit = defineEmits(['select-evidence'])
