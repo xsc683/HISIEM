@@ -160,6 +160,13 @@ export const lookupAlertInvestigation = (alertId) => request(`/alerts/${segment(
 export const getAgentInvestigation = (id) => request(`/agent-investigations/${segment(id)}`)
 export const getAgentInvestigationWorkspace = (id) => request(`/agent-investigations/${segment(id)}/workspace`)
 export const cancelAgentInvestigation = (id) => request(`/agent-investigations/${segment(id)}/cancel`, { method: 'POST' })
+// 响应工作流（P2）：浏览器只提交有界契约，决策方向由路由决定，租户/操作人由服务端派生。
+export const createAgentResponseProposal = (id, body) =>
+  request(`/agent-investigations/${segment(id)}/response-proposals`, json('POST', body))
+export const approveAgentResponse = (approvalRequestId, body) =>
+  request(`/agent-investigations/response-approvals/${segment(approvalRequestId)}/approve`, json('POST', body))
+export const rejectAgentResponse = (approvalRequestId, body) =>
+  request(`/agent-investigations/response-approvals/${segment(approvalRequestId)}/reject`, json('POST', body))
 
 // 案件
 export function listCases(status, entity, size = 100) {

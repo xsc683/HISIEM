@@ -3,8 +3,10 @@ package com.xscsiem.hsiem_platform.auth;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.xscsiem.hsiem_platform.onboarding.ApiError;
 import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.annotation.Order;
 import org.springframework.http.MediaType;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -39,7 +41,35 @@ public class SecurityConfig {
         };
     }
 
+    /**
+     * 内部服务到服务链:SOC Copilot 触发 SOAR 执行。必须排在用户会话链之前,
+     * 只匹配 {@code /api/internal/**},不要求用户成员关系,不落回用户链。
+     */
     @Bean
+    @Order(1)
+    SecurityFilterChain internalServiceSecurity(HttpSecurity http,
+                                                @Value("${app.internal-service.token:}") String internalServiceToken,
+                                                ObjectMapper mapper) throws Exception {
+        http
+                .securityMatcher("/api/internal/**")
+                .csrf(csrf -> csrf.disable())
+                .cors(cors -> {})
+                .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .authorizeHttpRequests(auth -> auth
+                        .anyRequest().hasRole("INTERNAL_SERVICE"))
+                .exceptionHandling(errors -> errors
+                        .authenticationEntryPoint(jsonError(mapper, HttpServletResponse.SC_UNAUTHORIZED,
+                                "UNAUTHORIZED", "未授权"))
+                        .accessDeniedHandler(jsonDenied(mapper)))
+                .addFilterBefore(new InternalServiceAuthFilter(internalServiceToken, mapper),
+                        AnonymousAuthenticationFilter.class)
+                .httpBasic(basic -> basic.disable())
+                .formLogin(form -> form.disable());
+        return http.build();
+    }
+
+    @Bean
+    @Order(2)
     SecurityFilterChain apiSecurity(HttpSecurity http, BearerSessionFilter bearerSessionFilter,
                                     TenantContextFilter tenantContextFilter,
                                     ObjectMapper mapper) throws Exception {

@@ -50,6 +50,10 @@ const TIMELINE_KIND_LABELS = {
   EVIDENCE_RECORDED: '证据记录', HYPOTHESIS_ASSESSED: '假设评估', FINDING_RECORDED: '发现记录',
   RESULT_FINALIZED: '结论生成', INVESTIGATION_COMPLETED: '调查完成',
   INVESTIGATION_CANCELLED: '调查取消', INVESTIGATION_FAILED: '调查失败',
+  RESPONSE_PROPOSAL_CREATED: '响应提案', RESPONSE_POLICY_EVALUATED: '策略判定',
+  RESPONSE_APPROVAL_REQUESTED: '请求审批', RESPONSE_APPROVED: '已批准', RESPONSE_REJECTED: '已驳回',
+  RESPONSE_EXECUTION_QUEUED: '执行排队', RESPONSE_EXECUTION_STARTED: '执行开始',
+  RESPONSE_EXECUTION_SUCCEEDED: '执行成功', RESPONSE_EXECUTION_FAILED: '执行失败',
 }
 export function timelineKindLabel(kind) { return TIMELINE_KIND_LABELS[kind] || kind || '—' }
 
@@ -61,6 +65,15 @@ export const TIMELINE_FILTERS = [
   { key: 'evidence', label: '证据', kinds: ['EVIDENCE_RECORDED', 'HYPOTHESIS_ASSESSED'] },
   { key: 'analysis', label: '分析', kinds: ['FINDING_RECORDED'] },
   { key: 'result', label: '结论', kinds: ['RESULT_FINALIZED', 'INVESTIGATION_COMPLETED', 'INVESTIGATION_CANCELLED', 'INVESTIGATION_FAILED'] },
+  {
+    key: 'response',
+    label: '响应',
+    kinds: [
+      'RESPONSE_PROPOSAL_CREATED', 'RESPONSE_POLICY_EVALUATED', 'RESPONSE_APPROVAL_REQUESTED',
+      'RESPONSE_APPROVED', 'RESPONSE_REJECTED', 'RESPONSE_EXECUTION_QUEUED',
+      'RESPONSE_EXECUTION_STARTED', 'RESPONSE_EXECUTION_SUCCEEDED', 'RESPONSE_EXECUTION_FAILED',
+    ],
+  },
 ]
 export function filterTimeline(entries, filterKey) {
   const filter = TIMELINE_FILTERS.find((item) => item.key === filterKey) || TIMELINE_FILTERS[0]
@@ -87,3 +100,35 @@ export function confidencePercent(confidence) {
   if (typeof confidence !== 'number' || Number.isNaN(confidence)) return '—'
   return `${Math.round(confidence * 100)}%`
 }
+
+// P2 响应工作流展示：提案/执行/策略/动作的标签与颜色。
+export const RESPONSE_PROPOSAL_STATUS_LABELS = {
+  CREATED: '已创建', DENIED: '策略拒绝', WAITING_APPROVAL: '待审批',
+  APPROVED: '已批准', REJECTED: '已驳回', SUBMITTED: '已提交',
+}
+export const RESPONSE_PROPOSAL_STATUS_COLORS = {
+  CREATED: 'default', DENIED: 'red', WAITING_APPROVAL: 'orange',
+  APPROVED: 'green', REJECTED: 'default', SUBMITTED: 'blue',
+}
+export function responseProposalStatusLabel(status) { return RESPONSE_PROPOSAL_STATUS_LABELS[status] || status || '—' }
+export function responseProposalStatusColor(status) { return RESPONSE_PROPOSAL_STATUS_COLORS[status] || 'default' }
+
+const EXECUTION_STATUS_LABELS = { QUEUED: '排队中', RUNNING: '执行中', SUCCEEDED: '成功', FAILED: '失败' }
+const EXECUTION_STATUS_COLORS = { QUEUED: 'default', RUNNING: 'blue', SUCCEEDED: 'green', FAILED: 'red' }
+export function executionStatusLabel(status) { return EXECUTION_STATUS_LABELS[status] || status || '—' }
+export function executionStatusColor(status) { return EXECUTION_STATUS_COLORS[status] || 'default' }
+export function isExecutionTerminal(status) { return status === 'SUCCEEDED' || status === 'FAILED' }
+
+const POLICY_DECISION_LABELS = { REQUIRE_APPROVAL: '需要人工审批', DENY: '策略拒绝' }
+const POLICY_DECISION_COLORS = { REQUIRE_APPROVAL: 'orange', DENY: 'red' }
+export function policyDecisionLabel(decision) { return POLICY_DECISION_LABELS[decision] || decision || '—' }
+export function policyDecisionColor(decision) { return POLICY_DECISION_COLORS[decision] || 'default' }
+
+const RESPONSE_ACTION_LABELS = {
+  START_SOAR_PLAYBOOK: '启动 SOAR 剧本', BLOCK_SOURCE_IP: '封禁源 IP',
+  DISABLE_ACCOUNT: '禁用账户', ISOLATE_HOST: '隔离主机',
+}
+export function responseActionLabel(actionKey) { return RESPONSE_ACTION_LABELS[actionKey] || actionKey || '—' }
+
+// 只有已批准的人工决策可以进入执行；其余状态没有任何执行入口。
+export function canDecideProposal(status) { return status === 'WAITING_APPROVAL' }

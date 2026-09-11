@@ -2,6 +2,8 @@ package com.xscsiem.hsiem_platform.agent;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.xscsiem.hsiem_platform.tenant.TenantContext;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -15,6 +17,8 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.List;
+import java.util.Map;
 
 /**
  * HISIEM 到 SOC Copilot 调查工作台的服务端读取/取消代理。
@@ -83,6 +87,86 @@ public class AgentInvestigationService {
                 + "&address_id=" + enc(addressId);
         return send(request("GET", "/lookup" + query, actor, null), "告警调查查询");
     }
+
+    /**
+     * POST /api/v1/investigations/{id}/response-proposals — 派生并持久化一条类型化响应提案。
+     *
+     * <p>浏览器只能提交有界的动作契约；租户/操作人一律由服务端上下文派生，请求体不接受这两项，
+     * 因此浏览器无法把提案归到别的租户或冒充他人。此处仅做传输层转发，不代替 Copilot 的
+     * 策略/审批判定。</p>
+     */
+    public JsonNode createResponseProposal(String investigationId, String actor, CreateProposal body) {
+        if (body == null || body.actionKey() == null || body.actionKey().isBlank()) {
+            throw new IllegalArgumentException("响应提案必须携带 action_key");
+        }
+        ObjectNode node = mapper.createObjectNode();
+        node.put("action_key", body.actionKey().trim());
+        if (body.target() != null) {
+            ObjectNode target = node.putObject("target");
+            target.put("provider", body.target().provider());
+            target.put("resource_type", body.target().resourceType());
+            target.put("address_id", body.target().addressId());
+            if (body.target().businessId() != null) {
+                target.put("business_id", body.target().businessId());
+            }
+        }
+        ArrayNode evidence = node.putArray("evidence_ids");
+        if (body.evidenceIds() != null) {
+            for (String id : body.evidenceIds()) {
+                if (id != null && !id.isBlank()) {
+                    evidence.add(id.trim());
+                }
+            }
+        }
+        ObjectNode parameters = node.putObject("parameters");
+        if (body.parameters() != null) {
+            body.parameters().forEach((key, value) -> {
+                if (key != null && value != null) {
+                    parameters.put(key, value);
+                }
+            });
+        }
+        node.put("reason", body.reason() == null ? "" : body.reason().trim());
+        return send(request("POST", path(investigationId) + "/response-proposals", actor, node.toString()),
+                "响应提案");
+    }
+
+    /**
+     * POST /api/v1/investigations/response-approvals/{id}/approve|reject — 记录一次人类审批决策。
+     *
+     * <p>决策种类由本方法的 {@code approve} 参数(源自 BFF 路由)决定，绝不取自信任请求体，
+     * 避免请求体与路由不一致造成“看似拒绝实为批准”。{@code expected_revision}/{@code
+     * expected_content_hash} 是浏览器看到的契约版本，绑定到该提案的精确内容；不一致时 Copilot
+     * 拒绝(409)，绝不误执行。</p>
+     */
+    public JsonNode decideResponseApproval(String approvalRequestId, String actor, boolean approve,
+                                           ApprovalDecisionInput body) {
+        ObjectNode node = mapper.createObjectNode();
+        node.put("decision", approve ? "APPROVE" : "REJECT");
+        if (body != null) {
+            node.put("expected_revision", body.expectedRevision());
+            node.put("expected_content_hash",
+                    body.expectedContentHash() == null ? "" : body.expectedContentHash().trim());
+            if (body.reason() != null && !body.reason().isBlank()) {
+                node.put("reason", body.reason().trim());
+            }
+        } else {
+            node.put("expected_revision", 0);
+            node.put("expected_content_hash", "");
+        }
+        String suffix = approve ? "/approve" : "/reject";
+        return send(request("POST", "/response-approvals/" + enc(approvalRequestId) + suffix, actor,
+                node.toString()), "响应审批");
+    }
+
+    /** 浏览器可提交的响应提案契约(仅动作/目标/证据/参数/理由;无租户、无操作人)。 */
+    public record CreateProposal(String actionKey, ResponseTarget target, List<String> evidenceIds,
+                                 Map<String, String> parameters, String reason) { }
+
+    public record ResponseTarget(String provider, String resourceType, String addressId, String businessId) { }
+
+    /** 一次人类审批的绑定契约。 */
+    public record ApprovalDecisionInput(long expectedRevision, String expectedContentHash, String reason) { }
 
     private static String path(String investigationId) {
         return "/" + enc(investigationId);

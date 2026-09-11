@@ -39,6 +39,10 @@
           <a-tab-pane key="timeline" tab="时间线">
             <InvestigationTimeline :timeline="workspace.timeline" @select-evidence="openEvidence" />
           </a-tab-pane>
+          <a-tab-pane key="response" tab="响应">
+            <InvestigationResponse
+              :response="workspace.response" :can-decide="canDecide" @decide="decideResponse" />
+          </a-tab-pane>
         </a-tabs>
       </template>
     </LoadState>
@@ -60,15 +64,23 @@ import HypothesisList from '../../components/copilot/HypothesisList.vue'
 import ToolActivityList from '../../components/copilot/ToolActivityList.vue'
 import InvestigationTimeline from '../../components/copilot/InvestigationTimeline.vue'
 import EvidenceDetailDrawer from '../../components/copilot/EvidenceDetailDrawer.vue'
-import { cancelAgentInvestigation, getAgentInvestigationWorkspace } from '../../api/index.js'
+import InvestigationResponse from '../../components/copilot/InvestigationResponse.vue'
+import {
+  approveAgentResponse,
+  cancelAgentInvestigation,
+  getAgentInvestigationWorkspace,
+  rejectAgentResponse,
+} from '../../api/index.js'
+import { useAuth } from '../../composables/useAuth.js'
 import { formatTime } from '../../utils/display.js'
-import { isInvestigationActive } from '../../utils/copilot.js'
+import { isExecutionTerminal, isInvestigationActive } from '../../utils/copilot.js'
 
 // §25：进行中约 2.5s 轮询；终态停止；页面隐藏暂停；失败保留上次快照并标注过期。
 const POLL_INTERVAL_MS = 2500
 
 const route = useRoute()
 const router = useRouter()
+const { state: authState } = useAuth()
 
 const workspace = ref(null)
 const loading = ref(true)
@@ -98,13 +110,22 @@ const selectedEvidence = computed(
   () => (workspace.value?.evidence || []).find((item) => item.evidence_id === selectedEvidenceId.value) || null,
 )
 
+// 审批权限：仅管理员/分析师可决策，审计角色只读（与后端 @PreAuthorize 一致，前端只是不显示按钮）。
+const canDecide = computed(() => ['admin', 'analyst'].includes(authState.user?.role))
+// 执行中的响应仍需要轮询，即便调查本身已是终态。
+const hasPendingExecution = computed(
+  () => (workspace.value?.response?.proposals || []).some(
+    (proposal) => proposal.execution && !isExecutionTerminal(proposal.execution.status),
+  ),
+)
+
 function clearTimer() {
   if (timer) { window.clearTimeout(timer); timer = null }
 }
 
 function scheduleNext() {
   clearTimer()
-  if (!active.value) return
+  if (!active.value && !hasPendingExecution.value) return
   if (typeof document !== 'undefined' && document.hidden) return
   timer = window.setTimeout(() => { void poll() }, POLL_INTERVAL_MS)
 }
@@ -136,7 +157,7 @@ async function fetchWorkspace({ manual = false } = {}) {
 
 function onVisibilityChange() {
   if (document.hidden) clearTimer()
-  else if (active.value) void poll()
+  else if (active.value || hasPendingExecution.value) void poll()
 }
 
 function openEvidence(evidenceId) {
@@ -163,6 +184,24 @@ async function cancel() {
     message.error(`取消失败：${cause?.message || '未知错误'}`)
   } finally {
     cancelling.value = false
+  }
+}
+
+async function decideResponse({ proposal, decision }) {
+  const approval = proposal?.approval
+  if (!approval?.request_id) return
+  // 精确契约：把用户看到的版本+指纹原样回传,由后端校验绑定。
+  const body = {
+    expected_revision: approval.expected_revision,
+    expected_content_hash: approval.expected_content_hash,
+  }
+  try {
+    if (decision === 'APPROVE') await approveAgentResponse(approval.request_id, body)
+    else await rejectAgentResponse(approval.request_id, body)
+    message.success(decision === 'APPROVE' ? '已批准，执行已进入持久化队列' : '已驳回')
+    await fetchWorkspace({ manual: true })
+  } catch (cause) {
+    message.error(`${decision === 'APPROVE' ? '批准' : '驳回'}失败：${cause?.message || '未知错误'}`)
   }
 }
 

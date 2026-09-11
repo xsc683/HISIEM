@@ -100,6 +100,122 @@ class AgentInvestigationServiceTest {
     }
 
     @Test
+    void createResponseProposalSendsBoundedContractWithServerSideIdentity() throws Exception {
+        HttpResponse<String> response = response(201, "{\"proposal\":{\"status\":\"WAITING_APPROVAL\"}}");
+        when(client.send(any(HttpRequest.class),
+                org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<String>>any())).thenReturn(response);
+        TenantContext.set("tenant-a");
+
+        var proposal = new AgentInvestigationService.CreateProposal(
+                "START_SOAR_PLAYBOOK",
+                new AgentInvestigationService.ResponseTarget("hisiem", "alert", "alert-1", null),
+                java.util.List.of("ev-1", "ev-2"),
+                java.util.Map.of("playbook_id", "pb-9"),
+                "contain");
+
+        JsonNode body = service("agent-secret").createResponseProposal(ID, "analyst", proposal);
+
+        assertEquals("WAITING_APPROVAL", body.path("proposal").path("status").asText());
+        var captor = org.mockito.ArgumentCaptor.forClass(HttpRequest.class);
+        verify(client).send(captor.capture(), any());
+        HttpRequest request = captor.getValue();
+        assertEquals("POST", request.method());
+        assertEquals("https://agent.example/api/v1/investigations/" + ID + "/response-proposals",
+                request.uri().toString());
+        assertEquals("tenant-a", request.headers().firstValue("X-Tenant-ID").orElseThrow());
+        assertEquals("analyst", request.headers().firstValue("X-Actor-Subject").orElseThrow());
+        assertEquals("Bearer agent-secret", request.headers().firstValue("Authorization").orElseThrow());
+        String sent = bodyOf(request);
+        assertTrue(sent.contains("\"action_key\":\"START_SOAR_PLAYBOOK\""), sent);
+        assertTrue(sent.contains("\"playbook_id\":\"pb-9\""), sent);
+        assertTrue(sent.contains("\"evidence_ids\":[\"ev-1\",\"ev-2\"]"), sent);
+        // 浏览器身份不可注入：租户/操作人只走服务端头，绝不出现在请求体。
+        assertTrue(!sent.contains("tenant"), sent);
+        assertTrue(!sent.contains("actor"), sent);
+    }
+
+    @Test
+    void decideResponseApprovalBindsRouteDecisionNotBody() throws Exception {
+        HttpResponse<String> response = response(200, "{\"status\":\"APPROVED\",\"execution_queued\":true}");
+        when(client.send(any(HttpRequest.class),
+                org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<String>>any())).thenReturn(response);
+        TenantContext.set("tenant-a");
+
+        var input = new AgentInvestigationService.ApprovalDecisionInput(3, "hash-abc", "looks good");
+        service("agent-secret").decideResponseApproval("req-1", "operator", true, input);
+
+        var captor = org.mockito.ArgumentCaptor.forClass(HttpRequest.class);
+        verify(client).send(captor.capture(), any());
+        HttpRequest request = captor.getValue();
+        assertEquals("POST", request.method());
+        assertEquals("https://agent.example/api/v1/investigations/response-approvals/req-1/approve",
+                request.uri().toString());
+        assertEquals("operator", request.headers().firstValue("X-Actor-Subject").orElseThrow());
+        String sent = bodyOf(request);
+        assertTrue(sent.contains("\"decision\":\"APPROVE\""), sent);
+        assertTrue(sent.contains("\"expected_revision\":3"), sent);
+        assertTrue(sent.contains("\"expected_content_hash\":\"hash-abc\""), sent);
+    }
+
+    @Test
+    void rejectResponseApprovalTargetsRejectPathAndDecision() throws Exception {
+        HttpResponse<String> response = response(200, "{\"status\":\"REJECTED\",\"execution_queued\":false}");
+        when(client.send(any(HttpRequest.class),
+                org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<String>>any())).thenReturn(response);
+        TenantContext.set("tenant-a");
+
+        var input = new AgentInvestigationService.ApprovalDecisionInput(1, "hash-xyz", null);
+        service("agent-secret").decideResponseApproval("req-2", "operator", false, input);
+
+        var captor = org.mockito.ArgumentCaptor.forClass(HttpRequest.class);
+        verify(client).send(captor.capture(), any());
+        HttpRequest request = captor.getValue();
+        assertTrue(request.uri().toString().endsWith("/response-approvals/req-2/reject"));
+        assertTrue(bodyOf(request).contains("\"decision\":\"REJECT\""));
+    }
+
+    @Test
+    void createResponseProposalRequiresActionKey() {
+        TenantContext.set("tenant-a");
+        assertThrows(IllegalArgumentException.class,
+                () -> service("agent-secret").createResponseProposal(ID, "analyst",
+                        new AgentInvestigationService.CreateProposal("  ", null, java.util.List.of(), java.util.Map.of(), "x")));
+        assertThrows(IllegalArgumentException.class,
+                () -> service("agent-secret").createResponseProposal(ID, "analyst", null));
+    }
+
+    private static String bodyOf(HttpRequest request) throws Exception {
+        var chunks = new java.io.ByteArrayOutputStream();
+        var done = new java.util.concurrent.CompletableFuture<Void>();
+        request.bodyPublisher().orElseThrow().subscribe(
+                new java.util.concurrent.Flow.Subscriber<java.nio.ByteBuffer>() {
+                    @Override
+                    public void onSubscribe(java.util.concurrent.Flow.Subscription subscription) {
+                        subscription.request(Long.MAX_VALUE);
+                    }
+
+                    @Override
+                    public void onNext(java.nio.ByteBuffer item) {
+                        byte[] bytes = new byte[item.remaining()];
+                        item.get(bytes);
+                        chunks.writeBytes(bytes);
+                    }
+
+                    @Override
+                    public void onError(Throwable throwable) {
+                        done.completeExceptionally(throwable);
+                    }
+
+                    @Override
+                    public void onComplete() {
+                        done.complete(null);
+                    }
+                });
+        done.get();
+        return chunks.toString(java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    @Test
     void mapsUpstreamStatusCodesWithoutLeakingBody() throws Exception {
         TenantContext.set("tenant-a");
         assertMaps(404, 404, "AGENT_INVESTIGATION_NOT_FOUND", "secret upstream detail");

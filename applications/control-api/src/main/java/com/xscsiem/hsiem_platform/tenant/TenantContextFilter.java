@@ -31,6 +31,12 @@ public class TenantContextFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
                                     FilterChain chain) throws ServletException, IOException {
+        // 内部服务链自带独立认证与租户来源(/api/internal/**),用户成员关系校验不适用。
+        // 该过滤器是 @Component,可能被 Boot 注册为全局 Filter,因此在路径上再兜底一次。
+        if (request.getRequestURI().startsWith("/api/internal/")) {
+            chain.doFilter(request, response);
+            return;
+        }
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         if (authentication == null || !authentication.isAuthenticated()
                 || "anonymousUser".equals(authentication.getName())) {

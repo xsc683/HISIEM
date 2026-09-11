@@ -64,4 +64,46 @@ class AgentInvestigationControllerTest {
                 .path("latest").path("investigation_id").asText());
         verify(service).lookupForAlert("hisiem", "alert", "alert-doc-9", "analyst");
     }
+
+    @Test
+    void createResponseProposalUsesServerDerivedOperator() throws Exception {
+        AgentInvestigationService service = mock(AgentInvestigationService.class);
+        var body = new AgentInvestigationService.CreateProposal(
+                "START_SOAR_PLAYBOOK",
+                new AgentInvestigationService.ResponseTarget("hisiem", "alert", "alert-1", null),
+                java.util.List.of("ev-1"),
+                java.util.Map.of("playbook_id", "pb-9"),
+                "contain");
+        when(service.createResponseProposal(ID, "analyst", body))
+                .thenReturn(MAPPER.readTree("{\"proposal\":{\"status\":\"WAITING_APPROVAL\"}}"));
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken("analyst", "token"));
+        AgentInvestigationController controller = new AgentInvestigationController(service);
+
+        assertEquals("WAITING_APPROVAL",
+                MAPPER.readTree(controller.createResponseProposal(ID, body))
+                        .path("proposal").path("status").asText());
+        verify(service).createResponseProposal(ID, "analyst", body);
+    }
+
+    @Test
+    void approveAndRejectRoutesSelectDecisionExplicitly() throws Exception {
+        AgentInvestigationService service = mock(AgentInvestigationService.class);
+        var input = new AgentInvestigationService.ApprovalDecisionInput(2, "hash", null);
+        when(service.decideResponseApproval("req-1", "operator", true, input))
+                .thenReturn(MAPPER.readTree("{\"status\":\"APPROVED\",\"execution_queued\":true}"));
+        when(service.decideResponseApproval("req-1", "operator", false, input))
+                .thenReturn(MAPPER.readTree("{\"status\":\"REJECTED\",\"execution_queued\":false}"));
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken("operator", "token"));
+        AgentInvestigationController controller = new AgentInvestigationController(service);
+
+        assertEquals("APPROVED", MAPPER.readTree(controller.approveResponse("req-1", input))
+                .path("status").asText());
+        assertEquals("REJECTED", MAPPER.readTree(controller.rejectResponse("req-1", input))
+                .path("status").asText());
+        // Decision is chosen by the route, never by the request body.
+        verify(service).decideResponseApproval("req-1", "operator", true, input);
+        verify(service).decideResponseApproval("req-1", "operator", false, input);
+    }
 }
