@@ -37,14 +37,14 @@ public class AgentInvestigationController {
     @GetMapping(value = "/{id}", produces = MediaType.APPLICATION_JSON_VALUE)
     @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST', 'AUDIT')")
     public String investigation(@PathVariable String id) {
-        return service.getInvestigation(id).toString();
+        return service.getInvestigation(id, operator()).toString();
     }
 
     /** 只读工作台读模型(Overview/Evidence/Investigation/Timeline)。 */
     @GetMapping(value = "/{id}/workspace", produces = MediaType.APPLICATION_JSON_VALUE)
     @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST', 'AUDIT')")
     public String workspace(@PathVariable String id) {
-        return service.getWorkspace(id).toString();
+        return service.getWorkspace(id, operator()).toString();
     }
 
     /** 取消仍在可取消状态的调查；后端权威判定可取消性。 */

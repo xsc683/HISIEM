@@ -54,6 +54,11 @@ public class AgentLaunchService {
         this.investigationRouteBase = investigationRouteBase == null
                 ? "" : investigationRouteBase.replaceFirst("/+$", "");
         this.bearerToken = bearerToken == null ? "" : bearerToken.trim();
+        if (this.bearerToken.isBlank()) {
+            // 集成运行时 Copilot 会校验服务凭据；空凭据必须让进程启动失败，绝不静默发匿名请求。
+            throw new IllegalStateException(
+                    "Copilot 服务凭据未配置：app.agent.bearer-token / HISIEM_AGENT_BEARER_TOKEN 必须为非空");
+        }
         if (requestTimeout.isZero() || requestTimeout.isNegative()) {
             throw new IllegalArgumentException("Agent 请求超时必须为正数");
         }
@@ -88,10 +93,9 @@ public class AgentLaunchService {
                 .header("X-Actor-Subject", requestedBy.trim())
                 .header("Idempotency-Key",
                         "hisiem-launch:" + TenantContext.id() + ":" + resourceType + ":" + addressId)
+                // 构造期已强制 bearerToken 非空：启动请求始终携带服务凭据。
+                .header("Authorization", "Bearer " + bearerToken)
                 .POST(HttpRequest.BodyPublishers.ofString(body));
-        if (!bearerToken.isBlank()) {
-            request.header("Authorization", "Bearer " + bearerToken);
-        }
 
         final HttpResponse<String> response;
         try {

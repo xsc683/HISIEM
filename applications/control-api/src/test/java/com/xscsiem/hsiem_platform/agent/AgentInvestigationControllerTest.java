@@ -26,14 +26,16 @@ class AgentInvestigationControllerTest {
     }
 
     @Test
-    void workspaceDelegatesToService() throws Exception {
+    void workspaceForwardsServerDerivedActorToService() throws Exception {
         AgentInvestigationService service = mock(AgentInvestigationService.class);
         JsonNode expected = MAPPER.readTree("{\"investigation\":{\"status\":\"COMPLETED\"}}");
-        when(service.getWorkspace(ID)).thenReturn(expected);
+        when(service.getWorkspace(ID, "analyst")).thenReturn(expected);
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken("analyst", "token"));
         AgentInvestigationController controller = new AgentInvestigationController(service);
 
         assertEquals(expected, MAPPER.readTree(controller.workspace(ID)));
-        verify(service).getWorkspace(ID);
+        verify(service).getWorkspace(ID, "analyst");
     }
 
     @Test
@@ -49,15 +51,17 @@ class AgentInvestigationControllerTest {
     }
 
     @Test
-    void alertLookupUsesAlertProviderAndAddressId() throws Exception {
+    void alertLookupUsesAlertProviderAddressIdAndAuthenticatedActor() throws Exception {
         AgentInvestigationService service = mock(AgentInvestigationService.class);
-        when(service.lookupForAlert("hisiem", "alert", "alert-doc-9"))
+        when(service.lookupForAlert("hisiem", "alert", "alert-doc-9", "analyst"))
                 .thenReturn(MAPPER.readTree("{\"active\":null,\"latest\":{\"investigation_id\":\"x\"}}"));
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken("analyst", "token"));
         AlertController controller = new AlertController(mock(AlertService.class),
                 mock(AgentLaunchService.class), service);
 
         assertEquals("x", MAPPER.readTree(controller.agentInvestigation("alert-doc-9"))
                 .path("latest").path("investigation_id").asText());
-        verify(service).lookupForAlert("hisiem", "alert", "alert-doc-9");
+        verify(service).lookupForAlert("hisiem", "alert", "alert-doc-9", "analyst");
     }
 }

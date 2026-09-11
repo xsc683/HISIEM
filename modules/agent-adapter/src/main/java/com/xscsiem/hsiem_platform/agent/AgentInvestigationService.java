@@ -50,6 +50,11 @@ public class AgentInvestigationService {
         this.client = client;
         this.investigationsUri = endpoint(agentBaseUrl, "/api/v1/investigations");
         this.bearerToken = bearerToken == null ? "" : bearerToken.trim();
+        if (this.bearerToken.isBlank()) {
+            // 集成运行时 Copilot 会校验服务凭据；空凭据必须让进程启动失败，绝不静默发匿名请求。
+            throw new IllegalStateException(
+                    "Copilot 服务凭据未配置：app.agent.bearer-token / HISIEM_AGENT_BEARER_TOKEN 必须为非空");
+        }
         if (requestTimeout.isZero() || requestTimeout.isNegative()) {
             throw new IllegalArgumentException("Agent 请求超时必须为正数");
         }
@@ -57,13 +62,13 @@ public class AgentInvestigationService {
     }
 
     /** GET /api/v1/investigations/{id} — 调查概览(头部)。 */
-    public JsonNode getInvestigation(String investigationId) {
-        return send(request("GET", path(investigationId), null, null), "调查概览");
+    public JsonNode getInvestigation(String investigationId, String actor) {
+        return send(request("GET", path(investigationId), actor, null), "调查概览");
     }
 
     /** GET /api/v1/investigations/{id}/workspace — 只读工作台读模型。 */
-    public JsonNode getWorkspace(String investigationId) {
-        return send(request("GET", path(investigationId) + "/workspace", null, null), "调查工作台");
+    public JsonNode getWorkspace(String investigationId, String actor) {
+        return send(request("GET", path(investigationId) + "/workspace", actor, null), "调查工作台");
     }
 
     /** POST /api/v1/investigations/{id}/cancel — 取消仍在可取消状态的调查。 */
@@ -72,11 +77,11 @@ public class AgentInvestigationService {
     }
 
     /** GET /api/v1/investigations/lookup — 某来源告警的活动/最近调查(告警再进入)。 */
-    public JsonNode lookupForAlert(String provider, String resourceType, String addressId) {
+    public JsonNode lookupForAlert(String provider, String resourceType, String addressId, String actor) {
         String query = "?provider=" + enc(provider)
                 + "&resource_type=" + enc(resourceType)
                 + "&address_id=" + enc(addressId);
-        return send(request("GET", "/lookup" + query, null, null), "告警调查查询");
+        return send(request("GET", "/lookup" + query, actor, null), "告警调查查询");
     }
 
     private static String path(String investigationId) {
@@ -91,9 +96,8 @@ public class AgentInvestigationService {
         if (actor != null && !actor.isBlank()) {
             builder.header("X-Actor-Subject", actor.trim());
         }
-        if (!bearerToken.isBlank()) {
-            builder.header("Authorization", "Bearer " + bearerToken);
-        }
+        // 构造期已强制 bearerToken 非空：每个服务端请求都携带服务凭据，绝无匿名调用分支。
+        builder.header("Authorization", "Bearer " + bearerToken);
         if (body != null) {
             builder.header("Content-Type", "application/json")
                     .method(method, HttpRequest.BodyPublishers.ofString(body));

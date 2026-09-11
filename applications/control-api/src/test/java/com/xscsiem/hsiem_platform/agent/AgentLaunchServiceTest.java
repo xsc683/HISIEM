@@ -83,28 +83,36 @@ class AgentLaunchServiceTest {
                 org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<String>>any())).thenReturn(response);
         TenantContext.set("default");
 
-        AgentLaunchResponse result = service("", "").launch(
+        AgentLaunchResponse result = service("agent-secret", "").launch(
                 "alert_investigation", "alert", "a-1", "analyst");
 
         assertEquals("/copilot/investigations/" + INVESTIGATION_ID, result.redirectUrl());
     }
 
     @Test
-    void launchCaseUsesCaseResourceTypeWithoutBearer() throws Exception {
+    void launchCaseUsesCaseResourceTypeWithServiceCredentials() throws Exception {
         HttpResponse<String> response = response(201,
                 "{\"investigation_id\":\"22222222-2222-2222-2222-222222222222\"}");
         when(client.send(any(HttpRequest.class),
                 org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<String>>any())).thenReturn(response);
         TenantContext.set("tenant-b");
 
-        service("", "").launch("case_investigation", "case", "case-20260827-1", "admin");
+        service("agent-secret", "").launch("case_investigation", "case", "case-20260827-1", "admin");
 
         var requestCaptor = org.mockito.ArgumentCaptor.forClass(HttpRequest.class);
         verify(client).send(requestCaptor.capture(), any());
         HttpRequest request = requestCaptor.getValue();
         JsonNode payload = MAPPER.readTree(body(request));
         assertEquals("case", payload.path("source_alert_ref").path("resource_type").asText());
-        assertTrue(request.headers().firstValue("Authorization").isEmpty());
+        assertEquals("Bearer agent-secret", request.headers().firstValue("Authorization").orElseThrow());
+    }
+
+    @Test
+    void blankServiceTokenFailsClosed() {
+        // 空/空白服务凭据必须在构造期失败：绝不静默发送匿名服务端请求。
+        assertThrows(IllegalStateException.class, () -> service("", ""));
+        assertThrows(IllegalStateException.class, () -> service("   ", ""));
+        assertThrows(IllegalStateException.class, () -> service(null, ""));
     }
 
     @Test
@@ -115,7 +123,7 @@ class AgentLaunchServiceTest {
                 org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<String>>any())).thenReturn(response);
 
         AgentLaunchException error = assertThrows(AgentLaunchException.class,
-                () -> service("", "").launch("alert_investigation", "alert", "a-1", "analyst"));
+                () -> service("agent-secret", "").launch("alert_investigation", "alert", "a-1", "analyst"));
 
         assertEquals(502, error.status());
         assertEquals("AGENT_REJECTED", error.code());
@@ -129,7 +137,7 @@ class AgentLaunchServiceTest {
                 org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<String>>any())).thenReturn(response);
 
         AgentLaunchException error = assertThrows(AgentLaunchException.class,
-                () -> service("", "").launch("case_investigation", "case", "case-1", "analyst"));
+                () -> service("agent-secret", "").launch("case_investigation", "case", "case-1", "analyst"));
 
         assertEquals(503, error.status());
         assertEquals("AGENT_UNAVAILABLE", error.code());
@@ -142,14 +150,14 @@ class AgentLaunchServiceTest {
                 org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<String>>any())).thenReturn(response);
 
         AgentLaunchException error = assertThrows(AgentLaunchException.class,
-                () -> service("", "").launch("alert_investigation", "alert", "a-1", "analyst"));
+                () -> service("agent-secret", "").launch("alert_investigation", "alert", "a-1", "analyst"));
         assertEquals(502, error.status());
         assertEquals("AGENT_INVALID_RESPONSE", error.code());
     }
 
     @Test
     void invalidTypeIsRejectedBeforeHttpCall() {
-        AgentLaunchService service = service("", "");
+        AgentLaunchService service = service("agent-secret", "");
 
         assertThrows(IllegalArgumentException.class,
                 () -> service.launch("threat_hunt", "alert", "a-1", "analyst"));
@@ -164,7 +172,7 @@ class AgentLaunchServiceTest {
                 .thenThrow(new java.io.IOException("offline"));
 
         AgentLaunchException error = assertThrows(AgentLaunchException.class,
-                () -> service("", "").launch("alert_investigation", "alert", "a-1", "analyst"));
+                () -> service("agent-secret", "").launch("alert_investigation", "alert", "a-1", "analyst"));
 
         assertEquals(503, error.status());
         assertEquals("AGENT_UNAVAILABLE", error.code());

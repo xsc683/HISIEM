@@ -75,7 +75,7 @@ public class AlertController {
     @GetMapping(value = "/{id}/agent-investigation", produces = MediaType.APPLICATION_JSON_VALUE)
     @PreAuthorize("hasAnyRole('ADMIN', 'ANALYST', 'AUDIT')")
     public String agentInvestigation(@PathVariable String id) {
-        return agentInvestigation.lookupForAlert("hisiem", "alert", id).toString();
+        return agentInvestigation.lookupForAlert("hisiem", "alert", id, operator()).toString();
     }
 
     /** 三线流转(open→ack→investigating→resolved/closed)。 */
