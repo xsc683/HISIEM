@@ -114,6 +114,27 @@
         </a-descriptions>
       </div>
 
+      <div
+        v-else-if="proposalSubmissionNeedsAttention(proposal)"
+        class="submission-attention">
+        <a-divider orientation="left">执行</a-divider>
+        <a-alert
+          type="warning" show-icon
+          message="提交状态不确定 / 需要人工处理"
+          description="自动提交重试预算已耗尽，但每次失败都是瞬时/不确定的（超时、限流、上游不可用），因此系统既不能断言 HISIEM 拒绝了这次提交，也不能断言没有产生执行。在此之前不会显示任何外部执行编号，系统也不会再自动重试，需要人工核对。" />
+        <a-descriptions size="small" :column="2">
+          <a-descriptions-item label="提交状态">
+            <a-tag :color="submissionStatusColor(proposal.submission.status)">
+              <span data-testid="submission-status">{{ submissionStatusLabel(proposal.submission.status) }}</span>
+            </a-tag>
+          </a-descriptions-item>
+          <a-descriptions-item label="提交尝试次数">{{ proposal.submission.attempt_count }}</a-descriptions-item>
+          <a-descriptions-item label="需要处理时间"><TimeText :value="proposal.submission.attention_required_at" /></a-descriptions-item>
+          <a-descriptions-item label="最后一次错误码">{{ proposal.submission.last_error_code || '—' }}</a-descriptions-item>
+          <a-descriptions-item label="最后一次错误信息" :span="2">{{ proposal.submission.safe_error_message || '—' }}</a-descriptions-item>
+        </a-descriptions>
+      </div>
+
       <div v-else-if="proposalAwaitingSubmission(proposal)" class="awaiting-submission">
         <a-divider orientation="left">执行</a-divider>
         <a-alert
@@ -155,6 +176,7 @@ import {
   executionStatusColor,
   proposalAwaitingSubmission,
   proposalSubmissionFailed,
+  proposalSubmissionNeedsAttention,
   proposalSubmissionRetrying,
   submissionStatusColor,
   submissionStatusLabel,
@@ -199,5 +221,5 @@ function shortHash(hash) {
 .decision-meta { color: #5b6b76; font-size: 12px; margin-left: 8px; }
 .decision-reason, .execution-error { margin: 0; color: #5b6b76; }
 .execution-error { color: #cf1322; }
-.awaiting-submission, .submission-failed { display: grid; gap: 8px; }
+.awaiting-submission, .submission-failed, .submission-attention { display: grid; gap: 8px; }
 </style>

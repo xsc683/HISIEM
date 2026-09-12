@@ -487,3 +487,44 @@ test('提案展示提出人与提出时间，而不是借用调查发起人', as
   const card = page.locator('.surface-card', { hasText: '启动 SOAR 剧本' })
   await expect(card).toContainText('提出时间')
 })
+
+const EXHAUSTED_SUBMISSION = {
+  status: 'APPROVED',
+  execution: null,
+  submission: {
+    status: 'ATTENTION_REQUIRED',
+    attempt_count: 9,
+    last_error_code: 'HTTP_503',
+    safe_error_message: 'upstream unavailable',
+    attention_required_at: '2026-09-11T00:30:00Z',
+  },
+}
+
+test('重试预算耗尽：显示需要人工处理，不声称 provider 拒绝，且停止轮询', async ({ page }) => {
+  let workspaceReads = 0
+  await mockApi(page, {
+    role: 'analyst',
+    onWorkspaceRead: () => { workspaceReads += 1 },
+    response: workspace({ recommendations: [], proposals: [EXHAUSTED_SUBMISSION] }),
+  })
+
+  await page.goto('/copilot/investigations/inv-1')
+  await page.locator('.ant-tabs-tab', { hasText: '响应' }).click()
+
+  await expect(page.locator('.submission-attention')).toContainText('提交状态不确定 / 需要人工处理')
+  await expect(page.getByTestId('submission-status')).toContainText('需要人工处理')
+  await expect(page.locator('.submission-attention')).toContainText('不会再自动重试')
+  await expect(page.locator('.submission-attention')).toContainText('HTTP_503')
+
+  // 既不能声称 provider 拒绝，也不能再显示「等待提交 / 重试中」。
+  await expect(page.locator('.submission-failed')).toHaveCount(0)
+  await expect(page.locator('.awaiting-submission')).toHaveCount(0)
+  await expect(page.getByText('执行方')).toHaveCount(0)
+  await expect(page.getByText('外部执行 ID')).toHaveCount(0)
+  await expect(page.getByText('prop-1')).toHaveCount(0)
+
+  // 终态：等待超过一个轮询周期后不得再拉取工作区。
+  const before = workspaceReads
+  await page.waitForTimeout(POLL_WAIT_MS)
+  expect(workspaceReads).toBe(before)
+})

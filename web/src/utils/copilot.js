@@ -59,6 +59,7 @@ const TIMELINE_KIND_LABELS = {
   RESPONSE_EXECUTION_SUCCEEDED: '执行成功', RESPONSE_EXECUTION_FAILED: '执行失败',
   RESPONSE_SUBMISSION_QUEUED: '提交排队', RESPONSE_SUBMISSION_RETRYING: '提交重试',
   RESPONSE_SUBMISSION_FAILED: '提交失败',
+  RESPONSE_SUBMISSION_ATTENTION_REQUIRED: '提交需人工处理',
 }
 export function timelineKindLabel(kind) { return TIMELINE_KIND_LABELS[kind] || kind || '—' }
 
@@ -68,6 +69,7 @@ const TIMELINE_STATUS_LABELS = {
   AWAITING_SUBMISSION: '已批准 / 等待提交',
   SUBMISSION_RETRYING: '已批准 / 提交重试中',
   SUBMISSION_FAILED: '提交失败',
+  SUBMISSION_ATTENTION_REQUIRED: '提交状态不确定 / 需要人工处理',
 }
 export function timelineEntryLabel(entry) {
   const status = entry?.status
@@ -80,6 +82,7 @@ const TIMELINE_STATUS_NAMES = {
   AWAITING_SUBMISSION: '等待提交',
   SUBMISSION_RETRYING: '提交重试中',
   SUBMISSION_FAILED: '提交失败',
+  SUBMISSION_ATTENTION_REQUIRED: '需要人工处理',
   REQUIRE_APPROVAL: '需要人工审批',
   DENY: '策略拒绝',
 }
@@ -103,6 +106,7 @@ export const TIMELINE_FILTERS = [
       'RESPONSE_PROPOSAL_CREATED', 'RESPONSE_POLICY_EVALUATED', 'RESPONSE_APPROVAL_REQUESTED',
       'RESPONSE_APPROVED', 'RESPONSE_REJECTED',
       'RESPONSE_SUBMISSION_QUEUED', 'RESPONSE_SUBMISSION_RETRYING', 'RESPONSE_SUBMISSION_FAILED',
+      'RESPONSE_SUBMISSION_ATTENTION_REQUIRED',
       'RESPONSE_EXECUTION_QUEUED',
       'RESPONSE_EXECUTION_STARTED', 'RESPONSE_EXECUTION_SUCCEEDED', 'RESPONSE_EXECUTION_FAILED',
     ],
@@ -170,9 +174,11 @@ export function canDecideProposal(status) { return status === 'WAITING_APPROVAL'
 // 不是某次执行 —— 因为根本没有产生执行。
 export const SUBMISSION_STATUS_LABELS = {
   PENDING: '等待提交', RETRYING: '提交重试中', SUBMITTED: '已提交', FAILED_DEFINITIVE: '提交失败',
+  ATTENTION_REQUIRED: '需要人工处理',
 }
 const SUBMISSION_STATUS_COLORS = {
   PENDING: 'default', RETRYING: 'orange', SUBMITTED: 'blue', FAILED_DEFINITIVE: 'red',
+  ATTENTION_REQUIRED: 'volcano',
 }
 export function submissionStatusLabel(status) { return SUBMISSION_STATUS_LABELS[status] || status || '—' }
 export function submissionStatusColor(status) { return SUBMISSION_STATUS_COLORS[status] || 'default' }
@@ -182,16 +188,24 @@ export function proposalSubmissionFailed(proposal) {
   return proposal?.submission?.status === 'FAILED_DEFINITIVE'
 }
 
+// 自动重试预算已耗尽，但失败始终是瞬时/不确定的：既不能声称 provider 拒绝，
+// 也不能声称没有执行 —— 需要人工/运维介入。这是本地终态，不再自动重试。
+export function proposalSubmissionNeedsAttention(proposal) {
+  return proposal?.submission?.status === 'ATTENTION_REQUIRED'
+}
+
 // 已批准但还没有 provider 执行引用 = 本地持久提交意图已排队，等待 submit worker 真正调用
 // HISIEM。此时没有外部执行 ID 可展示(§6)。提交失败不是「等待提交」，必须如实显示。
 export function proposalAwaitingSubmission(proposal) {
   if (proposalSubmissionFailed(proposal)) return false
+  if (proposalSubmissionNeedsAttention(proposal)) return false
   return proposal?.status === 'APPROVED' && !proposal?.execution
 }
 
 // 已批准但尚未提交，且 provider 还在重试 —— 同样是本地状态，没有外部执行 ID。
 export function proposalSubmissionRetrying(proposal) {
   if (proposalSubmissionFailed(proposal)) return false
+  if (proposalSubmissionNeedsAttention(proposal)) return false
   return proposal?.status === 'APPROVED'
     && !proposal?.execution
     && proposal?.submission?.status === 'RETRYING'
@@ -201,12 +215,14 @@ export function proposalSubmissionRetrying(proposal) {
  * 响应是否还在推进，从而需要继续轮询。
  *
  * - 提交被 provider 明确拒绝 = 终态，停止轮询；
+ * - 自动重试预算耗尽、需要人工处理 = 终态，停止轮询；
  * - 已有 provider 执行 = 按 provider 状态判断，终态即停止；
  * - 已批准但还没有执行 = 本地提交仍在排队/重试，继续轮询。
  */
 export function needsResponsePolling(proposals) {
   return (proposals || []).some((proposal) => {
     if (proposalSubmissionFailed(proposal)) return false
+    if (proposalSubmissionNeedsAttention(proposal)) return false
     if (proposal?.execution) return !isExecutionTerminal(proposal.execution.status)
     return proposal?.status === 'APPROVED'
   })

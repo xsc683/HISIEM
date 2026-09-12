@@ -24,6 +24,7 @@ import {
   proposalAwaitingSubmission,
   responseActionLabel,
   proposalSubmissionFailed,
+  proposalSubmissionNeedsAttention,
   proposalSubmissionRetrying,
   responseProposalStatusColor,
   responseProposalStatusLabel,
@@ -91,6 +92,45 @@ test('提交被 provider 明确拒绝是终态：停止轮询，且不再是“�
     needsResponsePolling([{ status: 'SUBMITTED', execution: { status: 'SUCCEEDED' }, submission: { status: 'FAILED_DEFINITIVE' } }]),
     false,
   )
+})
+
+test('重试预算耗尽 = 确定的本地终态：停止轮询，且不声称 provider 拒绝', () => {
+  // 失败始终是瞬时/不确定的：既不能说 provider 拒绝，也不能说没有执行。
+  const exhausted = {
+    status: 'APPROVED',
+    execution: null,
+    submission: {
+      status: 'ATTENTION_REQUIRED',
+      attempt_count: 9,
+      last_error_code: 'HTTP_503',
+      safe_error_message: 'upstream unavailable',
+      attention_required_at: '2026-09-11T00:30:00Z',
+    },
+  }
+  assert.equal(proposalSubmissionNeedsAttention(exhausted), true)
+  // 它不是「明确拒绝」，也不是「还在重试」，更不是「等待提交」。
+  assert.equal(proposalSubmissionFailed(exhausted), false)
+  assert.equal(proposalSubmissionRetrying(exhausted), false)
+  assert.equal(proposalAwaitingSubmission(exhausted), false)
+  // 终态：浏览器不再轮询一个永远不会再发生的重试。
+  assert.equal(needsResponsePolling([exhausted]), false)
+  assert.equal(submissionStatusLabel('ATTENTION_REQUIRED'), '需要人工处理')
+  assert.notEqual(submissionStatusLabel('ATTENTION_REQUIRED'), submissionStatusLabel('FAILED_DEFINITIVE'))
+})
+
+test('重试预算耗尽的时间线和响应过滤器都来自持久事实', () => {
+  assert.equal(timelineKindLabel('RESPONSE_SUBMISSION_ATTENTION_REQUIRED'), '提交需人工处理')
+  assert.equal(
+    timelineEntryLabel({
+      kind: 'RESPONSE_SUBMISSION_ATTENTION_REQUIRED',
+      status: 'SUBMISSION_ATTENTION_REQUIRED',
+    }),
+    '提交状态不确定 / 需要人工处理',
+  )
+  assert.equal(timelineStatusLabel('SUBMISSION_ATTENTION_REQUIRED'), '需要人工处理')
+
+  const response = TIMELINE_FILTERS.find((item) => item.key === 'response')
+  assert.ok(response.kinds.includes('RESPONSE_SUBMISSION_ATTENTION_REQUIRED'))
 })
 
 test('提交重试中仍是本地状态：继续轮询，且不显示外部执行 ID', () => {
