@@ -56,7 +56,10 @@ function workspace(response, overrides = {}) {
   }
 }
 
-async function mockApi(page, { role = 'admin', response, onWrite, playbooks = PLAYBOOKS } = {}) {
+async function mockApi(
+  page,
+  { role = 'admin', response, onWrite, onWorkspaceRead, playbooks = PLAYBOOKS } = {},
+) {
   await page.addInitScript(() => {
     localStorage.setItem('siem_token', 'e2e-token')
     localStorage.setItem('siem_tenant', 'default')
@@ -73,6 +76,7 @@ async function mockApi(page, { role = 'admin', response, onWrite, playbooks = PL
     if (path === '/api/tenants/mine') return json([{ id: 'default', name: '默认租户' }])
     if (path === '/api/soar/playbooks' && request.method() === 'GET') return json(playbooks)
     if (path === '/api/agent-investigations/inv-1/workspace' && request.method() === 'GET') {
+      if (onWorkspaceRead) onWorkspaceRead()
       return json(typeof current === 'function' ? current() : current)
     }
     if (path === '/api/agent-investigations/inv-1/response-proposals' && request.method() === 'POST') {
@@ -334,4 +338,152 @@ test('越权角色与不满足前提的调查没有创建入口', async ({ page 
     await page.locator('.ant-tabs-tab', { hasText: '响应' }).click()
     await expect(page.locator('.proposal-form'), item.why).toHaveCount(0)
   }
+})
+
+// ---------------------------------------------------------------------------
+// §2 本地提交生命周期 —— 提交失败 / 重试 / 轮询
+// ---------------------------------------------------------------------------
+
+/** 等待超过一个轮询周期（2500ms），以便观察轮询是否继续。 */
+const POLL_WAIT_MS = 3200
+
+const FAILED_SUBMISSION = {
+  status: 'APPROVED',
+  execution: null,
+  submission: {
+    status: 'FAILED_DEFINITIVE',
+    attempt_count: 2,
+    last_error_code: 'HTTP_422',
+    safe_error_message: 'playbook is not published',
+    failed_at: '2026-09-11T00:06:00Z',
+  },
+}
+
+test('提交失败：显示失败原因，不显示外部执行 ID，且停止轮询', async ({ page }) => {
+  let workspaceReads = 0
+  await mockApi(page, {
+    role: 'analyst',
+    onWorkspaceRead: () => { workspaceReads += 1 },
+    response: workspace({ recommendations: [], proposals: [FAILED_SUBMISSION] }),
+  })
+
+  await page.goto('/copilot/investigations/inv-1')
+  await page.locator('.ant-tabs-tab', { hasText: '响应' }).click()
+
+  // 提交失败必须如实显示，而不是继续声称「等待提交」。
+  await expect(page.locator('.submission-failed')).toContainText('提交失败')
+  await expect(page.locator('.submission-failed')).toContainText('没有产生任何外部执行')
+  await expect(page.getByTestId('submission-status')).toContainText('提交失败')
+  await expect(page.locator('.submission-failed')).toContainText('HTTP_422')
+  await expect(page.locator('.submission-failed')).toContainText('playbook is not published')
+  await expect(page.locator('.awaiting-submission')).toHaveCount(0)
+
+  // 没有 provider 执行，就没有任何外部执行编号（也绝不用提案 ID 顶替）。
+  await expect(page.getByText('执行方')).toHaveCount(0)
+  await expect(page.getByText('外部执行 ID')).toHaveCount(0)
+  await expect(page.getByText('prop-1')).toHaveCount(0)
+
+  // 终态：等待超过一个轮询周期后不得再拉取工作区。
+  const before = workspaceReads
+  await page.waitForTimeout(POLL_WAIT_MS)
+  expect(workspaceReads).toBe(before)
+})
+
+const RETRYING_SUBMISSION = {
+  status: 'APPROVED',
+  execution: null,
+  submission: {
+    status: 'RETRYING',
+    attempt_count: 3,
+    last_error_code: 'HTTP_429',
+    safe_error_message: 'throttled',
+    updated_at: '2026-09-11T00:06:00Z',
+  },
+}
+
+test('提交重试中：显示重试状态，且仍在轮询', async ({ page }) => {
+  let workspaceReads = 0
+  await mockApi(page, {
+    role: 'analyst',
+    onWorkspaceRead: () => { workspaceReads += 1 },
+    response: workspace({ recommendations: [], proposals: [RETRYING_SUBMISSION] }),
+  })
+
+  await page.goto('/copilot/investigations/inv-1')
+  await page.locator('.ant-tabs-tab', { hasText: '响应' }).click()
+
+  await expect(page.locator('.awaiting-submission')).toContainText('已批准 / 提交重试中')
+  await expect(page.locator('.awaiting-submission')).toContainText('已尝试 3 次')
+  // 依然是本地状态：没有外部执行 ID。
+  await expect(page.getByText('外部执行 ID')).toHaveCount(0)
+  await expect(page.locator('.submission-failed')).toHaveCount(0)
+
+  const before = workspaceReads
+  await page.waitForTimeout(POLL_WAIT_MS)
+  expect(workspaceReads).toBeGreaterThan(before)
+})
+
+test('已提交的执行继续轮询直到终态，然后停止', async ({ page }) => {
+  let workspaceReads = 0
+  let providerStatus = 'RUNNING'
+  const submitted = {
+    ...PROPOSAL_WAITING,
+    status: 'SUBMITTED',
+    submission: { status: 'SUBMITTED', attempt_count: 1, submitted_at: '2026-09-11T00:05:01Z' },
+    approval: {
+      ...PROPOSAL_WAITING.approval,
+      decision: { decision: 'APPROVE', actor_subject_id: 'operator', actor_display_name: 'operator', reason: null, decided_at: '2026-09-11T00:05:00Z' },
+    },
+  }
+  const withExecution = (status) => ({
+    ...submitted,
+    execution: {
+      provider: 'hisiem', status, submitted_at: '2026-09-11T00:05:01Z',
+      last_observed_at: '2026-09-11T00:05:20Z', external_execution_id: 'exec-77',
+      started_at: '2026-09-11T00:05:02Z',
+      finished_at: status === 'SUCCEEDED' ? '2026-09-11T00:05:30Z' : null,
+      safe_result: {}, safe_error_code: null, safe_error_message: null,
+    },
+  })
+
+  await mockApi(page, {
+    role: 'analyst',
+    onWorkspaceRead: () => { workspaceReads += 1 },
+    response: () => workspace({ recommendations: [], proposals: [withExecution(providerStatus)] }),
+  })
+
+  await page.goto('/copilot/investigations/inv-1')
+  await page.locator('.ant-tabs-tab', { hasText: '响应' }).click()
+
+  // 真实的 provider 执行身份可见，且非终态时继续轮询。
+  await expect(page.getByText('exec-77')).toBeVisible()
+  const before = workspaceReads
+  await page.waitForTimeout(POLL_WAIT_MS)
+  expect(workspaceReads).toBeGreaterThan(before)
+
+  // provider 到达终态后，轮询必须停止（不再无限刷新）。
+  providerStatus = 'SUCCEEDED'
+  await expect(page.locator('.ant-tag', { hasText: '成功' })).toBeVisible()
+  const afterTerminal = workspaceReads
+  await page.waitForTimeout(POLL_WAIT_MS)
+  expect(workspaceReads).toBe(afterTerminal)
+})
+
+test('提案展示提出人与提出时间，而不是借用调查发起人', async ({ page }) => {
+  const proposed = {
+    ...PROPOSAL_WAITING,
+    created_by_subject: 'analyst-proposer',
+    created_by_display_name: '提案人 A',
+  }
+  await mockApi(page, {
+    role: 'analyst',
+    response: workspace({ recommendations: [], proposals: [proposed] }),
+  })
+
+  await page.goto('/copilot/investigations/inv-1')
+  await page.locator('.ant-tabs-tab', { hasText: '响应' }).click()
+
+  await expect(page.getByTestId('proposal-proposer')).toContainText('提案人 A')
+  const card = page.locator('.surface-card', { hasText: '启动 SOAR 剧本' })
+  await expect(card).toContainText('提出时间')
 })

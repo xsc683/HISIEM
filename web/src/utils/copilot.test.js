@@ -23,8 +23,12 @@ import {
   policyDecisionLabel,
   proposalAwaitingSubmission,
   responseActionLabel,
+  proposalSubmissionFailed,
+  proposalSubmissionRetrying,
   responseProposalStatusColor,
   responseProposalStatusLabel,
+  submissionStatusColor,
+  submissionStatusLabel,
   selectablePlaybooks,
   timelineEntryLabel,
   timelineKindLabel,
@@ -67,6 +71,87 @@ test('已批准但未提交的提案不编造外部执行 ID，且仍驱动轮�
   assert.equal(needsResponsePolling([{ status: 'REJECTED', execution: null }]), false)
   assert.equal(needsResponsePolling([]), false)
   assert.equal(needsResponsePolling(null), false)
+})
+
+test('提交被 provider 明确拒绝是终态：停止轮询，且不再是“等待提交”', () => {
+  // provider 拒绝的是这次 SUBMISSION，不是某次执行 —— 没有执行，也就没有外部执行 ID。
+  const failed = {
+    status: 'APPROVED',
+    execution: null,
+    submission: { status: 'FAILED_DEFINITIVE', attempt_count: 2, last_error_code: 'HTTP_422' },
+  }
+  assert.equal(proposalSubmissionFailed(failed), true)
+  assert.equal(proposalAwaitingSubmission(failed), false)
+  assert.equal(proposalSubmissionRetrying(failed), false)
+  // 终态：不再轮询，页面不会无限刷新。
+  assert.equal(needsResponsePolling([failed]), false)
+
+  // 有执行时以 provider 状态为准；提交投影不再决定轮询。
+  assert.equal(
+    needsResponsePolling([{ status: 'SUBMITTED', execution: { status: 'SUCCEEDED' }, submission: { status: 'FAILED_DEFINITIVE' } }]),
+    false,
+  )
+})
+
+test('提交重试中仍是本地状态：继续轮询，且不显示外部执行 ID', () => {
+  const retrying = {
+    status: 'APPROVED',
+    execution: null,
+    submission: { status: 'RETRYING', attempt_count: 3, last_error_code: 'HTTP_429' },
+  }
+  assert.equal(proposalSubmissionRetrying(retrying), true)
+  assert.equal(proposalAwaitingSubmission(retrying), true)
+  assert.equal(proposalSubmissionFailed(retrying), false)
+  assert.equal(needsResponsePolling([retrying]), true)
+
+  // 提交成功但 provider 还在跑：仍然轮询到终态。
+  assert.equal(
+    needsResponsePolling([{
+      status: 'SUBMITTED',
+      submission: { status: 'SUBMITTED' },
+      execution: { status: 'RUNNING', external_execution_id: 'exec-1' },
+    }]),
+    true,
+  )
+})
+
+test('提交状态有独立的中文标签与颜色，不与执行状态混用', () => {
+  assert.equal(submissionStatusLabel('PENDING'), '等待提交')
+  assert.equal(submissionStatusLabel('RETRYING'), '提交重试中')
+  assert.equal(submissionStatusLabel('SUBMITTED'), '已提交')
+  assert.equal(submissionStatusLabel('FAILED_DEFINITIVE'), '提交失败')
+  assert.equal(submissionStatusLabel(null), '—')
+  assert.equal(submissionStatusColor('FAILED_DEFINITIVE'), 'red')
+  assert.equal(submissionStatusColor('RETRYING'), 'orange')
+  // 提交状态与执行状态是两套命名空间，绝不互相解释。
+  assert.notEqual(submissionStatusLabel('FAILED_DEFINITIVE'), executionStatusLabel('FAILED'))
+})
+
+test('提交生命周期的时间线条目来自持久事实，且不冒充执行事实', () => {
+  assert.equal(timelineKindLabel('RESPONSE_SUBMISSION_QUEUED'), '提交排队')
+  assert.equal(timelineKindLabel('RESPONSE_SUBMISSION_RETRYING'), '提交重试')
+  assert.equal(timelineKindLabel('RESPONSE_SUBMISSION_FAILED'), '提交失败')
+  assert.equal(
+    timelineEntryLabel({ kind: 'RESPONSE_SUBMISSION_FAILED', status: 'SUBMISSION_FAILED' }),
+    '提交失败',
+  )
+  assert.equal(
+    timelineEntryLabel({ kind: 'RESPONSE_SUBMISSION_RETRYING', status: 'SUBMISSION_RETRYING' }),
+    '已批准 / 提交重试中',
+  )
+  assert.equal(timelineStatusLabel('SUBMISSION_RETRYING'), '提交重试中')
+  assert.equal(timelineStatusLabel('SUBMISSION_FAILED'), '提交失败')
+
+  // 响应过滤器必须包含提交事实，否则它们会从「响应」视图里消失。
+  const response = TIMELINE_FILTERS.find((item) => item.key === 'response')
+  for (const kind of ['RESPONSE_SUBMISSION_QUEUED', 'RESPONSE_SUBMISSION_RETRYING', 'RESPONSE_SUBMISSION_FAILED']) {
+    assert.ok(response.kinds.includes(kind), kind)
+  }
+  const entries = [
+    { kind: 'RESPONSE_SUBMISSION_FAILED' },
+    { kind: 'PLAN_CREATED' },
+  ]
+  assert.deepEqual(filterTimeline(entries, 'response').map((e) => e.kind), ['RESPONSE_SUBMISSION_FAILED'])
 })
 
 test('已批准等待提交的时间线显示状态而不是执行身份', () => {

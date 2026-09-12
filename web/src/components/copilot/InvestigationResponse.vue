@@ -45,6 +45,12 @@
         </a-descriptions-item>
         <a-descriptions-item label="理由" :span="2">{{ proposal.reason || '—' }}</a-descriptions-item>
         <a-descriptions-item label="策略原因" :span="2">{{ proposal.policy_reason || '—' }}</a-descriptions-item>
+        <a-descriptions-item label="提出人">
+          <span data-testid="proposal-proposer">
+            {{ proposal.created_by_display_name || proposal.created_by_subject || '—' }}
+          </span>
+        </a-descriptions-item>
+        <a-descriptions-item label="提出时间"><TimeText :value="proposal.created_at" /></a-descriptions-item>
         <a-descriptions-item label="内容版本">{{ proposal.revision }}</a-descriptions-item>
         <a-descriptions-item label="内容指纹"><code class="hash">{{ proposal.content_hash }}</code></a-descriptions-item>
       </a-descriptions>
@@ -89,12 +95,33 @@
         </p>
       </div>
 
-      <div v-if="proposalAwaitingSubmission(proposal)" class="awaiting-submission">
+      <div v-if="proposalSubmissionFailed(proposal)" class="submission-failed">
         <a-divider orientation="left">执行</a-divider>
         <a-alert
-          type="info" show-icon
-          message="已批准 / 等待提交"
-          description="人工批准已绑定上面的精确契约，提交命令已进入持久化队列；在 HISIEM 返回真实的执行 ID 之前，这里不会显示任何外部执行编号。" />
+          type="error" show-icon
+          message="提交失败"
+          description="HISIEM 明确拒绝了这次提交，因此没有产生任何外部执行，也不会有外部执行编号；系统不会再自动重试这次提交。" />
+        <a-descriptions size="small" :column="2">
+          <a-descriptions-item label="提交状态">
+            <a-tag :color="submissionStatusColor(proposal.submission.status)">
+              <span data-testid="submission-status">{{ submissionStatusLabel(proposal.submission.status) }}</span>
+            </a-tag>
+          </a-descriptions-item>
+          <a-descriptions-item label="提交尝试次数">{{ proposal.submission.attempt_count }}</a-descriptions-item>
+          <a-descriptions-item label="失败时间"><TimeText :value="proposal.submission.failed_at" /></a-descriptions-item>
+          <a-descriptions-item label="错误码">{{ proposal.submission.last_error_code || '—' }}</a-descriptions-item>
+          <a-descriptions-item label="错误信息" :span="2">{{ proposal.submission.safe_error_message || '—' }}</a-descriptions-item>
+        </a-descriptions>
+      </div>
+
+      <div v-else-if="proposalAwaitingSubmission(proposal)" class="awaiting-submission">
+        <a-divider orientation="left">执行</a-divider>
+        <a-alert
+          :type="proposalSubmissionRetrying(proposal) ? 'warning' : 'info'" show-icon
+          :message="proposalSubmissionRetrying(proposal) ? '已批准 / 提交重试中' : '已批准 / 等待提交'"
+          :description="proposalSubmissionRetrying(proposal)
+            ? `提交命令仍在持久化队列中重试（已尝试 ${proposal.submission?.attempt_count ?? 0} 次）；在 HISIEM 返回真实的执行 ID 之前，这里不会显示任何外部执行编号。`
+            : '人工批准已绑定上面的精确契约，提交命令已进入持久化队列；在 HISIEM 返回真实的执行 ID 之前，这里不会显示任何外部执行编号。'" />
       </div>
 
       <template v-if="proposal.execution">
@@ -127,6 +154,10 @@ import {
   canDecideProposal,
   executionStatusColor,
   proposalAwaitingSubmission,
+  proposalSubmissionFailed,
+  proposalSubmissionRetrying,
+  submissionStatusColor,
+  submissionStatusLabel,
   executionStatusLabel,
   policyDecisionColor,
   policyDecisionLabel,
@@ -168,5 +199,5 @@ function shortHash(hash) {
 .decision-meta { color: #5b6b76; font-size: 12px; margin-left: 8px; }
 .decision-reason, .execution-error { margin: 0; color: #5b6b76; }
 .execution-error { color: #cf1322; }
-.awaiting-submission { display: grid; gap: 8px; }
+.awaiting-submission, .submission-failed { display: grid; gap: 8px; }
 </style>
