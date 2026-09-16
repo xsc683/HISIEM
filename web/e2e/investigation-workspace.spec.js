@@ -88,7 +88,10 @@ test('AI 调查工作台按服务端读模型渲染结论、证据与时间线',
   await expect(page.locator('.finding-card')).toContainText('检测到外部 SSH 暴力破解')
   await expect(page.locator('.finding-card')).toContainText('已纳入结论')
   await expect(page.getByText('MITRE ATT&CK')).toBeVisible()
-  await expect(page.getByText('只读 · 本阶段不执行')).toBeVisible()
+  // 响应建议是「建议文本」，并指向正式的响应流程（提案 → 策略 → 人工审批），可执行动作不在概览里。
+  await expect(page.getByText('建议文本 · 不可执行')).toBeVisible()
+  await expect(page.locator('.readonly-note')).toContainText('不是执行命令')
+  await expect(page.locator('.readonly-note')).toContainText('经策略判定与人工审批')
 
   // 发现 → 证据：引用芯片按持久 ID 解析并打开证据抽屉
   await page.locator('.finding-card .citation-chip').first().click()

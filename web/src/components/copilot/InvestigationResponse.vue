@@ -31,7 +31,7 @@
         </span>
       </template>
 
-      <a-descriptions bordered size="small" :column="2" class="proposal-descriptions">
+      <a-descriptions bordered size="small" :column="isNarrow ? 1 : 2" class="proposal-descriptions">
         <a-descriptions-item label="目标" :span="2">
           <a-tag v-for="(target, index) in proposal.target_refs" :key="index" color="default">
             {{ target.provider }} / {{ target.resource_type }} / {{ target.business_id || target.address_id }}
@@ -57,7 +57,7 @@
 
       <div v-if="proposal.approval" class="approval-block">
         <a-divider orientation="left">审批</a-divider>
-        <a-descriptions size="small" :column="2">
+        <a-descriptions size="small" :column="isNarrow ? 1 : 2">
           <a-descriptions-item label="审批请求">{{ proposal.approval.request_id }}</a-descriptions-item>
           <a-descriptions-item label="请求时间"><TimeText :value="proposal.approval.requested_at" /></a-descriptions-item>
           <a-descriptions-item label="绑定版本">{{ proposal.approval.expected_revision }}</a-descriptions-item>
@@ -101,7 +101,7 @@
           type="error" show-icon
           message="提交失败"
           description="HISIEM 明确拒绝了这次提交，因此没有产生任何外部执行，也不会有外部执行编号；系统不会再自动重试这次提交。" />
-        <a-descriptions size="small" :column="2">
+        <a-descriptions size="small" :column="isNarrow ? 1 : 2">
           <a-descriptions-item label="提交状态">
             <a-tag :color="submissionStatusColor(proposal.submission.status)">
               <span data-testid="submission-status">{{ submissionStatusLabel(proposal.submission.status) }}</span>
@@ -122,7 +122,7 @@
           type="warning" show-icon
           message="提交状态不确定 / 需要人工处理"
           description="自动提交重试预算已耗尽，但每次失败都是瞬时/不确定的（超时、限流、上游不可用），因此系统既不能断言 HISIEM 拒绝了这次提交，也不能断言没有产生执行。在此之前不会显示任何外部执行编号，系统也不会再自动重试，需要人工核对。" />
-        <a-descriptions size="small" :column="2">
+        <a-descriptions size="small" :column="isNarrow ? 1 : 2">
           <a-descriptions-item label="提交状态">
             <a-tag :color="submissionStatusColor(proposal.submission.status)">
               <span data-testid="submission-status">{{ submissionStatusLabel(proposal.submission.status) }}</span>
@@ -147,7 +147,7 @@
 
       <template v-if="proposal.execution">
         <a-divider orientation="left">执行</a-divider>
-        <a-descriptions size="small" :column="2">
+        <a-descriptions size="small" :column="isNarrow ? 1 : 2">
           <a-descriptions-item label="状态">
             <a-tag :color="executionStatusColor(proposal.execution.status)">
               {{ executionStatusLabel(proposal.execution.status) }}
@@ -171,6 +171,7 @@
 <script setup>
 import { computed } from 'vue'
 import TimeText from '../common/TimeText.vue'
+import { useNarrowViewport } from '../../composables/useViewport.js'
 import {
   canDecideProposal,
   executionStatusColor,
@@ -193,6 +194,7 @@ const props = defineProps({
   canDecide: { type: Boolean, default: false },
 })
 const emit = defineEmits(['decide'])
+const { isNarrow } = useNarrowViewport()
 
 const recommendations = computed(() => props.response?.recommendations || [])
 const proposals = computed(() => props.response?.proposals || [])

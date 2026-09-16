@@ -18,7 +18,9 @@
         <a-tabs v-model:activeKey="activeTab" class="workspace-tabs">
           <a-tab-pane key="overview" tab="概览">
             <InvestigationOverview
-              :result="workspace.result" :findings="workspace.findings"
+              :status="status" :result="workspace.result"
+              :evidence="workspace.evidence" :findings="workspace.findings"
+              :proposals="proposals" :can-decide="canDecide"
               :evidence-by-id="evidenceById" :running="running"
               @select-evidence="openEvidence" />
           </a-tab-pane>
@@ -248,4 +250,11 @@ onBeforeUnmount(() => {
 <style scoped>
 .workspace-tabs { margin-top: 4px; }
 .investigation-panes, .response-panes { display: grid; gap: 16px; }
+
+/* 窄屏（Stage D §15/§16）：页签横向可滚动而不是被压扁；详情始终走抽屉，保持线性活动视图。 */
+@media (max-width: 767px) {
+  .workspace-tabs :deep(.ant-tabs-nav) { margin-bottom: 12px; }
+  .workspace-tabs :deep(.ant-tabs-nav-wrap) { overflow-x: auto; }
+  .workspace-tabs :deep(.ant-tabs-nav-list) { flex-wrap: nowrap; }
+}
 </style>

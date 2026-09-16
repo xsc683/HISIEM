@@ -25,7 +25,7 @@
         <span class="strip-item"><span class="strip-label">耗时</span><strong>{{ durationText(header?.started_at, header?.finished_at) }}</strong></span>
         <span v-if="running" class="strip-item running-hint"><a-spin size="small" /> 调查进行中</span>
       </div>
-      <a-descriptions bordered size="small" :column="2" class="header-descriptions">
+      <a-descriptions bordered size="small" :column="isNarrow ? 1 : 2" class="header-descriptions">
         <a-descriptions-item label="创建时间"><TimeText :value="header?.created_at" /></a-descriptions-item>
         <a-descriptions-item label="开始时间"><TimeText :value="header?.started_at" /></a-descriptions-item>
         <a-descriptions-item label="结束时间"><TimeText :value="header?.finished_at" /></a-descriptions-item>
@@ -49,6 +49,7 @@
 import PageHeader from '../common/PageHeader.vue'
 import TimeText from '../common/TimeText.vue'
 import { durationText, investigationPhaseLabel, investigationStatusColor, investigationStatusLabel } from '../../utils/copilot.js'
+import { useNarrowViewport } from '../../composables/useViewport.js'
 
 defineProps({
   header: { type: Object, default: null },
@@ -62,6 +63,7 @@ defineProps({
   title: { type: String, default: 'AI 调查工作台' },
 })
 const emit = defineEmits(['back', 'refresh', 'cancel'])
+const { isNarrow } = useNarrowViewport()
 </script>
 
 <style scoped>

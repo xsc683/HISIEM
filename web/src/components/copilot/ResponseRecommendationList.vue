@@ -1,10 +1,10 @@
 <template>
   <a-card class="surface-card" size="small" :title="`响应建议 (${items.length})`">
-    <template #extra><a-tag color="default">只读 · 本阶段不执行</a-tag></template>
+    <template #extra><a-tag color="default">建议文本 · 不可执行</a-tag></template>
     <a-alert
       type="info" show-icon class="readonly-note"
-      message="以下为 Agent 给出的处置建议，仅作研判参考。"
-      description="当前版本不提供执行 / 阻断 / 隔离 / 审批入口；如需响应处置请在 SOAR 中另行发起。" />
+      message="以下为 Agent 给出的处置建议，仅作研判参考，不是执行命令。"
+      description="需要处置时请在“响应”页签发起有界响应提案；提案必须经策略判定与人工审批后，才会由持久化提交交给 HISIEM 执行。" />
     <a-empty v-if="!items.length" :image="Empty.PRESENTED_IMAGE_SIMPLE" description="未给出响应建议" />
     <ul v-else class="recommendation-list">
       <li v-for="(item, index) in items" :key="index">

@@ -273,3 +273,297 @@ export function buildProposalRequest({ playbookId, evidenceIds, reason } = {}) {
     reason: text,
   }
 }
+
+// ---- Stage D §4/§8 证据权威类别（展示映射，不判定权威） --------------------------
+
+// 冻结规则：HISIEM_* 是平台观测事实；KNOWLEDGE / SYSTEM 只是上下文，永远不能单独支撑
+// 确定性结论；THREAT_INTEL 是外部情报。这与 Copilot 领域里的平台证据判定
+// (`hisiem_soc_copilot.agent.graph.nodes`) 是同一条规则 —— 前端只把服务端已经持久化的
+// source.type 映射成展示标签，不新增、不推断任何权威。
+export const PLATFORM_EVIDENCE_SOURCE_TYPES = [
+  'HISIEM_ALERT', 'HISIEM_EVENT', 'HISIEM_LOG_SEARCH', 'HISIEM_ENTITY',
+]
+
+const AUTHORITY_BY_SOURCE_TYPE = {
+  HISIEM_ALERT: 'PLATFORM_FACT',
+  HISIEM_EVENT: 'PLATFORM_FACT',
+  HISIEM_LOG_SEARCH: 'PLATFORM_FACT',
+  HISIEM_ENTITY: 'PLATFORM_FACT',
+  THREAT_INTEL: 'THREAT_INTEL',
+  KNOWLEDGE: 'KNOWLEDGE_CONTEXT',
+  SYSTEM: 'SYSTEM_CONTEXT',
+}
+
+export const AUTHORITY_LABELS = {
+  PLATFORM_FACT: '平台事实',
+  KNOWLEDGE_CONTEXT: '支持性上下文',
+  SYSTEM_CONTEXT: '系统上下文',
+  THREAT_INTEL: '外部情报',
+  UNKNOWN: '来源未分类',
+}
+
+const AUTHORITY_DESCRIPTIONS = {
+  PLATFORM_FACT: 'HISIEM 直接观测到的平台事实（告警 / 事件 / 日志检索 / 实体）。',
+  KNOWLEDGE_CONTEXT: '检索到的知识，用于理解与解释，本身不是观测事实，不能单独支撑确定性结论。',
+  SYSTEM_CONTEXT: '平台产生的元数据（例如检测规则），属于上下文而非观测事实。',
+  THREAT_INTEL: '来自威胁情报源的补充信息，属于上下文。',
+  UNKNOWN: '来源类型未在已知分类中，请勿据此单独判断。',
+}
+
+export function evidenceAuthority(sourceType) {
+  return AUTHORITY_BY_SOURCE_TYPE[sourceType] || 'UNKNOWN'
+}
+export function authorityLabel(authority) { return AUTHORITY_LABELS[authority] || AUTHORITY_LABELS.UNKNOWN }
+export function authorityDescription(authority) {
+  return AUTHORITY_DESCRIPTIONS[authority] || AUTHORITY_DESCRIPTIONS.UNKNOWN
+}
+export function isPlatformEvidence(sourceType) {
+  return PLATFORM_EVIDENCE_SOURCE_TYPES.includes(sourceType)
+}
+// 支持性上下文（知识/系统/情报）在 UI 上必须显式标注，避免被误读为观测事实。
+export function isSupportingContext(authority) { return authority !== 'PLATFORM_FACT' }
+
+// ---- Stage D §10 Knowledge / Citation 展示 ---------------------------------------
+
+const EMPTY_FIELD = '—'
+
+/**
+ * 从已持久化的证据字段提取知识来源身份（纯函数）。
+ *
+ * 只取来源身份与检索时间：citation id / 文档与 chunk 身份 / source kind / source
+ * version / 标题 / 摘录 / 检索模式 / ATT&CK release。**绝不**返回 rank、score 或
+ * RRF 位置 —— 检索打分是执行元数据，不是权威，也不得当作置信度展示。
+ */
+export function knowledgeFacts(evidence) {
+  if (!evidence) return null
+  const observation = evidence.observation && typeof evidence.observation === 'object' ? evidence.observation : {}
+  const reference = evidence.raw_reference && typeof evidence.raw_reference === 'object' ? evidence.raw_reference : {}
+  const identity = reference.citation_identity && typeof reference.citation_identity === 'object'
+    ? reference.citation_identity : {}
+  const retrieval = reference.retrieval_provenance && typeof reference.retrieval_provenance === 'object'
+    ? reference.retrieval_provenance : {}
+  return {
+    title: observation.title || '',
+    excerpt: observation.excerpt || '',
+    sourceKind: observation.source_kind || '',
+    sourceVersion: observation.source_version || '',
+    citationId: identity.citation_id || '',
+    documentId: identity.document_id || '',
+    documentVersionId: identity.document_version_id || '',
+    chunkId: identity.chunk_id || '',
+    retrievalMode: retrieval.mode || '',
+    retrievedAt: retrieval.retrieved_at || '',
+    techniqueId: observation.technique_id || reference.technique_id || '',
+    framework: observation.framework || reference.framework || '',
+    attackRelease: observation.authoritative_release || reference.authoritative_release || '',
+    tactics: Array.isArray(observation.tactics) ? observation.tactics : [],
+    platforms: Array.isArray(observation.platforms) ? observation.platforms : [],
+  }
+}
+
+export function citationText(facts) {
+  if (!facts) return EMPTY_FIELD
+  return facts.citationId || EMPTY_FIELD
+}
+
+// ---- Stage D §11 AI 调查结论 与 人工处置的区分 ------------------------------------
+
+// 结论只能来自服务端 InvestigationResult；UI 永远不能把「人工处置」显示成同一件事。
+export const VERDICT_AUTHORITY_LABEL = 'AI 调查结论'
+export const VERDICT_AUTHORITY_NOTE = '由 Agent 依据本次调查的证据生成，不等于分析师处置结论。'
+export const ANALYST_DISPOSITION_LABEL = '分析师处置'
+
+// INCONCLUSIVE 是「证据不足」，不是失败；不得渲染成错误态。
+export function verdictIsInconclusive(disposition) { return disposition === 'INCONCLUSIVE' }
+
+// 结论的支撑发现：只按持久 ID 解析，绝不做文本匹配。
+export function supportingFindings(result, findings) {
+  if (!result) return []
+  const ids = new Set((result.finding_ids || []).map((id) => String(id)))
+  if (ids.size === 0) return []
+  return (findings || []).filter((finding) => ids.has(String(finding.finding_id)))
+}
+
+// ---- Stage D §12 响应生命周期（提案 → 策略 → 人工 → 提交 → 执行） ------------------
+
+export const RESPONSE_STAGE_LABELS = {
+  PROPOSAL: '响应提案', POLICY: '策略判定', HUMAN: '人工决策',
+  SUBMISSION: '提交', EXECUTION: 'HISIEM 观测执行',
+}
+const RESPONSE_STAGE_RANK = { PROPOSAL: 0, POLICY: 1, HUMAN: 2, SUBMISSION: 3, EXECUTION: 4 }
+
+/**
+ * 把一个提案映射到它当前所处的生命周期阶段（纯展示，不合并任何中间状态）。
+ *
+ * 每个阶段都有各自的状态与措辞：提案 ≠ 审批 ≠ 提交 ≠ 执行成功。执行阶段只有
+ * 服务端返回了 provider 执行引用才成立 —— 本地提交排队/重试不算执行。
+ */
+export function responseStage(proposal) {
+  if (!proposal) return { stage: null, rank: -1, label: EMPTY_FIELD, status: '', detail: '' }
+  if (proposal.execution) {
+    // 摘要只讲「处于哪个阶段、什么状态」，不复述外部执行编号等技术身份 ——
+    // 完整执行身份（provider / 外部执行 ID / 时间 / 错误）在响应页签的详情里展示。
+    const finished = isExecutionTerminal(proposal.execution.status)
+    return {
+      stage: 'EXECUTION', rank: RESPONSE_STAGE_RANK.EXECUTION,
+      label: RESPONSE_STAGE_LABELS.EXECUTION,
+      status: executionStatusLabel(proposal.execution.status),
+      detail: finished
+        ? 'HISIEM 已返回最终执行状态'
+        : 'HISIEM 正在执行，页面会自动刷新',
+    }
+  }
+  if (proposalSubmissionFailed(proposal)) {
+    return {
+      stage: 'SUBMISSION', rank: RESPONSE_STAGE_RANK.SUBMISSION,
+      label: RESPONSE_STAGE_LABELS.SUBMISSION,
+      status: submissionStatusLabel(proposal.submission?.status),
+      detail: 'HISIEM 明确拒绝这次提交，未产生任何执行，也不再自动重试',
+    }
+  }
+  if (proposalSubmissionNeedsAttention(proposal)) {
+    return {
+      stage: 'SUBMISSION', rank: RESPONSE_STAGE_RANK.SUBMISSION,
+      label: RESPONSE_STAGE_LABELS.SUBMISSION,
+      status: submissionStatusLabel(proposal.submission?.status),
+      detail: '提交结果不确定，需要人工核对；系统已停止自动重试',
+    }
+  }
+  if (proposal.status === 'APPROVED') {
+    return {
+      stage: 'SUBMISSION', rank: RESPONSE_STAGE_RANK.SUBMISSION,
+      label: RESPONSE_STAGE_LABELS.SUBMISSION,
+      status: proposalSubmissionRetrying(proposal)
+        ? submissionStatusLabel('RETRYING') : submissionStatusLabel('PENDING'),
+      detail: '人工批准已进入持久化提交队列；HISIEM 返回执行编号前不显示任何外部执行身份',
+    }
+  }
+  if (proposal.approval?.decision) {
+    return {
+      stage: 'HUMAN', rank: RESPONSE_STAGE_RANK.HUMAN,
+      label: RESPONSE_STAGE_LABELS.HUMAN,
+      status: proposal.approval.decision.decision === 'APPROVE' ? '已批准' : '已驳回',
+      detail: proposal.approval.decision.decision === 'APPROVE'
+        ? '人工已批准，等待持久化提交' : '人工已驳回，不会产生任何执行命令',
+    }
+  }
+  if (proposal.status === 'WAITING_APPROVAL') {
+    return {
+      stage: 'HUMAN', rank: RESPONSE_STAGE_RANK.HUMAN,
+      label: RESPONSE_STAGE_LABELS.HUMAN,
+      status: responseProposalStatusLabel('WAITING_APPROVAL'),
+      detail: '已通过策略判定，等待人工决定；批准前不会执行任何动作',
+    }
+  }
+  // CREATED / DENIED：只到策略判定阶段
+  return {
+    stage: 'POLICY', rank: RESPONSE_STAGE_RANK.POLICY,
+    label: RESPONSE_STAGE_LABELS.POLICY,
+    status: responseProposalStatusLabel(proposal.status),
+    detail: proposal.policy_reason || '',
+  }
+}
+
+/** 生命周期中推进得最远的一个提案（同阶段时取最新创建、再按 ID 稳定排序）。 */
+export function furthestProposal(proposals) {
+  const list = [...(proposals || [])]
+  if (!list.length) return null
+  return list.sort((a, b) => {
+    const rankA = responseStage(a).rank
+    const rankB = responseStage(b).rank
+    if (rankA !== rankB) return rankB - rankA
+    const timeA = new Date(a?.created_at || 0).getTime() || 0
+    const timeB = new Date(b?.created_at || 0).getTime() || 0
+    if (timeA !== timeB) return timeB - timeA
+    return String(b?.proposal_id || '').localeCompare(String(a?.proposal_id || ''))
+  })[0]
+}
+
+// ---- Stage D §5 Landing 状态摘要 -------------------------------------------------
+
+export const ANALYST_ACTION = {
+  SUBMISSION_ATTENTION_REQUIRED: 'SUBMISSION_ATTENTION_REQUIRED',
+  APPROVAL_REQUIRED: 'APPROVAL_REQUIRED',
+  APPROVAL_PENDING_OTHERS: 'APPROVAL_PENDING_OTHERS',
+  INVESTIGATION_RUNNING: 'INVESTIGATION_RUNNING',
+  PROPOSAL_OPTIONAL: 'PROPOSAL_OPTIONAL',
+  NONE: 'NONE',
+}
+
+/**
+ * 「现在是否需要分析师操作」——只由持久状态推导，不看页面会话。
+ *
+ * 顺序即优先级：提交结果不确定（必须人工核对）→ 等待我审批 → 等待他人审批 →
+ * 调查进行中 → 可选提案 → 无需操作。任何一项都不在 UI 里写业务状态。
+ */
+export function analystAction({ status, proposals, canDecide } = {}) {
+  const list = proposals || []
+  if (list.some(proposalSubmissionNeedsAttention)) {
+    return {
+      kind: ANALYST_ACTION.SUBMISSION_ATTENTION_REQUIRED, required: true,
+      label: '需要人工核对提交状态',
+      description: '自动提交重试预算已耗尽，但失败都是瞬时/不确定的：既不能断定 HISIEM 拒绝了这次提交，也不能断定没有产生执行，需要人工核对。',
+    }
+  }
+  // 「等待审批」只对真正停在人工决策阶段的提案成立：用生命周期阶段判定而不是裸 status，
+  // 这样即使上游同时携带更靠后的阶段信息，摘要也不会自相矛盾（例如既说“等待审批”又说“执行中”）。
+  const awaitingDecision = list.filter((proposal) => (
+    proposal?.status === 'WAITING_APPROVAL' && responseStage(proposal).stage === 'HUMAN'
+  ))
+  if (awaitingDecision.length) {
+    return canDecide
+      ? {
+        kind: ANALYST_ACTION.APPROVAL_REQUIRED, required: true,
+        label: '等待您审批响应提案',
+        description: '响应提案已通过策略判定，正在等待具备审批权限的人做出决定；在批准之前不会执行任何动作。',
+      }
+      : {
+        kind: ANALYST_ACTION.APPROVAL_PENDING_OTHERS, required: false,
+        label: '等待他人审批',
+        description: '响应提案正在等待具备审批权限的人处理；您当前只能查看。',
+      }
+  }
+  if (isInvestigationActive(status)) {
+    return {
+      kind: ANALYST_ACTION.INVESTIGATION_RUNNING, required: false,
+      label: 'Agent 调查中',
+      description: '调查仍在进行，页面会在进行中自动刷新，无需操作。',
+    }
+  }
+  if (status === 'COMPLETED' && list.length === 0) {
+    return {
+      kind: ANALYST_ACTION.PROPOSAL_OPTIONAL, required: false,
+      label: '暂无待办',
+      description: '调查已结束且没有响应提案；如研判认为需要处置，可在“响应”页签发起有界提案。',
+    }
+  }
+  return {
+    kind: ANALYST_ACTION.NONE, required: false,
+    label: '无需操作',
+    description: '当前没有需要分析师处理的待办。',
+  }
+}
+
+/** Landing 摘要：一次回答「发生了什么 / 结论是什么 / 有什么支撑 / 要我做什么 / 响应怎样了」。 */
+export function workspaceStateSummary({ status, evidence, findings, result, proposals, canDecide } = {}) {
+  const evidenceCount = (evidence || []).length
+  const findingCount = (findings || []).length
+  const platformCount = (evidence || []).filter(
+    (item) => isPlatformEvidence(item?.source?.type),
+  ).length
+  const proposal = furthestProposal(proposals)
+  return {
+    evidenceCount,
+    platformCount,
+    contextCount: evidenceCount - platformCount,
+    findingCount,
+    verdictDisposition: result?.verdict?.disposition || '',
+    verdictText: result?.verdict ? verdictLabel(result.verdict.disposition) : '尚未生成结论',
+    confidenceText: result?.verdict ? confidencePercent(result.verdict.confidence) : EMPTY_FIELD,
+    action: analystAction({ status, proposals, canDecide }),
+    response: proposal
+      ? { stage: responseStage(proposal), proposalStatus: responseProposalStatusLabel(proposal.status) }
+      : null,
+  }
+}
+

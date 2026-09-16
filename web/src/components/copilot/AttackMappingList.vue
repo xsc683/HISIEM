@@ -5,7 +5,7 @@
       <a-tag v-for="(item, index) in items" :key="index" color="geekblue" class="attack-tag">
         <strong>{{ item.technique_id || item.name }}</strong>
         <span v-if="item.name"> · {{ item.name }}</span>
-        <span v-if="item.framework" class="attack-meta">（{{ item.framework }}<template v-if="item.version"> {{ item.version }}</template>）</span>
+        <span v-if="releaseOf(item)" class="attack-meta">（{{ releaseOf(item) }}）</span>
       </a-tag>
     </a-space>
   </a-card>
@@ -15,6 +15,14 @@
 import { Empty } from 'ant-design-vue'
 
 defineProps({ items: { type: Array, default: () => [] } })
+
+// 框架与版本拼成一个完整字符串：避免依赖模板里的空白文本节点来决定是否有空格。
+function releaseOf(item) {
+  const framework = String(item?.framework || '').trim()
+  const version = String(item?.version || '').trim()
+  if (framework && version) return `${framework} ${version}`
+  return framework || version
+}
 </script>
 
 <style scoped>

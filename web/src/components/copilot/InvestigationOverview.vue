@@ -1,6 +1,14 @@
 <template>
   <div class="overview">
-    <VerdictCard v-if="result?.verdict" :verdict="result.verdict" />
+    <!-- Landing 优先回答：发生了什么 / 结论是什么 / 有什么支撑 / 要不要我处理 / 响应怎样了 -->
+    <InvestigationStateSummary
+      :status="status" :evidence="evidence" :findings="findings" :result="result"
+      :proposals="proposals" :can-decide="canDecide" />
+
+    <VerdictCard
+      v-if="result?.verdict" :verdict="result.verdict" :findings="findings"
+      :result="result" :evidence-by-id="evidenceById"
+      @select-evidence="(id) => emit('select-evidence', id)" />
     <a-card v-else class="surface-card" size="small">
       <a-alert
         :type="running ? 'info' : 'warning'" show-icon
@@ -10,7 +18,9 @@
           : '调查已结束但未生成最终结论（例如失败或取消）。下方展示目前已收集的事实。'" />
     </a-card>
 
-    <FindingList :findings="findings" :evidence-by-id="evidenceById" @select-evidence="(id) => emit('select-evidence', id)" />
+    <FindingList
+      :findings="findings" :evidence-by-id="evidenceById"
+      @select-evidence="(id) => emit('select-evidence', id)" />
 
     <template v-if="result">
       <UncertaintyList :items="result.uncertainties || []" />
@@ -26,10 +36,15 @@ import FindingList from './FindingList.vue'
 import UncertaintyList from './UncertaintyList.vue'
 import AttackMappingList from './AttackMappingList.vue'
 import ResponseRecommendationList from './ResponseRecommendationList.vue'
+import InvestigationStateSummary from './InvestigationStateSummary.vue'
 
 defineProps({
+  status: { type: String, default: '' },
   result: { type: Object, default: null },
+  evidence: { type: Array, default: () => [] },
   findings: { type: Array, default: () => [] },
+  proposals: { type: Array, default: () => [] },
+  canDecide: { type: Boolean, default: false },
   evidenceById: { type: Object, default: () => ({}) },
   running: { type: Boolean, default: false },
 })
