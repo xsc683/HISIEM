@@ -7,14 +7,13 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import java.io.IOException;
+import java.time.Instant;
 import org.springframework.http.MediaType;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
-
-import java.io.IOException;
-import java.time.Instant;
 
 /** 认证完成后校验 X-Tenant-ID 成员关系，阻止只靠客户端 Header 切换租户。 */
 @Component
@@ -29,8 +28,9 @@ public class TenantContextFilter extends OncePerRequestFilter {
     }
 
     @Override
-    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
-                                    FilterChain chain) throws ServletException, IOException {
+    protected void doFilterInternal(
+            HttpServletRequest request, HttpServletResponse response, FilterChain chain)
+            throws ServletException, IOException {
         // 内部服务链自带独立认证与租户来源(/api/internal/**),用户成员关系校验不适用。
         // 该过滤器是 @Component,可能被 Boot 注册为全局 Filter,因此在路径上再兜底一次。
         if (request.getRequestURI().startsWith("/api/internal/")) {
@@ -38,7 +38,8 @@ public class TenantContextFilter extends OncePerRequestFilter {
             return;
         }
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-        if (authentication == null || !authentication.isAuthenticated()
+        if (authentication == null
+                || !authentication.isAuthenticated()
                 || "anonymousUser".equals(authentication.getName())) {
             chain.doFilter(request, response);
             return;
@@ -55,7 +56,9 @@ public class TenantContextFilter extends OncePerRequestFilter {
             return;
         }
         try {
-            String tenant = tenants.requireMembership(authentication.getName(), request.getHeader("X-Tenant-ID"));
+            String tenant =
+                    tenants.requireMembership(
+                            authentication.getName(), request.getHeader("X-Tenant-ID"));
             TenantContext.set(tenant);
             response.setHeader("X-Tenant-ID", tenant);
             chain.doFilter(request, response);
@@ -63,8 +66,9 @@ public class TenantContextFilter extends OncePerRequestFilter {
             response.setStatus(HttpServletResponse.SC_FORBIDDEN);
             response.setContentType(MediaType.APPLICATION_JSON_VALUE);
             response.setCharacterEncoding("UTF-8");
-            mapper.writeValue(response.getWriter(), new ApiError(Instant.now(), 403,
-                    "TENANT_FORBIDDEN", e.getMessage(), null));
+            mapper.writeValue(
+                    response.getWriter(),
+                    new ApiError(Instant.now(), 403, "TENANT_FORBIDDEN", e.getMessage(), null));
         } finally {
             TenantContext.clear();
         }

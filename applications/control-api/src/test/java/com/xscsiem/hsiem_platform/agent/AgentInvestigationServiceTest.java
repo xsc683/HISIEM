@@ -1,16 +1,5 @@
 package com.xscsiem.hsiem_platform.agent;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.xscsiem.hsiem_platform.tenant.TenantContext;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.Test;
-
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.time.Duration;
-
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -18,6 +7,16 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.xscsiem.hsiem_platform.tenant.TenantContext;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
 
 class AgentInvestigationServiceTest {
 
@@ -32,9 +31,12 @@ class AgentInvestigationServiceTest {
 
     @Test
     void workspaceUsesServerSideTenantActorAndBearerWithoutLeakingToBody() throws Exception {
-        HttpResponse<String> response = response(200, "{\"investigation\":{\"status\":\"RUNNING\"}}");
-        when(client.send(any(HttpRequest.class),
-                org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<String>>any())).thenReturn(response);
+        HttpResponse<String> response =
+                response(200, "{\"investigation\":{\"status\":\"RUNNING\"}}");
+        when(client.send(
+                        any(HttpRequest.class),
+                        org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<String>>any()))
+                .thenReturn(response);
         TenantContext.set("tenant-a");
 
         JsonNode body = service("agent-secret").getWorkspace(ID, "analyst");
@@ -44,18 +46,22 @@ class AgentInvestigationServiceTest {
         verify(client).send(captor.capture(), any());
         HttpRequest request = captor.getValue();
         assertEquals("GET", request.method());
-        assertEquals("https://agent.example/api/v1/investigations/" + ID + "/workspace",
+        assertEquals(
+                "https://agent.example/api/v1/investigations/" + ID + "/workspace",
                 request.uri().toString());
         assertEquals("tenant-a", request.headers().firstValue("X-Tenant-ID").orElseThrow());
         assertEquals("analyst", request.headers().firstValue("X-Actor-Subject").orElseThrow());
-        assertEquals("Bearer agent-secret", request.headers().firstValue("Authorization").orElseThrow());
+        assertEquals(
+                "Bearer agent-secret", request.headers().firstValue("Authorization").orElseThrow());
     }
 
     @Test
     void lookupEncodesQueryParameters() throws Exception {
         HttpResponse<String> response = response(200, "{\"active\":null,\"latest\":null}");
-        when(client.send(any(HttpRequest.class),
-                org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<String>>any())).thenReturn(response);
+        when(client.send(
+                        any(HttpRequest.class),
+                        org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<String>>any()))
+                .thenReturn(response);
         TenantContext.set("tenant-a");
 
         service("agent-secret").lookupForAlert("hisiem", "alert", "a 1/2", "analyst");
@@ -69,14 +75,17 @@ class AgentInvestigationServiceTest {
         assertTrue(uri.contains("resource_type=alert"));
         assertTrue(uri.contains("address_id=a+1%2F2"), uri);
         assertEquals("analyst", request.headers().firstValue("X-Actor-Subject").orElseThrow());
-        assertEquals("Bearer agent-secret", request.headers().firstValue("Authorization").orElseThrow());
+        assertEquals(
+                "Bearer agent-secret", request.headers().firstValue("Authorization").orElseThrow());
     }
 
     @Test
     void cancelPostsWithServerSideActorAndBearer() throws Exception {
         HttpResponse<String> response = response(200, "{\"status\":\"CANCELLED\"}");
-        when(client.send(any(HttpRequest.class),
-                org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<String>>any())).thenReturn(response);
+        when(client.send(
+                        any(HttpRequest.class),
+                        org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<String>>any()))
+                .thenReturn(response);
         TenantContext.set("tenant-a");
 
         JsonNode body = service("agent-secret").cancel(ID, "analyst");
@@ -86,9 +95,12 @@ class AgentInvestigationServiceTest {
         verify(client).send(captor.capture(), any());
         HttpRequest request = captor.getValue();
         assertEquals("POST", request.method());
-        assertEquals("https://agent.example/api/v1/investigations/" + ID + "/cancel", request.uri().toString());
+        assertEquals(
+                "https://agent.example/api/v1/investigations/" + ID + "/cancel",
+                request.uri().toString());
         assertEquals("analyst", request.headers().firstValue("X-Actor-Subject").orElseThrow());
-        assertEquals("Bearer agent-secret", request.headers().firstValue("Authorization").orElseThrow());
+        assertEquals(
+                "Bearer agent-secret", request.headers().firstValue("Authorization").orElseThrow());
     }
 
     @Test
@@ -101,14 +113,18 @@ class AgentInvestigationServiceTest {
 
     @Test
     void createResponseProposalSendsBoundedContractWithServerSideIdentity() throws Exception {
-        HttpResponse<String> response = response(201, "{\"proposal\":{\"status\":\"WAITING_APPROVAL\"}}");
-        when(client.send(any(HttpRequest.class),
-                org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<String>>any())).thenReturn(response);
+        HttpResponse<String> response =
+                response(201, "{\"proposal\":{\"status\":\"WAITING_APPROVAL\"}}");
+        when(client.send(
+                        any(HttpRequest.class),
+                        org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<String>>any()))
+                .thenReturn(response);
         TenantContext.set("tenant-a");
 
-        String proposal = "{\"action_key\":\"START_SOAR_PLAYBOOK\","
-                + "\"evidence_ids\":[\"ev-1\",\"ev-2\"],"
-                + "\"parameters\":{\"playbook_id\":\"pb-9\"},\"reason\":\"contain\"}";
+        String proposal =
+                "{\"action_key\":\"START_SOAR_PLAYBOOK\","
+                        + "\"evidence_ids\":[\"ev-1\",\"ev-2\"],"
+                        + "\"parameters\":{\"playbook_id\":\"pb-9\"},\"reason\":\"contain\"}";
 
         JsonNode body = service("agent-secret").createResponseProposal(ID, "analyst", proposal);
 
@@ -117,11 +133,13 @@ class AgentInvestigationServiceTest {
         verify(client).send(captor.capture(), any());
         HttpRequest request = captor.getValue();
         assertEquals("POST", request.method());
-        assertEquals("https://agent.example/api/v1/investigations/" + ID + "/response-proposals",
+        assertEquals(
+                "https://agent.example/api/v1/investigations/" + ID + "/response-proposals",
                 request.uri().toString());
         assertEquals("tenant-a", request.headers().firstValue("X-Tenant-ID").orElseThrow());
         assertEquals("analyst", request.headers().firstValue("X-Actor-Subject").orElseThrow());
-        assertEquals("Bearer agent-secret", request.headers().firstValue("Authorization").orElseThrow());
+        assertEquals(
+                "Bearer agent-secret", request.headers().firstValue("Authorization").orElseThrow());
         String sent = bodyOf(request);
         assertTrue(sent.contains("\"action_key\":\"START_SOAR_PLAYBOOK\""), sent);
         assertTrue(sent.contains("\"playbook_id\":\"pb-9\""), sent);
@@ -130,27 +148,33 @@ class AgentInvestigationServiceTest {
         assertTrue(!sent.contains("tenant"), sent);
         assertTrue(!sent.contains("actor"), sent);
         // 且不得携带任何浏览器可自行选择的目标字段：目标由 Copilot 从 source_alert_ref 派生。
-        for (String forbidden : java.util.List.of(
-                "target", "provider", "resource_type", "address_id", "business_id")) {
+        for (String forbidden :
+                java.util.List.of(
+                        "target", "provider", "resource_type", "address_id", "business_id")) {
             assertTrue(!sent.contains(forbidden), sent);
         }
     }
 
     @Test
     void decideResponseApprovalBindsRouteDecisionNotBody() throws Exception {
-        HttpResponse<String> response = response(200, "{\"status\":\"APPROVED\",\"execution_queued\":true}");
-        when(client.send(any(HttpRequest.class),
-                org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<String>>any())).thenReturn(response);
+        HttpResponse<String> response =
+                response(200, "{\"status\":\"APPROVED\",\"execution_queued\":true}");
+        when(client.send(
+                        any(HttpRequest.class),
+                        org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<String>>any()))
+                .thenReturn(response);
         TenantContext.set("tenant-a");
 
-        var input = new AgentInvestigationService.ApprovalDecisionInput(3, "hash-abc", "looks good");
+        var input =
+                new AgentInvestigationService.ApprovalDecisionInput(3, "hash-abc", "looks good");
         service("agent-secret").decideResponseApproval("req-1", "operator", true, input);
 
         var captor = org.mockito.ArgumentCaptor.forClass(HttpRequest.class);
         verify(client).send(captor.capture(), any());
         HttpRequest request = captor.getValue();
         assertEquals("POST", request.method());
-        assertEquals("https://agent.example/api/v1/investigations/response-approvals/req-1/approve",
+        assertEquals(
+                "https://agent.example/api/v1/investigations/response-approvals/req-1/approve",
                 request.uri().toString());
         assertEquals("operator", request.headers().firstValue("X-Actor-Subject").orElseThrow());
         String sent = bodyOf(request);
@@ -161,9 +185,12 @@ class AgentInvestigationServiceTest {
 
     @Test
     void rejectResponseApprovalTargetsRejectPathAndDecision() throws Exception {
-        HttpResponse<String> response = response(200, "{\"status\":\"REJECTED\",\"execution_queued\":false}");
-        when(client.send(any(HttpRequest.class),
-                org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<String>>any())).thenReturn(response);
+        HttpResponse<String> response =
+                response(200, "{\"status\":\"REJECTED\",\"execution_queued\":false}");
+        when(client.send(
+                        any(HttpRequest.class),
+                        org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<String>>any()))
+                .thenReturn(response);
         TenantContext.set("tenant-a");
 
         var input = new AgentInvestigationService.ApprovalDecisionInput(1, "hash-xyz", null);
@@ -179,10 +206,14 @@ class AgentInvestigationServiceTest {
     @Test
     void createResponseProposalRequiresActionKey() {
         TenantContext.set("tenant-a");
-        assertThrows(IllegalArgumentException.class,
-                () -> service("agent-secret").createResponseProposal(ID, "analyst",
-                        "{\"action_key\":\"  \",\"reason\":\"x\"}"));
-        assertThrows(IllegalArgumentException.class,
+        assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                        service("agent-secret")
+                                .createResponseProposal(
+                                        ID, "analyst", "{\"action_key\":\"  \",\"reason\":\"x\"}"));
+        assertThrows(
+                IllegalArgumentException.class,
                 () -> service("agent-secret").createResponseProposal(ID, "analyst", null));
     }
 
@@ -190,14 +221,21 @@ class AgentInvestigationServiceTest {
     void createResponseProposalRejectsAnyOutOfBoundsField() throws Exception {
         TenantContext.set("tenant-a");
         String base = "\"action_key\":\"START_SOAR_PLAYBOOK\",\"reason\":\"x\"";
-        for (String forbidden : java.util.List.of(
-                "\"target\":{\"provider\":\"hisiem\",\"resource_type\":\"alert\",\"address_id\":\"a-9\"}",
-                "\"tenant_id\":\"tenant-b\"",
-                "\"actor\":\"someone-else\"",
-                "\"provider\":\"hisiem\"")) {
-            IllegalArgumentException failure = assertThrows(IllegalArgumentException.class,
-                    () -> service("agent-secret").createResponseProposal(
-                            ID, "analyst", "{" + base + "," + forbidden + "}"));
+        for (String forbidden :
+                java.util.List.of(
+                        "\"target\":{\"provider\":\"hisiem\",\"resource_type\":\"alert\",\"address_id\":\"a-9\"}",
+                        "\"tenant_id\":\"tenant-b\"",
+                        "\"actor\":\"someone-else\"",
+                        "\"provider\":\"hisiem\"")) {
+            IllegalArgumentException failure =
+                    assertThrows(
+                            IllegalArgumentException.class,
+                            () ->
+                                    service("agent-secret")
+                                            .createResponseProposal(
+                                                    ID,
+                                                    "analyst",
+                                                    "{" + base + "," + forbidden + "}"));
             assertTrue(failure.getMessage().contains("不接受字段"), failure.getMessage());
         }
         // 目标/身份既不能被提交，也不能被静默忽略成一次“成功”的请求。
@@ -207,19 +245,24 @@ class AgentInvestigationServiceTest {
     @Test
     void createResponseProposalRejectsUnboundedParametersAndEmptyInput() throws Exception {
         TenantContext.set("tenant-a");
-        String good = "\"action_key\":\"START_SOAR_PLAYBOOK\",\"evidence_ids\":[\"ev-1\"],"
-                + "\"parameters\":{\"playbook_id\":\"pb-9\"},\"reason\":\"contain\"";
+        String good =
+                "\"action_key\":\"START_SOAR_PLAYBOOK\",\"evidence_ids\":[\"ev-1\"],"
+                        + "\"parameters\":{\"playbook_id\":\"pb-9\"},\"reason\":\"contain\"";
         // 每一种都必须在传输层显式失败：越界的参数键、非标量参数值、空证据、空理由。
-        for (String bad : java.util.List.of(
-                good.replace("\"playbook_id\":\"pb-9\"",
-                        "\"playbook_id\":\"pb-9\",\"target\":\"evil\""),
-                good.replace("\"playbook_id\":\"pb-9\"", "\"playbook_id\":{\"x\":1}"),
-                good.replace("\"evidence_ids\":[\"ev-1\"]", "\"evidence_ids\":[]"),
-                good.replace("\"reason\":\"contain\"", "\"reason\":\"   \""),
-                good.replace("\"playbook_id\":\"pb-9\"", "\"provider\":\"hisiem\""))) {
-            assertThrows(IllegalArgumentException.class,
-                    () -> service("agent-secret").createResponseProposal(
-                            ID, "analyst", "{" + bad + "}"));
+        for (String bad :
+                java.util.List.of(
+                        good.replace(
+                                "\"playbook_id\":\"pb-9\"",
+                                "\"playbook_id\":\"pb-9\",\"target\":\"evil\""),
+                        good.replace("\"playbook_id\":\"pb-9\"", "\"playbook_id\":{\"x\":1}"),
+                        good.replace("\"evidence_ids\":[\"ev-1\"]", "\"evidence_ids\":[]"),
+                        good.replace("\"reason\":\"contain\"", "\"reason\":\"   \""),
+                        good.replace("\"playbook_id\":\"pb-9\"", "\"provider\":\"hisiem\""))) {
+            assertThrows(
+                    IllegalArgumentException.class,
+                    () ->
+                            service("agent-secret")
+                                    .createResponseProposal(ID, "analyst", "{" + bad + "}"));
         }
         verify(client, org.mockito.Mockito.never()).send(any(), any());
     }
@@ -227,30 +270,33 @@ class AgentInvestigationServiceTest {
     private static String bodyOf(HttpRequest request) throws Exception {
         var chunks = new java.io.ByteArrayOutputStream();
         var done = new java.util.concurrent.CompletableFuture<Void>();
-        request.bodyPublisher().orElseThrow().subscribe(
-                new java.util.concurrent.Flow.Subscriber<java.nio.ByteBuffer>() {
-                    @Override
-                    public void onSubscribe(java.util.concurrent.Flow.Subscription subscription) {
-                        subscription.request(Long.MAX_VALUE);
-                    }
+        request.bodyPublisher()
+                .orElseThrow()
+                .subscribe(
+                        new java.util.concurrent.Flow.Subscriber<java.nio.ByteBuffer>() {
+                            @Override
+                            public void onSubscribe(
+                                    java.util.concurrent.Flow.Subscription subscription) {
+                                subscription.request(Long.MAX_VALUE);
+                            }
 
-                    @Override
-                    public void onNext(java.nio.ByteBuffer item) {
-                        byte[] bytes = new byte[item.remaining()];
-                        item.get(bytes);
-                        chunks.writeBytes(bytes);
-                    }
+                            @Override
+                            public void onNext(java.nio.ByteBuffer item) {
+                                byte[] bytes = new byte[item.remaining()];
+                                item.get(bytes);
+                                chunks.writeBytes(bytes);
+                            }
 
-                    @Override
-                    public void onError(Throwable throwable) {
-                        done.completeExceptionally(throwable);
-                    }
+                            @Override
+                            public void onError(Throwable throwable) {
+                                done.completeExceptionally(throwable);
+                            }
 
-                    @Override
-                    public void onComplete() {
-                        done.complete(null);
-                    }
-                });
+                            @Override
+                            public void onComplete() {
+                                done.complete(null);
+                            }
+                        });
         done.get();
         return chunks.toString(java.nio.charset.StandardCharsets.UTF_8);
     }
@@ -267,31 +313,39 @@ class AgentInvestigationServiceTest {
 
     @Test
     void unavailableAgentMapsToServiceUnavailable() throws Exception {
-        when(client.send(any(HttpRequest.class),
-                org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<String>>any()))
+        when(client.send(
+                        any(HttpRequest.class),
+                        org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<String>>any()))
                 .thenThrow(new java.io.IOException("offline"));
 
-        AgentLaunchException error = assertThrows(AgentLaunchException.class,
-                () -> service("agent-secret").getWorkspace(ID, "analyst"));
+        AgentLaunchException error =
+                assertThrows(
+                        AgentLaunchException.class,
+                        () -> service("agent-secret").getWorkspace(ID, "analyst"));
         assertEquals(503, error.status());
         assertEquals("AGENT_UNAVAILABLE", error.code());
     }
 
-    private void assertMaps(int upstream, int expectedStatus, String expectedCode, String secret) throws Exception {
+    private void assertMaps(int upstream, int expectedStatus, String expectedCode, String secret)
+            throws Exception {
         HttpResponse<String> response = response(upstream, "{\"message\":\"" + secret + "\"}");
-        when(client.send(any(HttpRequest.class),
-                org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<String>>any())).thenReturn(response);
+        when(client.send(
+                        any(HttpRequest.class),
+                        org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<String>>any()))
+                .thenReturn(response);
 
-        AgentLaunchException error = assertThrows(AgentLaunchException.class,
-                () -> service("agent-secret").getWorkspace(ID, "analyst"));
+        AgentLaunchException error =
+                assertThrows(
+                        AgentLaunchException.class,
+                        () -> service("agent-secret").getWorkspace(ID, "analyst"));
         assertEquals(expectedStatus, error.status());
         assertEquals(expectedCode, error.code());
         assertTrue(!error.getMessage().contains(secret));
     }
 
     private AgentInvestigationService service(String token) {
-        return new AgentInvestigationService(MAPPER, client, "https://agent.example/",
-                token, Duration.ofSeconds(2));
+        return new AgentInvestigationService(
+                MAPPER, client, "https://agent.example/", token, Duration.ofSeconds(2));
     }
 
     @SuppressWarnings("unchecked")

@@ -19,8 +19,9 @@ class AgentLaunchControllerTest {
         AgentLaunchService launch = mock(AgentLaunchService.class);
         when(launch.launch("alert_investigation", "alert", "alert-doc-7", "analyst"))
                 .thenReturn(new AgentLaunchResponse("inv-7", "/copilot/investigations/inv-7"));
-        AlertController controller = new AlertController(mock(AlertService.class), launch,
-                mock(AgentInvestigationService.class));
+        AlertController controller =
+                new AlertController(
+                        mock(AlertService.class), launch, mock(AgentInvestigationService.class));
 
         AgentLaunchResponse result =
                 controller.investigateWithAgent(

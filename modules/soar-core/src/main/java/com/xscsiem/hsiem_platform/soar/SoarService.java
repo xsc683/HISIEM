@@ -173,8 +173,12 @@ public class SoarService {
             // execution that we then refuse to honour would assert an execution that
             // never happened.
             requireSameContract(
-                    execution, playbookId, normalizedObjectType, objectId.trim(),
-                    normalizedEvent, normalizedPayload);
+                    execution,
+                    playbookId,
+                    normalizedObjectType,
+                    objectId.trim(),
+                    normalizedEvent,
+                    normalizedPayload);
         }
         audit(actor, "soar.execution.manual", playbookId + ":" + trigger.messageId());
         return execution;
@@ -183,9 +187,8 @@ public class SoarService {
     /**
      * 同一个去重键(tenant + playbook + trigger message id)必须始终对应同一份不可变契约。
      *
-     * <p>重放同一个请求会命中唯一约束并复用既有执行 —— 这是期望的幂等收敛。但若调用方在
-     * 同一个键下换了目标对象、事件或 payload,静默返回既有执行会把动作落到错误的目标上。
-     * 这里改成确定性的冲突(409),绝不"静默映射到别的目标/playbook"。</p>
+     * <p>重放同一个请求会命中唯一约束并复用既有执行 —— 这是期望的幂等收敛。但若调用方在 同一个键下换了目标对象、事件或 payload,静默返回既有执行会把动作落到错误的目标上。
+     * 这里改成确定性的冲突(409),绝不"静默映射到别的目标/playbook"。
      */
     private void requireSameContract(
             SoarExecution execution,
@@ -194,11 +197,12 @@ public class SoarService {
             String objectId,
             String eventType,
             Map<String, Object> payload) {
-        boolean same = Objects.equals(execution.playbookId(), playbookId)
-                && Objects.equals(execution.objectType(), objectType)
-                && Objects.equals(execution.objectId(), objectId)
-                && Objects.equals(execution.eventType(), eventType)
-                && Objects.equals(execution.payloadSnapshot(), payload);
+        boolean same =
+                Objects.equals(execution.playbookId(), playbookId)
+                        && Objects.equals(execution.objectType(), objectType)
+                        && Objects.equals(execution.objectId(), objectId)
+                        && Objects.equals(execution.eventType(), eventType)
+                        && Objects.equals(execution.payloadSnapshot(), payload);
         if (!same) {
             throw new com.xscsiem.hsiem_platform.onboarding.ConflictException(
                     "Idempotency-Key 已用于另一份执行契约");

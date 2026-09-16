@@ -3,10 +3,6 @@ package com.xscsiem.hsiem_platform.agent;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.xscsiem.hsiem_platform.tenant.TenantContext;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Service;
-
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -15,13 +11,15 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
 
 /**
  * HISIEM 到 SOC Copilot 的服务端启动代理。
  *
- * <p>浏览器只调用 HISIEM API；Copilot 地址、跳转路由基址和可选服务凭据只存在服务端配置中。
- * 传给 Copilot 的内容保持为有界的资源引用({@code source_alert_ref})，Copilot 后续通过 provider
- * 自己 hydrate 权威数据。租户/启动人来自 HISIEM 已完成校验的服务端上下文，浏览器不能伪造。</p>
+ * <p>浏览器只调用 HISIEM API；Copilot 地址、跳转路由基址和可选服务凭据只存在服务端配置中。 传给 Copilot 的内容保持为有界的资源引用({@code
+ * source_alert_ref})，Copilot 后续通过 provider 自己 hydrate 权威数据。租户/启动人来自 HISIEM 已完成校验的服务端上下文，浏览器不能伪造。
  */
 @Service
 public class AgentLaunchService {
@@ -40,19 +38,32 @@ public class AgentLaunchService {
             @Value("${app.agent.investigation-route-base:}") String investigationRouteBase,
             @Value("${app.agent.bearer-token:}") String bearerToken,
             @Value("${app.agent.timeout:PT10S}") Duration requestTimeout) {
-        this(mapper, HttpClient.newBuilder()
+        this(
+                mapper,
+                HttpClient.newBuilder()
                         .version(HttpClient.Version.HTTP_1_1)
-                        .connectTimeout(requestTimeout).build(),
-                agentBaseUrl, investigationRouteBase, bearerToken, requestTimeout);
+                        .connectTimeout(requestTimeout)
+                        .build(),
+                agentBaseUrl,
+                investigationRouteBase,
+                bearerToken,
+                requestTimeout);
     }
 
-    AgentLaunchService(ObjectMapper mapper, HttpClient client, String agentBaseUrl,
-                       String investigationRouteBase, String bearerToken, Duration requestTimeout) {
+    AgentLaunchService(
+            ObjectMapper mapper,
+            HttpClient client,
+            String agentBaseUrl,
+            String investigationRouteBase,
+            String bearerToken,
+            Duration requestTimeout) {
         this.mapper = mapper;
         this.client = client;
         this.investigationsUri = endpoint(agentBaseUrl, "/api/v1/investigations");
-        this.investigationRouteBase = investigationRouteBase == null
-                ? "" : investigationRouteBase.replaceFirst("/+$", "");
+        this.investigationRouteBase =
+                investigationRouteBase == null
+                        ? ""
+                        : investigationRouteBase.replaceFirst("/+$", "");
         this.bearerToken = bearerToken == null ? "" : bearerToken.trim();
         if (this.bearerToken.isBlank()) {
             // 集成运行时 Copilot 会校验服务凭据；空凭据必须让进程启动失败，绝不静默发匿名请求。
@@ -65,8 +76,8 @@ public class AgentLaunchService {
         this.requestTimeout = requestTimeout;
     }
 
-    public AgentLaunchResponse launch(String taskType, String resourceType, String resourceId,
-                                      String requestedBy) {
+    public AgentLaunchResponse launch(
+            String taskType, String resourceType, String resourceId, String requestedBy) {
         validate(taskType, resourceType, resourceId, requestedBy);
         String addressId = resourceId.trim();
 
@@ -82,20 +93,26 @@ public class AgentLaunchService {
         try {
             body = mapper.writeValueAsString(payload);
         } catch (Exception e) {
-            throw new AgentLaunchException(502, "AGENT_REQUEST_INVALID",
-                    "Agent 启动请求无法序列化", e);
+            throw new AgentLaunchException(502, "AGENT_REQUEST_INVALID", "Agent 启动请求无法序列化", e);
         }
 
-        HttpRequest.Builder request = HttpRequest.newBuilder(investigationsUri)
-                .timeout(requestTimeout)
-                .header("Content-Type", "application/json")
-                .header("X-Tenant-ID", TenantContext.id())
-                .header("X-Actor-Subject", requestedBy.trim())
-                .header("Idempotency-Key",
-                        "hisiem-launch:" + TenantContext.id() + ":" + resourceType + ":" + addressId)
-                // 构造期已强制 bearerToken 非空：启动请求始终携带服务凭据。
-                .header("Authorization", "Bearer " + bearerToken)
-                .POST(HttpRequest.BodyPublishers.ofString(body));
+        HttpRequest.Builder request =
+                HttpRequest.newBuilder(investigationsUri)
+                        .timeout(requestTimeout)
+                        .header("Content-Type", "application/json")
+                        .header("X-Tenant-ID", TenantContext.id())
+                        .header("X-Actor-Subject", requestedBy.trim())
+                        .header(
+                                "Idempotency-Key",
+                                "hisiem-launch:"
+                                        + TenantContext.id()
+                                        + ":"
+                                        + resourceType
+                                        + ":"
+                                        + addressId)
+                        // 构造期已强制 bearerToken 非空：启动请求始终携带服务凭据。
+                        .header("Authorization", "Bearer " + bearerToken)
+                        .POST(HttpRequest.BodyPublishers.ofString(body));
 
         final HttpResponse<String> response;
         try {
@@ -124,16 +141,16 @@ public class AgentLaunchService {
             if (investigationId == null || investigationId.isBlank()) {
                 throw new IllegalStateException("missing investigation_id");
             }
-            return new AgentLaunchResponse(investigationId,
+            return new AgentLaunchResponse(
+                    investigationId,
                     investigationRouteBase + "/copilot/investigations/" + investigationId);
         } catch (Exception e) {
-            throw new AgentLaunchException(502, "AGENT_INVALID_RESPONSE",
-                    "Agent 返回的调查标识无效", e);
+            throw new AgentLaunchException(502, "AGENT_INVALID_RESPONSE", "Agent 返回的调查标识无效", e);
         }
     }
 
-    private static void validate(String taskType, String resourceType, String resourceId,
-                                 String requestedBy) {
+    private static void validate(
+            String taskType, String resourceType, String resourceId, String requestedBy) {
         if (!("alert_investigation".equals(taskType) || "case_investigation".equals(taskType))) {
             throw new IllegalArgumentException("Agent 启动任务类型非法");
         }
@@ -146,8 +163,8 @@ public class AgentLaunchService {
         if (requestedBy == null || requestedBy.isBlank()) {
             throw new IllegalArgumentException("Agent 启动人不能为空");
         }
-        String expectedTask = "alert".equals(resourceType)
-                ? "alert_investigation" : "case_investigation";
+        String expectedTask =
+                "alert".equals(resourceType) ? "alert_investigation" : "case_investigation";
         if (!expectedTask.equals(taskType)) {
             throw new IllegalArgumentException("Agent 任务类型与资源类型不匹配");
         }

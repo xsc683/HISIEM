@@ -6,10 +6,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.xscsiem.hsiem_platform.tenant.TenantContext;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Service;
-
 import java.io.IOException;
 import java.net.URI;
 import java.net.URLEncoder;
@@ -23,13 +19,15 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
 
 /**
  * HISIEM 到 SOC Copilot 调查工作台的服务端读取/取消代理。
  *
- * <p>浏览器只调用 HISIEM API；Copilot 地址与可选服务凭据只存在服务端配置中。租户/操作人来自
- * HISIEM 已完成校验的服务端上下文，浏览器不能通过请求体/头伪造。代理只回传 Copilot 的有界
- * JSON DTO，绝不回传服务凭据或上游原始错误正文。</p>
+ * <p>浏览器只调用 HISIEM API；Copilot 地址与可选服务凭据只存在服务端配置中。租户/操作人来自 HISIEM 已完成校验的服务端上下文，浏览器不能通过请求体/头伪造。代理只回传
+ * Copilot 的有界 JSON DTO，绝不回传服务凭据或上游原始错误正文。
  */
 @Service
 public class AgentInvestigationService {
@@ -46,14 +44,23 @@ public class AgentInvestigationService {
             @Value("${app.agent.base-url:http://127.0.0.1:8000}") String agentBaseUrl,
             @Value("${app.agent.bearer-token:}") String bearerToken,
             @Value("${app.agent.timeout:PT10S}") Duration requestTimeout) {
-        this(mapper, HttpClient.newBuilder()
+        this(
+                mapper,
+                HttpClient.newBuilder()
                         .version(HttpClient.Version.HTTP_1_1)
-                        .connectTimeout(requestTimeout).build(),
-                agentBaseUrl, bearerToken, requestTimeout);
+                        .connectTimeout(requestTimeout)
+                        .build(),
+                agentBaseUrl,
+                bearerToken,
+                requestTimeout);
     }
 
-    AgentInvestigationService(ObjectMapper mapper, HttpClient client, String agentBaseUrl,
-                              String bearerToken, Duration requestTimeout) {
+    AgentInvestigationService(
+            ObjectMapper mapper,
+            HttpClient client,
+            String agentBaseUrl,
+            String bearerToken,
+            Duration requestTimeout) {
         this.mapper = mapper;
         this.client = client;
         this.investigationsUri = endpoint(agentBaseUrl, "/api/v1/investigations");
@@ -85,10 +92,15 @@ public class AgentInvestigationService {
     }
 
     /** GET /api/v1/investigations/lookup — 某来源告警的活动/最近调查(告警再进入)。 */
-    public JsonNode lookupForAlert(String provider, String resourceType, String addressId, String actor) {
-        String query = "?provider=" + enc(provider)
-                + "&resource_type=" + enc(resourceType)
-                + "&address_id=" + enc(addressId);
+    public JsonNode lookupForAlert(
+            String provider, String resourceType, String addressId, String actor) {
+        String query =
+                "?provider="
+                        + enc(provider)
+                        + "&resource_type="
+                        + enc(resourceType)
+                        + "&address_id="
+                        + enc(addressId);
         return send(request("GET", "/lookup" + query, actor, null), "告警调查查询");
     }
 
@@ -100,18 +112,16 @@ public class AgentInvestigationService {
      * {@code parameters} 内部同样必须有界：唯一可执行的 START_SOAR_PLAYBOOK 只接受 playbook_id。
      *
      * <p>只白名单顶层字段是不够的 —— 调用方可以把 target/provider 塞进 parameters 里；若那里
-     * 被静默过滤或静默透传，浏览器都会看到一次“成功”的请求，却无法知道自己的输入被改写或丢弃。</p>
+     * 被静默过滤或静默透传，浏览器都会看到一次“成功”的请求，却无法知道自己的输入被改写或丢弃。
      */
     private static final Set<String> PROPOSAL_PARAMETER_FIELDS = Set.of("playbook_id");
 
     /**
      * POST /api/v1/investigations/{id}/response-proposals — 派生并持久化一条类型化响应提案。
      *
-     * <p>浏览器只能提交有界的动作契约：动作/证据/参数/理由。没有 target —— 执行目标由 Copilot
-     * 从调查持久化的 {@code source_alert_ref} 派生，浏览器无法自行指定作用对象；也没有
-     * tenant_id/actor，这两者一律取自服务端上下文，因此浏览器既不能把提案归到别的租户，也不能
-     * 冒充他人。越界字段返回 400 而不是被丢弃后“看起来提交成功”。此处仅做传输层转发，不代替
-     * Copilot 的策略/审批判定。</p>
+     * <p>浏览器只能提交有界的动作契约：动作/证据/参数/理由。没有 target —— 执行目标由 Copilot 从调查持久化的 {@code source_alert_ref}
+     * 派生，浏览器无法自行指定作用对象；也没有 tenant_id/actor，这两者一律取自服务端上下文，因此浏览器既不能把提案归到别的租户，也不能 冒充他人。越界字段返回 400
+     * 而不是被丢弃后“看起来提交成功”。此处仅做传输层转发，不代替 Copilot 的策略/审批判定。
      */
     public JsonNode createResponseProposal(String investigationId, String actor, String rawBody) {
         JsonNode body = parseBoundedProposal(rawBody);
@@ -140,7 +150,9 @@ public class AgentInvestigationService {
 
         ObjectNode parameters = node.putObject("parameters");
         JsonNode rawParameters = body.path("parameters");
-        if (!rawParameters.isMissingNode() && !rawParameters.isNull() && !rawParameters.isObject()) {
+        if (!rawParameters.isMissingNode()
+                && !rawParameters.isNull()
+                && !rawParameters.isObject()) {
             throw new IllegalArgumentException("响应提案的 parameters 必须是 JSON 对象");
         }
         if (rawParameters.isObject()) {
@@ -164,7 +176,12 @@ public class AgentInvestigationService {
             throw new IllegalArgumentException("响应提案必须携带响应理由");
         }
         node.put("reason", reason);
-        return send(request("POST", path(investigationId) + "/response-proposals", actor, node.toString()),
+        return send(
+                request(
+                        "POST",
+                        path(investigationId) + "/response-proposals",
+                        actor,
+                        node.toString()),
                 "响应提案");
     }
 
@@ -183,11 +200,13 @@ public class AgentInvestigationService {
             throw new IllegalArgumentException("响应提案正文必须是 JSON 对象");
         }
         List<String> unknown = new ArrayList<>();
-        body.fieldNames().forEachRemaining(name -> {
-            if (!PROPOSAL_FIELDS.contains(name)) {
-                unknown.add(name);
-            }
-        });
+        body.fieldNames()
+                .forEachRemaining(
+                        name -> {
+                            if (!PROPOSAL_FIELDS.contains(name)) {
+                                unknown.add(name);
+                            }
+                        });
         if (!unknown.isEmpty()) {
             throw new IllegalArgumentException("响应提案不接受字段：" + String.join(", ", unknown));
         }
@@ -197,18 +216,18 @@ public class AgentInvestigationService {
     /**
      * POST /api/v1/investigations/response-approvals/{id}/approve|reject — 记录一次人类审批决策。
      *
-     * <p>决策种类由本方法的 {@code approve} 参数(源自 BFF 路由)决定，绝不取自信任请求体，
-     * 避免请求体与路由不一致造成“看似拒绝实为批准”。{@code expected_revision}/{@code
-     * expected_content_hash} 是浏览器看到的契约版本，绑定到该提案的精确内容；不一致时 Copilot
-     * 拒绝(409)，绝不误执行。</p>
+     * <p>决策种类由本方法的 {@code approve} 参数(源自 BFF 路由)决定，绝不取自信任请求体， 避免请求体与路由不一致造成“看似拒绝实为批准”。{@code
+     * expected_revision}/{@code expected_content_hash} 是浏览器看到的契约版本，绑定到该提案的精确内容；不一致时 Copilot
+     * 拒绝(409)，绝不误执行。
      */
-    public JsonNode decideResponseApproval(String approvalRequestId, String actor, boolean approve,
-                                           ApprovalDecisionInput body) {
+    public JsonNode decideResponseApproval(
+            String approvalRequestId, String actor, boolean approve, ApprovalDecisionInput body) {
         ObjectNode node = mapper.createObjectNode();
         node.put("decision", approve ? "APPROVE" : "REJECT");
         if (body != null) {
             node.put("expected_revision", body.expectedRevision());
-            node.put("expected_content_hash",
+            node.put(
+                    "expected_content_hash",
                     body.expectedContentHash() == null ? "" : body.expectedContentHash().trim());
             if (body.reason() != null && !body.reason().isBlank()) {
                 node.put("reason", body.reason().trim());
@@ -218,30 +237,36 @@ public class AgentInvestigationService {
             node.put("expected_content_hash", "");
         }
         String suffix = approve ? "/approve" : "/reject";
-        return send(request("POST", "/response-approvals/" + enc(approvalRequestId) + suffix, actor,
-                node.toString()), "响应审批");
+        return send(
+                request(
+                        "POST",
+                        "/response-approvals/" + enc(approvalRequestId) + suffix,
+                        actor,
+                        node.toString()),
+                "响应审批");
     }
 
     /**
      * 一次人类审批的绑定契约：精确版本 + 精确内容指纹，另可附有界理由。
      *
-     * <p>字段名与浏览器/Copilot 契约一致(snake_case)：{@code expected_revision} 是用户在界面上
-     * 看到并确认的那一版内容，缺省或错版会被 Copilot 以 409 拒绝，而不是退回“按最新版执行”。</p>
+     * <p>字段名与浏览器/Copilot 契约一致(snake_case)：{@code expected_revision} 是用户在界面上 看到并确认的那一版内容，缺省或错版会被
+     * Copilot 以 409 拒绝，而不是退回“按最新版执行”。
      */
     public record ApprovalDecisionInput(
             @JsonProperty("expected_revision") long expectedRevision,
             @JsonProperty("expected_content_hash") String expectedContentHash,
-            @JsonProperty("reason") String reason) { }
+            @JsonProperty("reason") String reason) {}
 
     private static String path(String investigationId) {
         return "/" + enc(investigationId);
     }
 
     private HttpRequest request(String method, String pathAndQuery, String actor, String body) {
-        HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(investigationsUri + pathAndQuery))
-                .timeout(requestTimeout)
-                .header("X-Tenant-ID", TenantContext.id())
-                .header("Accept", "application/json");
+        HttpRequest.Builder builder =
+                HttpRequest.newBuilder(URI.create(investigationsUri + pathAndQuery))
+                        .timeout(requestTimeout)
+                        .header("X-Tenant-ID", TenantContext.id())
+                        .header("Accept", "application/json");
         if (actor != null && !actor.isBlank()) {
             builder.header("X-Actor-Subject", actor.trim());
         }
@@ -289,12 +314,14 @@ public class AgentInvestigationService {
 
     private JsonNode parse(String body, String action) {
         if (body == null || body.isBlank()) {
-            throw new AgentLaunchException(502, "AGENT_INVALID_RESPONSE", "Agent 返回的" + action + "为空");
+            throw new AgentLaunchException(
+                    502, "AGENT_INVALID_RESPONSE", "Agent 返回的" + action + "为空");
         }
         try {
             return mapper.readTree(body);
         } catch (Exception e) {
-            throw new AgentLaunchException(502, "AGENT_INVALID_RESPONSE", "Agent 返回的" + action + "无效", e);
+            throw new AgentLaunchException(
+                    502, "AGENT_INVALID_RESPONSE", "Agent 返回的" + action + "无效", e);
         }
     }
 
