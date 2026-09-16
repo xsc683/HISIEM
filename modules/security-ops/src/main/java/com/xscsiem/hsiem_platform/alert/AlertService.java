@@ -176,7 +176,13 @@ public class AlertService {
 
     /** 告警详情(by _id = 确定性 sha1 id)。 */
     public Map<String, Object> detail(String id) {
-        return esGet("/siem-alerts/_doc/" + id);
+        Map<String, Object> doc = esGet("/siem-alerts/_doc/" + id);
+        if (doc == null) {
+            // 与 update() 一致:ES 返回 found=false 时必须 404,不能把 null 当作 200 空响应体
+            // 返回给调用方(前端会渲染成空详情,Copilot 侧会得到 non-JSON body)。
+            throw new NotFoundException("告警不存在: " + id);
+        }
+        return doc;
     }
 
     /** 更新状态/verdict(乐观锁,操作审计)。status 与 verdict 至少给一个。 */

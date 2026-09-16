@@ -9,6 +9,7 @@ import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import com.xscsiem.hsiem_platform.onboarding.NotFoundException;
 import com.xscsiem.hsiem_platform.search.ElasticsearchGateway;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -80,6 +81,49 @@ class AlertServiceTest {
 
         assertEquals(2, result.get("succeeded"));
         assertEquals(List.of(), result.get("failed"));
+    }
+
+    /**
+     * 不存在的告警:ES 对 _doc/{id} 返回 found=false(HTTP 200),此时详情必须是 NOT_FOUND。
+     *
+     * <p>修复前 detail() 把 esGet 的 null 直接返回,Spring 会渲染成 200 + 空响应体 —— 前端显示 空详情,Copilot 侧得到 "HISIEM
+     * returned a non-JSON body"。
+     */
+    @Test
+    void detail_unknownAlert_isNotFound() {
+        ElasticsearchGateway gateway = mock(ElasticsearchGateway.class);
+        Map<String, Object> notFoundBody = new LinkedHashMap<>();
+        notFoundBody.put("found", false);
+        notFoundBody.put("_index", "siem-alerts");
+        notFoundBody.put("_id", "missing");
+        when(gateway.request(eq("GET"), eq("/siem-alerts/_doc/missing"), isNull()))
+                .thenReturn(new ElasticsearchGateway.Response(200, notFoundBody));
+
+        AlertService service = new AlertService("http://unused", gateway);
+
+        assertThrows(NotFoundException.class, () -> service.detail("missing"));
+    }
+
+    /** 存在的告警仍然原样返回文档(含 _id/_seq_no/_primary_term)。 */
+    @Test
+    void detail_foundAlert_returnsDocument() {
+        ElasticsearchGateway gateway = mock(ElasticsearchGateway.class);
+        Map<String, Object> source = new LinkedHashMap<>();
+        source.put("alert.id", "a-1");
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("found", true);
+        body.put("_id", "a-1");
+        body.put("_source", source);
+        body.put("_seq_no", 7);
+        body.put("_primary_term", 3);
+        when(gateway.request(eq("GET"), eq("/siem-alerts/_doc/a-1"), isNull()))
+                .thenReturn(new ElasticsearchGateway.Response(200, body));
+
+        AlertService service = new AlertService("http://unused", gateway);
+
+        Map<String, Object> doc = service.detail("a-1");
+        assertEquals("a-1", doc.get("_id"));
+        assertEquals(7, doc.get("_seq_no"));
     }
 
     @Test

@@ -6,23 +6,25 @@ import com.xscsiem.hsiem_platform.auth.UnauthorizedException;
 import com.xscsiem.hsiem_platform.logsearch.LogSearchUnavailableException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolationException;
-import org.springframework.http.ResponseEntity;
+import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import java.util.stream.Collectors;
+import org.springframework.web.servlet.NoHandlerFoundException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 /**
- * 统一异常 → HTTP 状态码(对齐 story _template §5.2 4xx 约定):
- * 400 参数非法(IllegalArgumentException)、404 资源不存在、409 冲突(端口占用)。
- * 修复:模板/数据源不存在此前抛 IllegalArgumentException 返回 500,现改 404。
+ * 统一异常 → HTTP 状态码(对齐 story _template §5.2 4xx 约定): 400 参数非法(IllegalArgumentException)、404 资源不存在、409
+ * 冲突(端口占用)。 修复:模板/数据源不存在此前抛 IllegalArgumentException 返回 500,现改 404。
  */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -40,7 +42,8 @@ public class GlobalExceptionHandler {
     }
 
     @ExceptionHandler(IllegalArgumentException.class)
-    public ResponseEntity<ApiError> badRequest(IllegalArgumentException e, HttpServletRequest request) {
+    public ResponseEntity<ApiError> badRequest(
+            IllegalArgumentException e, HttpServletRequest request) {
         return error(HttpStatus.BAD_REQUEST, "INVALID_ARGUMENT", e.getMessage(), request);
     }
 
@@ -50,7 +53,8 @@ public class GlobalExceptionHandler {
     }
 
     @ExceptionHandler(UnauthorizedException.class)
-    public ResponseEntity<ApiError> unauthorized(UnauthorizedException e, HttpServletRequest request) {
+    public ResponseEntity<ApiError> unauthorized(
+            UnauthorizedException e, HttpServletRequest request) {
         return error(HttpStatus.UNAUTHORIZED, "UNAUTHORIZED", e.getMessage(), request);
     }
 
@@ -60,37 +64,63 @@ public class GlobalExceptionHandler {
     }
 
     @ExceptionHandler(AccessDeniedException.class)
-    public ResponseEntity<ApiError> accessDenied(AccessDeniedException e, HttpServletRequest request) {
+    public ResponseEntity<ApiError> accessDenied(
+            AccessDeniedException e, HttpServletRequest request) {
         return error(HttpStatus.FORBIDDEN, "FORBIDDEN", "当前角色无权执行该操作", request);
     }
 
     @ExceptionHandler(LogSearchUnavailableException.class)
-    public ResponseEntity<ApiError> logSearchUnavailable(LogSearchUnavailableException e,
-                                                         HttpServletRequest request) {
-        return error(HttpStatus.SERVICE_UNAVAILABLE, "LOG_SEARCH_UNAVAILABLE", e.getMessage(), request);
+    public ResponseEntity<ApiError> logSearchUnavailable(
+            LogSearchUnavailableException e, HttpServletRequest request) {
+        return error(
+                HttpStatus.SERVICE_UNAVAILABLE, "LOG_SEARCH_UNAVAILABLE", e.getMessage(), request);
     }
 
     @ExceptionHandler(AgentLaunchException.class)
-    public ResponseEntity<ApiError> agentLaunch(AgentLaunchException e, HttpServletRequest request) {
+    public ResponseEntity<ApiError> agentLaunch(
+            AgentLaunchException e, HttpServletRequest request) {
         return error(HttpStatus.valueOf(e.status()), e.code(), e.getMessage(), request);
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
-    public ResponseEntity<ApiError> validation(MethodArgumentNotValidException e, HttpServletRequest request) {
-        String message = e.getBindingResult().getFieldErrors().stream()
-                .map(field -> field.getField() + ": " + field.getDefaultMessage())
-                .collect(Collectors.joining("; "));
+    public ResponseEntity<ApiError> validation(
+            MethodArgumentNotValidException e, HttpServletRequest request) {
+        String message =
+                e.getBindingResult().getFieldErrors().stream()
+                        .map(field -> field.getField() + ": " + field.getDefaultMessage())
+                        .collect(Collectors.joining("; "));
         return error(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", message, request);
     }
 
     @ExceptionHandler(ConstraintViolationException.class)
-    public ResponseEntity<ApiError> constraintViolation(ConstraintViolationException e, HttpServletRequest request) {
+    public ResponseEntity<ApiError> constraintViolation(
+            ConstraintViolationException e, HttpServletRequest request) {
         return error(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", e.getMessage(), request);
     }
 
-    @ExceptionHandler({HttpMessageNotReadableException.class, MethodArgumentTypeMismatchException.class})
+    @ExceptionHandler({
+        HttpMessageNotReadableException.class,
+        MethodArgumentTypeMismatchException.class,
+        MissingServletRequestParameterException.class
+    })
     public ResponseEntity<ApiError> malformedRequest(Exception e, HttpServletRequest request) {
         return error(HttpStatus.BAD_REQUEST, "MALFORMED_REQUEST", "请求参数格式错误", request);
+    }
+
+    /**
+     * 客户端错误必须报 4xx,不能落到 catch-all 的 500。 未知路径、缺少必填查询参数、方法不支持此前都会返回 500 INTERNAL_ERROR,
+     * 把调用方的错误报成服务端故障,既误导客户端重试策略,也污染服务端错误率。
+     */
+    @ExceptionHandler({NoResourceFoundException.class, NoHandlerFoundException.class})
+    public ResponseEntity<ApiError> noResource(Exception e, HttpServletRequest request) {
+        return error(
+                HttpStatus.NOT_FOUND, "NOT_FOUND", "接口不存在: " + request.getRequestURI(), request);
+    }
+
+    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<ApiError> methodNotAllowed(
+            HttpRequestMethodNotSupportedException e, HttpServletRequest request) {
+        return error(HttpStatus.METHOD_NOT_ALLOWED, "METHOD_NOT_ALLOWED", e.getMessage(), request);
     }
 
     @ExceptionHandler(Exception.class)
@@ -99,11 +129,17 @@ public class GlobalExceptionHandler {
         return error(HttpStatus.INTERNAL_SERVER_ERROR, "INTERNAL_ERROR", "服务器内部错误", request);
     }
 
-    private ResponseEntity<ApiError> error(HttpStatus status, String code, String message,
-                                           HttpServletRequest request) {
+    private ResponseEntity<ApiError> error(
+            HttpStatus status, String code, String message, HttpServletRequest request) {
         return ResponseEntity.status(status)
-                .body(new ApiError(java.time.Instant.now(), status.value(), code,
-                        message == null || message.isBlank() ? status.getReasonPhrase() : message,
-                        request.getRequestURI()));
+                .body(
+                        new ApiError(
+                                java.time.Instant.now(),
+                                status.value(),
+                                code,
+                                message == null || message.isBlank()
+                                        ? status.getReasonPhrase()
+                                        : message,
+                                request.getRequestURI()));
     }
 }
