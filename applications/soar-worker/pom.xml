@@ -74,6 +74,14 @@
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- H2 (PostgreSQL mode) lets the composition-root regression test boot the
+             real Spring context without a live database, so a missing mapper scan
+             fails the build instead of only failing at deployment. -->
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
     <build>
         <finalName>hsiem-soar-worker</finalName>
