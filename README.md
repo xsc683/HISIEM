@@ -1,5 +1,7 @@
 # HISIEM 平台 — 轻量级 SIEM
 
+> **English entry point:** [README.en.md](README.en.md) — interviewer-facing English overview (architecture, engineering highlights, reliability semantics, known limits).
+
 基于 **Elastic Stack + Flink** 的轻量级 SIEM(Security Information and Event Management),覆盖日志采集、解析、实时检测、告警存储与可视化。
 
 **项目状态:Phase 3.0-3.5 检测引擎基线、Phase 4.0-4.4.1 控制台与运维能力均已完成并验证。**当前数据面由 Elastic Stack + Kafka + Flink 承载，控制面由 Spring Boot + PostgreSQL/Flyway 承载。生产安全、高可用和跨存储一致性仍见[当前状态](docs/current-status.md)。
