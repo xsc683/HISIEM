@@ -15,8 +15,23 @@
 
 ## 新增:架构总览与访谈材料
 
+- [架构图与数据流图](architecture-diagrams.md):两张规范图(平面化架构图 + 端到端数据流时序图),含组件职责表、真相处、七条可靠性边界,以及三种失败策略的并列对照。
 - [架构总览](architecture-overview.md):一页式的四张核心图——端到端数据链路、事件时间处理时间线、控制面 vs 数据面、HISIEM ↔ HISIEM-SOC-Copilot 边界。适合作为快速入口。
 - [访谈复习指南](interview/INTERVIEW_GUIDE.md):面向技术面试的系统复习材料,自 30 秒介绍到深度追问,每一条技术陈述都以本仓库实现为依据。
+
+## 跨项目面试学习资料
+
+本仓库 `docs/portfolio/` 存放覆盖 **HISIEM 与 HISIEM-SOC-Copilot 两个仓库**的面试学习与复习材料（资料性质，非产品文档；运行时事实以代码为准）：
+
+| 我想…… | 看哪份 |
+| --- | --- |
+| 系统学一遍 | [portfolio/HISIEM/03](portfolio/HISIEM/03_HISIEM_核心知识点.md) + [portfolio/Copilot/03](portfolio/Copilot/03_Copilot_核心知识点.md) |
+| 按顺序规划学习 | [portfolio/01 学习路线与优先级](portfolio/01_面试学习路线与优先级.md) |
+| 快速自检掌握程度 | [portfolio/HISIEM/04](portfolio/HISIEM/04_HISIEM_重点专题精炼.md) + [portfolio/Copilot/04](portfolio/Copilot/04_Copilot_重点专题精炼.md) |
+| 面试前突击 | [portfolio/Cross-System/02 关键边界速记](portfolio/Cross-System/02_双项目关键边界速记.md) |
+| 本仓库自身的面试入口 | [interview/INTERVIEW_GUIDE.md](interview/INTERVIEW_GUIDE.md) |
+
+入口说明见 [portfolio/README.md](portfolio/README.md)。
 
 ## 技术参考
 

@@ -1,6 +1,8 @@
 # HISIEM — Architecture Overview
 
-A concise, diagram-first model of the system. This document is navigation and visual
+A concise, diagram-first model of the system.
+For the two full-size canonical diagrams (plane architecture + end-to-end data flow),
+see [`architecture-diagrams.md`](architecture-diagrams.md). This document is navigation and visual
 summary only; the authoritative technical detail is in
 [`architecture.md`](architecture.md) and
 [`architecture-deep-dive.md`](architecture-deep-dive.md).
