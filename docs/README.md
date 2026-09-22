@@ -19,19 +19,13 @@
 - [架构总览](architecture-overview.md):一页式的四张核心图——端到端数据链路、事件时间处理时间线、控制面 vs 数据面、HISIEM ↔ HISIEM-SOC-Copilot 边界。适合作为快速入口。
 - [访谈复习指南](interview/INTERVIEW_GUIDE.md):面向技术面试的系统复习材料,自 30 秒介绍到深度追问,每一条技术陈述都以本仓库实现为依据。
 
-## 跨项目面试学习资料
+## 跨项目面试学习资料（已迁出本仓库）
 
-本仓库 `docs/portfolio/` 存放覆盖 **HISIEM 与 HISIEM-SOC-Copilot 两个仓库**的面试学习与复习材料（资料性质，非产品文档；运行时事实以代码为准）：
+原 `docs/portfolio/` 的 13 篇跨项目面试学习材料，已于 2026-09-23 按文档治理决策**移出本仓库**，现位于独立资料库 `D:\Project\interview-prep\`。
 
-| 我想…… | 看哪份 |
-| --- | --- |
-| 系统学一遍 | [portfolio/HISIEM/03](portfolio/HISIEM/03_HISIEM_核心知识点.md) + [portfolio/Copilot/03](portfolio/Copilot/03_Copilot_核心知识点.md) |
-| 按顺序规划学习 | [portfolio/01 学习路线与优先级](portfolio/01_面试学习路线与优先级.md) |
-| 快速自检掌握程度 | [portfolio/HISIEM/04](portfolio/HISIEM/04_HISIEM_重点专题精炼.md) + [portfolio/Copilot/04](portfolio/Copilot/04_Copilot_重点专题精炼.md) |
-| 面试前突击 | [portfolio/Cross-System/02 关键边界速记](portfolio/Cross-System/02_双项目关键边界速记.md) |
-| 本仓库自身的面试入口 | [interview/INTERVIEW_GUIDE.md](interview/INTERVIEW_GUIDE.md) |
+移出的原因：该材料**同时覆盖 HISIEM 与 HISIEM-SOC-Copilot 两个仓库**，不属于任何一个产品仓——其中 `Cross-System/` 的双仓端到端材料在两个仓里都放不下。它是**个人学习材料，不是产品文档**，运行时事实一律以两个产品仓库的代码为准。
 
-入口说明见 [portfolio/README.md](portfolio/README.md)。
+本仓库自身的面试入口仍是 [`interview/INTERVIEW_GUIDE.md`](interview/INTERVIEW_GUIDE.md)：锚定本仓实现，随产品演进，留在仓内。
 
 ## 技术参考
 
