@@ -2,7 +2,10 @@
 
 > 状态：2026-08-24 已升级到 V15。V11/V12 提供生命周期、租约、fencing、逐 attempt 和幂等回执；V13–V15 增加持久并行、串行循环与手动触发。V8–V10 表仍是不可修改的历史迁移，新运行时不读取它们。
 
-基础执行内核见 [`design/soar-runtime-architecture.md`](design/soar-runtime-architecture.md)；并行、循环、Connector、手动触发和验证器链见 [`design/soar-capability-runtime.md`](design/soar-capability-runtime.md)。
+**本文的范围：SOAR 的契约与限制**——生命周期消息契约、发布门禁、条件与模板、节点运行语义、持久表与并发、API 与页面、当前限制。SOAR 的机制叙述与能力扩展不在本文：
+
+- 基础执行内核的机制见 [`design/soar-runtime-architecture.md`](design/soar-runtime-architecture.md)；
+- 并行、循环、Connector、手动触发和验证器链见 [`design/soar-capability-runtime.md`](design/soar-capability-runtime.md)。
 
 ## 1. 能力边界
 
@@ -35,7 +38,7 @@ flowchart TD
 
 SOAR 从不订阅 `siem-events`。Flink 的 `AlertElasticsearchIndexer` 用异步 HTTP Update API 写告警：文档不存在时使用完整 `upsert`，已存在时只提交移除 `alert.status/verdict/operator/status_updated_at/case_id` 后的 partial `doc`，且不能设置 `doc_as_upsert=true`，否则首次创建也会错误地使用裁剪文档。只有 ES 返回 2xx 才把原告警交给 `AlertLifecycleEventMapper` 和 Kafka Sink，因此新告警不会在 ES 尚不可查询时触发业务动作。Kafka Sink 使用 checkpoint 支持的 `AT_LEAST_ONCE`；重复消息由数据库唯一键去重。
 
-控制面 Publisher 在告警/案件写成功后异步发送，Producer 启用 `acks=all` 和幂等写。回调失败记录 error 日志并增加 `siem.soar.lifecycle.publish.failed`。它不把 Kafka 失败伪装成业务存储回滚；严格的跨 ES/PostgreSQL/Kafka 原子性仍需要生产级 outbox，这属于当前边界。
+控制面 Publisher 在告警/案件写成功后异步发送，Producer 启用 `acks=all` 和幂等写。回调失败记录 error 日志并增加 `siem.soar.lifecycle.publish.failed`。它不把 Kafka 失败伪装成业务存储回滚；控制面 lifecycle publish **已采用** PostgreSQL `lifecycle_outbox` + leased dispatcher（见 §9 与[系统架构](architecture.md) §8）。严格跨 ES/PostgreSQL/Kafka 原子性**尚未达成**：ES 告警更新与 enqueue 不属于同一事务，两者之间的 residual crash gap 由 reconciliation 暴露并收敛。
 
 ## 3. 生命周期契约
 
