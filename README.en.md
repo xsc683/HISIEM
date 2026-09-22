@@ -1,9 +1,10 @@
 # HISIEM — Lightweight SIEM Platform
 
-> **English entry point.** The primary project description is the Chinese
-> [`README.md`](README.md). This file is an interviewer-facing English overview;
-> it is not a line-by-line translation. Deep technical detail lives in
-> [`docs/`](docs/) — see the [reading order](#13-documentation-reading-order).
+> **Primary description.** This is the authoritative project description; the Chinese
+> [`README.md`](README.md) is its counterpart, section for section. Both are
+> interviewer-facing overviews — deep technical detail lives in [`docs/`](docs/) (see the
+> [reading order](#13-documentation-reading-order)), and the code remains the final
+> authority on behaviour.
 
 A lightweight SIEM (Security Information and Event Management) platform built on
 **Elastic Stack + Kafka + Flink**, with a **Spring Boot** control plane. It covers
