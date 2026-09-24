@@ -2,7 +2,7 @@
 
 > 定位：面向项目交接、迭代决策和后续开发的管理视图。当前运行事实仍以 [`current-status.md`](current-status.md) 为准，功能/API 以 [`product-contract.md`](product-contract.md) 为准，阶段优先级以 [`roadmap.md`](roadmap.md) 为准；本文不建立第四份接口契约。
 >
-> 基线：2026-09-04，`add_frame` 分支，WSL2 + Docker Desktop；最近一次 Maven 完整验证基线为根 reactor 168 项（control-api 含 control/soar mapper smoke + Testcontainers `PostgresMigrationContainerTest`，Docker 可用时执行）、detection-controller 17 项、SOAR worker 1 项、Flink 60 项，全部通过；前端验证沿用 CI/历史记录。
+> 基线：2026-09-04，`add_frame` 分支，WSL2 + Docker Desktop。**测试规模不在本文重复——唯一权威落点是 [`current-status.md`](current-status.md) 的「测试规模」节**（本文写作时的 09-04 基线为：根 reactor 168 项（含 control/soar mapper smoke 与 Testcontainers `PostgresMigrationContainerTest`，Docker 可用时执行）、detection-controller 17 项、SOAR worker 1 项、Flink 60 项；前端验证沿用 CI/历史记录）。该组数字属历史基线，会随代码推移。
 
 ## 1. 当前结论
 
