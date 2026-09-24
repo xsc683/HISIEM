@@ -42,24 +42,10 @@
 | [OCSF 映射](design/ocsf-mapping.md) | 已落地的最小 OCSF 辅助视图与未完成字段 |
 | [安全加固参考](design/security-rbac.md) | ES/Kafka 认证、TLS 和最小权限的生产门禁 |
 | [威胁情报](design/threat-intel.md) | 本地字典 translate 富化的当前实现 |
+| [模块边界与进程角色](design/module-boundaries.md) | Maven 模块边界、依赖方向、进程角色与隔离规则（`CLAUDE.md` 与根 `README.md` 指向的同一入口） |
+| [Copilot 调查工作台 UX 基线](design/copilot-workspace-ux-brief.md) | AI 调查工作台的信息层级与增量补齐基线（实现级；其 `Authority` 指向 Copilot 仓的冻结契约） |
 
 `docs/design/` 现在只存独立的专项参考，不再存按阶段复制架构、产品和路线图的长文档。专项文档若描述“待实现”，必须同时在[路线图](roadmap.md)中登记，不能被当作现成功能。
-
-## 入门材料
-
-[入门指引](guide/) 按**项目优先**组织：从一个具体场景切入，讲清这个系统在解决什么问题、一条日志怎么走完全程、告警之后怎么处置。它**不替代契约**——接口、路由和验收仍在[产品契约](product-contract.md)。
-
-推荐顺序：[`guide/01`](guide/01-这个系统在解决什么问题.md) → [`guide/02`](guide/02-一条日志的完整旅程.md) → [`guide/03`](guide/03-从告警到处置决策.md)；之后用 [`guide/04`](guide/04-想深入读哪一篇.md) 决定往哪深入。
-
-**与 `docs/learn/` 的分工**：`guide/` 是**项目优先**（先讲这个项目在做什么），`learn/` 是**技术概念优先**（先讲 Kafka / Elasticsearch / Flink 本身是什么）。两者互补，不重复。
-
-## 入门材料
-
-[入门指引](guide/) 按**项目优先**组织：从一个具体场景切入，讲清这个系统在解决什么问题、一条日志怎么走完全程、告警之后怎么处置。它**不替代契约**——接口、路由和验收仍在[产品契约](product-contract.md)。
-
-推荐顺序：[`guide/01`](guide/01-这个系统在解决什么问题.md) → [`guide/02`](guide/02-一条日志的完整旅程.md) → [`guide/03`](guide/03-从告警到处置决策.md)；之后用 [`guide/04`](guide/04-想深入读哪一篇.md) 决定往哪深入。
-
-**与 `docs/learn/` 的分工**：`guide/` 是**项目优先**（先讲这个项目在做什么），`learn/` 是**技术概念优先**（先讲 Kafka / Elasticsearch / Flink 本身是什么）。两者互补，不重复。
 
 ## 入门材料
 
@@ -79,7 +65,7 @@
 
 ## 审计与历史材料
 
-[架构审计归档](archive/architecture-audit-2026-08.md)保留历史分析、验证证据和风险记录，仅用于追溯，不作为开发入口。归档内容可能包含当时已修复的问题或旧接口，使用前必须回到[当前状态](current-status.md)和代码确认。
+[架构审计归档](archive/architecture-audit-2026-08.md)保留历史分析、验证证据和风险记录，仅用于追溯，不作为开发入口。[阶段任务清单](archive/project-task-status.md)（原名 `design/project-task-status.md`）于 2026-09-23 归档：按本文规则 2，阶段计划只写入[路线图](roadmap.md)。归档内容可能包含当时已修复的问题或旧接口，使用前必须回到[当前状态](current-status.md)和代码确认。
 
 ## 基础设施局部说明
 

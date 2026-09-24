@@ -19,7 +19,7 @@ boundaries without turning every CRUD package into a network service.
 | `soar-worker-runtime` | SOAR worker runtime | Kafka consumer, Kafka health indicator and leased scheduled SOAR worker |
 | `platform-operations` | `health`, `notify`, `control`, `settings` | operational jobs, health and configuration; no process/Docker/WSL adapter code |
 | `platform-operations-adapters` | optional process adapter implementations | WSL/Docker process adapters for existing non-Detection operations; explicitly included by `control-api` for compatibility, can be disabled with `app.operations.process-adapters=disabled`, and is a candidate for a future operations worker |
-| `agent-adapter` | `agent` | typed outbound integration with HISIEM-Agent |
+| `agent-adapter` | `agent` | typed outbound integration with HISIEM-SOC-Copilot |
 
 The two executable Spring Boot applications are composition roots. Moving a package
 into a Maven module is behavior-preserving; core modules must not depend on

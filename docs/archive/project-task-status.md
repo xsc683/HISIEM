@@ -1,5 +1,7 @@
 # HISIEM / HISIEM-Agent 任务清单与完成状态
 
+> 本文件是阶段任务清单，已按[文档规则](../README.md)规则 2 归档——当前阶段计划见[路线图](../roadmap.md)。
+>
 > 更新日期：2026-09-03
 > 本文记录跨两个仓库的架构演进任务清单、每项完成状态、对应提交和遗留边界。
 > 相关方案：`docs/design/module-boundaries.md`、`docs/design/managed-detection-runtime.md`、根目录三份 proposal。
