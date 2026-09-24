@@ -1,8 +1,6 @@
 package com.xscsiem.hsiem_platform.agent;
 
-/**
- * 统一表示 HISIEM-SOC-Copilot 启动代理失败，避免把上游响应内容泄漏给浏览器。
- */
+/** 统一表示 HISIEM-SOC-Copilot 启动代理失败，避免把上游响应内容泄漏给浏览器。 */
 public class AgentLaunchException extends RuntimeException {
 
     private final int status;
