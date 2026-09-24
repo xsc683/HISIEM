@@ -67,6 +67,10 @@ map[source],map[target]
 
 ### 数据更新流水线(字典如何产生)
 
+> **下面这 5 步是 P2+ 升级路径,当前未实现。** `infra/ti/` 里现在只有 `README.md` 和 `update-ti.py`,
+> 步骤里提到的 `download.sh`、`build-csv.py`、`refresh.sh` **都不存在**。现行做法是 `update-ti.py`
+> 直接维护 YAML 字典(见本节开头的 MVP 现状说明)。以下保留为升级时的设计意图,不是可执行流程。
+
 每日下载 → 转标准 CSV → 校验 → 落地字典文件 → translate 每小时自动 reload(无需重启 logstash):
 
 1. **下载**:`infra/ti/download.sh` 从 AbuseIPDB / GreyNoise 拉 IP 信誉 CSV(各自需 API key,key 走环境变量,文件不进 git)。

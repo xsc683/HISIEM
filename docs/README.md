@@ -1,5 +1,7 @@
 # HISIEM 文档中心
 
+面向 AI 编码助手的仓库约定不在本目录：[`../CLAUDE.md`](../CLAUDE.md)（中文项目速览）与 [`../AGENTS.md`](../AGENTS.md)（英文 Repository Guidelines）——两者是同一套约定的两个语种入口，改动代码风格、构建命令或模块边界时同步维护。
+
 本目录只保留能指导当前开发、部署、使用和验收的文档。阅读时遵循“当前事实 → 产品契约 → 操作交付 → 技术参考 → 学习资料”的顺序；旧阶段稿和重复 Story 详文已删除，避免 AI 编码助手读取过时接口。
 
 ## 先看这 8 份
@@ -29,6 +31,8 @@
 
 ## 技术参考
 
+本节的**完整索引**见 [`design/README.md`](design/README.md)：它列出 `docs/design/` 下全部 10 篇专项文档的分工、状态规则和使用边界。
+
 | 文档 | 适用问题 |
 | --- | --- |
 | [设计决策](design-decisions.md) | 为什么采用 ECS、事件时间、Kafka/Flink checkpoint、YAML 规则和当前部署方式 |
@@ -46,6 +50,12 @@
 | [Copilot 调查工作台 UX 基线](design/copilot-workspace-ux-brief.md) | AI 调查工作台的信息层级与增量补齐基线（实现级；其 `Authority` 指向 Copilot 仓的冻结契约） |
 
 `docs/design/` 现在只存独立的专项参考，不再存按阶段复制架构、产品和路线图的长文档。专项文档若描述“待实现”，必须同时在[路线图](roadmap.md)中登记，不能被当作现成功能。
+
+## 代码级证据层
+
+[`architecture-analysis/`](architecture-analysis/README.md) 是**代码级取证层**：7 篇（`00`–`06`）按子系统记录 `file:line` 锚点、反直觉的真实形态和边界，回答的是「代码真的是这样吗」。
+
+它**不是契约，也不是入门材料**：权威仍在[产品契约](product-contract.md)、[系统架构](architecture.md) 和代码本身；与契约冲突时以契约为准，而**代码是最终事实**。想快速建立整体认知，先读[入门指引](guide/01-这个系统在解决什么问题.md) 或[架构总览](architecture-overview.md)。
 
 ## 入门材料
 

@@ -15,26 +15,12 @@
 
 ## 2. 运行链路
 
-```mermaid
-flowchart TD
-    FLINK["Flink 检测结果"] --> INDEXER["AlertElasticsearchIndexer<br/>安全 partial update / 完整 upsert"]
-    INDEXER --> ALERTS[("Elasticsearch siem-alerts")]
-    ALERTS -->|"ES 2xx 后 alert.created"| ALERT_LIFE["siem-alert-lifecycle"]
+从 Flink 检测结果到 SOAR 节点推进的完整链路——告警如何落库、生命周期消息如何产生、
+Worker 如何领取并推进一个持久节点——由
+[`design/soar-runtime-architecture.md`](design/soar-runtime-architecture.md) §3–§5 完整展开
+（含链路图），**本文不重复**。职责划分见文首「本文的范围」。
 
-    CONTROL["AlertService / CaseService"] -->|"告警处置与案件同步兼容路径"| ES[("Elasticsearch")]
-    CONTROL -->|"案件事实 + mirror outbox"| PG_CASE[("PostgreSQL")]
-    PG_CASE --> DISPATCH["CaseMirrorDispatcher"] --> ES
-    CONTROL -->|"alert.updated"| ALERT_LIFE
-    CONTROL -->|"case.created / case.updated"| CASE_LIFE["siem-case-lifecycle"]
-
-    ALERT_LIFE --> CONSUMER["SoarKafkaConsumer<br/>group: siem-soar-runtime"]
-    CASE_LIFE --> CONSUMER
-    CONSUMER -->|"契约校验 + published/enabled 匹配"| EXEC[("soar_execution pending")]
-    EXEC -->|"单条租约 + fencing token"| WORKER["SoarWorker<br/>一次推进一个 durable node"]
-    WORKER --> WAIT["waiting"]
-    WORKER --> HUMAN["waiting_human"]
-    WORKER --> NEXT["next node / success / failed"]
-```
+以下是**只在这里定义的两条契约性事实**：
 
 SOAR 从不订阅 `siem-events`。Flink 的 `AlertElasticsearchIndexer` 用异步 HTTP Update API 写告警：文档不存在时使用完整 `upsert`，已存在时只提交移除 `alert.status/verdict/operator/status_updated_at/case_id` 后的 partial `doc`，且不能设置 `doc_as_upsert=true`，否则首次创建也会错误地使用裁剪文档。只有 ES 返回 2xx 才把原告警交给 `AlertLifecycleEventMapper` 和 Kafka Sink，因此新告警不会在 ES 尚不可查询时触发业务动作。Kafka Sink 使用 checkpoint 支持的 `AT_LEAST_ONCE`；重复消息由数据库唯一键去重。
 
@@ -99,9 +85,9 @@ GET /api/soar/action-dictionary?objectType=alert|case
 
 文本字段支持 `== != contains is_empty not_empty`，数值支持 `== != > < is_empty not_empty`，列表支持 `contains/is_empty/not_empty`。前端 Condition 表单只显示后端返回的字段与兼容操作符，后端再次校验，不能通过改请求注入任意路径。
 
-节点参数支持严格模板：`${alert.id}`、`${case.id}`、`${nodes.<nodeId>.output.<field>}`、`${execution.id}`、`${trigger.messageId}`、`${trigger.kafka.topic}` 和 `${variables.<name>}`。`SoarTemplateResolver` 递归处理 Map/List；整个字符串是模板时保留数值、列表等原类型，嵌入普通文本时转成字符串。路径不存在或值为 null 直接使节点失败，不会把未解析的 `${...}` 发送给业务服务。
+节点参数支持严格模板：`${alert.id}`、`${case.id}`、`${nodes.<nodeId>.output.<field>}`、`${execution.id}`、`${trigger.messageId}`、`${trigger.kafka.topic}` 和 `${variables.<name>}`。
 
-每个节点 attempt 开始前，Engine 从 execution、trigger、payload 和成功输出重建 `SoarExecutionContext`，把解析后的 config、事件类型和对象 ID 写入 `soar_node_execution.input_json`。完成结果写入 `output_json`，后续节点只引用已持久化输出。因此服务重启后参数传递不依赖 JVM 内存。
+**解析与传递的机制**（`SoarTemplateResolver` 的递归与类型保留、`SoarExecutionContext` 如何从持久化状态重建、`input_json`/`output_json` 的写入时机）见 [`design/soar-runtime-architecture.md`](design/soar-runtime-architecture.md) §8。**以下是契约事实**：路径不存在或值为 null 直接使节点失败，不会把未解析的 `${...}` 发送给业务服务；后续节点只引用已持久化输出，因此服务重启后参数传递不依赖 JVM 内存。
 
 ## 6. 节点运行语义
 
@@ -128,23 +114,16 @@ SOAR 没有复制一套告警/案件写逻辑。例如 `alert.create_case` 调�
 
 ## 7. 持久执行和并发
 
-V11–V15 当前表：
-
-| 表 | 作用 |
-| --- | --- |
-| `soar_playbook` | 当前草稿/发布定义、事件入口、revision、操作者和软删除 |
-| `soar_execution` | 触发信封、对象、完整 payload/图快照、状态、当前节点、租约和 next_run_at |
-| `soar_node_execution` | 每次节点访问/尝试的序号、attempt、幂等键、输入、输出、错误和时间 |
-| `soar_approval_task` | 绑定精确 node run 的待审批事实、提示、决定、操作者和备注 |
-| `soar_action_receipt` | 内部 Business 动作按逻辑 visit 保存的幂等结果 |
-| `soar_parallel_group` / `soar_parallel_branch` | 持久分支 token、Join 计数器、到达和聚合结果 |
-| `soar_loop_state` | Loop body 边界、items、当前 index、安全上限与父子 execution |
+**表结构与关系**（V11–V15 各表的字段、约束与 ER 图）见
+[`design/soar-runtime-architecture.md`](design/soar-runtime-architecture.md) §11；
+**Worker 的领取、租约、fencing 与心跳续租机制**见同篇 §5 与 §12。**本文不重复机制叙述**，
+只保留以下契约与边界：
 
 执行状态固定为 `pending/running/success/failed/cancelled/waiting/waiting_human`。Playbook 的 disabled 和执行的 cancelled 是不同概念：停用只阻止新消息匹配；取消只终止一个活动实例。
 
 消费者组 `siem-soar-runtime` 读取两个 lifecycle topic。唯一约束 `(tenant_id, playbook_id, trigger_message_id)` 保证同一消息对同一 Playbook 只建一个实例，不影响同一消息匹配多个 Playbook。
 
-Worker 每次只领取并立即执行一个持久节点，避免批量领取后排队导致后续租约尚未开始执行就过期。每次 claim 都递增 `soar_execution.version` 作为 fencing token；Engine 的推进、成功、失败、等待、重试和审批提交都必须同时匹配 lease owner、token、未取消状态和未过期时间。长节点执行期间独立心跳按租约约三分之一周期续租；续租失败后，旧 Worker 即使稍后返回结果也会被状态 SQL 拒绝，不能覆盖新 owner。Engine 从 Registry 选择 Handler，Handler 只返回统一结果，不能直接操作流程状态。每次失败重试都生成新的 attempt 并保留历史，同一逻辑 visit 共享幂等键。内部控制面动作与 `soar_action_receipt` 处于同一 PostgreSQL 事务；外部 HTTP Connector 自动发送该键，但远端仍需实现去重或提供动作查询/补偿协议。分支或循环体最终失败会事务化传播到父实例并取消仍活动的兄弟子树，避免父实例永久 waiting。
+**契约与边界**（机制见 design §5/§12）：每次失败重试都生成新的 attempt 并保留历史，同一逻辑 visit 共享幂等键；内部控制面动作与 `soar_action_receipt` 处于**同一 PostgreSQL 事务**；外部 HTTP Connector 会自动发送该键，但**远端仍需实现去重或提供动作查询/补偿协议**；分支或循环体最终失败会事务化传播到父实例并取消仍活动的兄弟子树，**避免父实例永久 waiting**。
 
 ## 8. API 和页面
 

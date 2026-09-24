@@ -30,9 +30,9 @@
 | --- | --- | --- |
 | **input** | 定义数据从哪来 | `tcp { port => 5000 }` |
 | **filter** | 定义数据如何处理(解析、时间、补字段) | `grok`、`date`、`mutate` |
-| **output** | 定义处理后的数据发往哪 | `elasticsearch`、`kafka`、`stdout` |
+| **output** | 定义处理后的数据发往哪 | `elasticsearch`、`kafka`;**`stdout` 在配置中已注释关闭**(仅调试用,见 `infra/logstash/pipeline/logstash.conf`) |
 
-**场景举例(多 pipeline 的适用条件)**:当存在多个数据源且各源处理逻辑差异大时,业界建议为每个数据源配置独立的 pipeline(`pipelines.yml`),以隔离故障与调优资源。本项目当前仅 SSH 单一数据源,维持单 pipeline 合理;引入第二个数据源(如 Windows 事件日志)时再拆分。
+**场景举例(多 pipeline 的适用条件)**:当存在多个数据源且各源处理逻辑差异大时,业界建议为每个数据源配置独立的 pipeline(`pipelines.yml`),以隔离故障与调优资源。本项目**已经是多 pipeline**:`pipelines.yml` 声明了 7 条——一条 `main`(跑 `pipeline/*.conf` 下的主干配置)加六条运行时按 log source 生成并落盘的 `ls-<hash>`(`pipeline/log-sources/` 下各一条,各自 bind 一个 TCP 端口)。所以「多 pipeline」不是未来选项,而是当前形态;新增数据源由控制台创建 log source 时自动生成对应 pipeline。
 
 ### 3.2 filter 常用插件
 
@@ -67,7 +67,7 @@ pattern: %{USERNAME:user.name}  from  %{IP:source.ip}
 
 | 队列 | 解决的问题 | 本项目状态 |
 | --- | --- | --- |
-| 内存队列 | 无(默认行为) | 当前 |
+| 内存队列 | 无(默认行为) | **已被取代**:`queue.type` 改为 `persisted` 后走的就是磁盘队列 |
 | 持久化队列 | Logstash 崩溃瞬间 tcp 事件的丢失 | 已配置（`infra/logstash/config/logstash.yml` 的 `queue.type: persisted`，Phase 3.0-L4） |
 | 死信队列 | ES 拒收(字段冲突等)事件不丢失 | 已配置（同文件 `dead_letter_queue.enable: true`，Phase 3.1-L5） |
 

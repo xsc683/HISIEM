@@ -82,8 +82,9 @@ flowchart LR
     FP -->|"否"| DLQ["Kafka<br/>siem-events-dlq"]
     FP -->|"是"| RULES["单事件 / 窗口 / CEP / 基线规则"]
     RULES --> ALERT[("Elasticsearch<br/>siem-alerts")]
-    ALERT -->|"写入确认后"| ALERT_OUTBOX["PostgreSQL lifecycle_outbox"]
-    ALERT_OUTBOX --> ALERT_LIFE["Kafka<br/>siem-alert-lifecycle"]
+    ALERT -->|"ES 2xx 后直发"| ALERT_LIFE["Kafka<br/>siem-alert-lifecycle"]
+    CONTROL["控制面<br/>AlertService / CaseService"] -->|"alert.updated<br/>case.created / case.updated"| ALERT_OUTBOX["PostgreSQL lifecycle_outbox"]
+    ALERT_OUTBOX --> ALERT_LIFE
     ALERT_LIFE --> SOAR["SOAR 匹配并创建 execution"]
 ```
 
@@ -101,7 +102,7 @@ raw 与 DLQ 是两个不同失败边界：`siem-events-raw-*` 隔离 Logstash �
    - 单事件规则逐条匹配 → 每条命中生成一条告警
    - 时间窗口规则(事件时间窗口 + watermark)→ 窗口关闭时统计命中数,≥阈值生成关联告警
    - CEP 序列和基线异常分别处理攻击链、统计异常，并统一写入告警字段
-7. Flink 先写入 ES `siem-alerts`：新文档使用完整 upsert，重放或抑制更新只提交不含分析师处置字段的 partial doc；ES 确认成功后将最小 `alert.created` 契约 enqueue 到 PostgreSQL `lifecycle_outbox`。ES 更新与 enqueue 不属于同一事务，reconciliation 负责暴露并收敛 crash gap。
+7. Flink 先写入 ES `siem-alerts`：新文档使用完整 upsert，重放或抑制更新只提交不含分析师处置字段的 partial doc。ES 返回 2xx 后，`AlertElasticsearchIndexer` 的输出经 `AlertLifecycleEventMapper` 转成最小 `alert.created` 契约，由 `KafkaSink` **直接发往** `siem-alert-lifecycle`（`AT_LEAST_ONCE`）——**这条路径不经过 PostgreSQL**，Flink 工程没有任何 JDBC/PG 依赖。ES 更新与 Kafka 发送之间不属于同一事务（进程在两者之间崩溃则消息丢失，需由后续事实重新触发或对账暴露），这个 crash gap 不会被 outbox 掩盖。
 8. lifecycle outbox dispatcher 以租约批量 claim，等待 Kafka broker ACK 后再完成数据库记录；ACK 后、完成前进程崩溃允许重复发送，下游依赖稳定 `message_id` 幂等。告警/案件控制面变更成功后分别产生 `alert.updated`、`case.created/updated`。
 9. SOAR 消费组读取 lifecycle topic，匹配已发布且启用的 Playbook，执行 Start/End/Condition/Business/Human/Wait。
 10. 控制台写操作通过 Spring Security 鉴权；案件处置状态、SOAR Playbook/执行快照/逐 attempt I/O/审批/动作回执、用户会话、通知、审计和后台任务写入 PostgreSQL，Flyway 负责当前 V1-V19 迁移。
@@ -112,8 +113,7 @@ raw 与 DLQ 是两个不同失败边界：`siem-events-raw-*` 隔离 Logstash �
 flowchart TD
     UI["控制台 / SOAR Business 节点"] --> CASE["CaseService"]
     CASE --> PG_TX["PostgreSQL 事务<br/>cases + case_alerts + case_mirror_outbox"]
-    CASE -.->|"创建/更新的同步兼容与乐观锁路径"| ES_CASE[("Elasticsearch<br/>siem-cases")]
-    CASE -.->|"写入或清除 alert.case_id"| ES_ALERT[("Elasticsearch<br/>siem-alerts")]
+    CASE -.->|"仅同步写/清除 alert.case_id<br/>(打的是 siem-alerts,不是 siem-cases)"| ES_ALERT[("Elasticsearch<br/>siem-alerts")]
     PG_TX --> OUTBOX["CaseMirrorDispatcher<br/>租约 + 退避重试"]
     OUTBOX --> ES_CASE
     PG_TX --> RECONCILE["定时全量 reconcile"]
@@ -121,7 +121,13 @@ flowchart TD
     CASE -->|"业务前置步骤成功后"| CASE_LIFE["Kafka<br/>siem-case-lifecycle"]
 ```
 
-当前案件链路是“PostgreSQL 事实源 + ES 兼容镜像 + 同步业务保护 + 异步收敛”的混合实现，而不是纯 outbox：创建先写 PostgreSQL/outbox，再同步写案件镜像并标记告警；更新先用 ES `_seq_no/_primary_term` 做乐观锁，再以 PostgreSQL `version` 更新事实并排入 outbox；删除先删 PostgreSQL并排入 delete outbox，再尽力同步删除 ES。同步步骤失败会进行补偿，但跨系统仍不具备原子性，outbox 与 reconcile 用于让镜像最终收敛。
+当前案件链路是「PostgreSQL 事实源 + ES 只作检索镜像」的两层实现。**`siem-cases` 没有任何同步写入路径**——它的唯一写入点是异步镜像通道：
+
+- **创建**：前置校验（告警 open 且未入他案）通过后写 PostgreSQL，案件、案件—告警关系和 `case_mirror_outbox` 在**同一事务**内落地；随后**同步**给案内告警写 `alert.case_id` 标记——打的是 `/siem-alerts/_update/`，**不是 `siem-cases`**。标记失败时删除已建案件并抛错：ES 没有跨索引事务，这是**补偿**，不是提交。
+- **更新**：乐观锁的仲裁者是 **PostgreSQL**——先读 `_control_version`，再 `updateCase(caseId, version, …)`，版本不匹配返回 409。更新同样只排 outbox，不写镜像。
+- **删除**：只删 PostgreSQL（同一事务内 enqueue 删除）；ES 文档由 `CaseMirrorDispatcher` 删除，**不在请求路径上**。
+
+需要特别记清的一点：ES 的 `_seq_no`/`_primary_term` 乐观锁属于**告警**（`AlertService` 对 `/siem-alerts/_update/` 带 `if_seq_no`/`if_primary_term`），**不属于案件**。案件没有基于 ES 版本号的锁。同步环节仅剩告警侧的 `case_id` 标记，它失败时的补偿只覆盖这一次调用；跨系统仍不具备原子性，`CaseMirrorDispatcher`（租约 + 退避重试）与定时全量 `reconcileMirror` 负责让镜像最终收敛。
 
 ### 3.3 日志检索与运营大屏读链路
 

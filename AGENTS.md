@@ -17,11 +17,12 @@ generated `target/`, `web/dist/`, or `web/node_modules/` content.
 
 ## Build, Test, and Development Commands
 
-Run commands from the repository root with Java 21:
+Run commands from the repository root with Java 21. The Chinese-language
+counterpart of this file is [`CLAUDE.md`](CLAUDE.md) - keep the two in sync.
 
 ```bash
-./mvnw test                            # test the Spring Boot service
-./mvnw spring-boot:run                 # start the API on port 8080
+./mvnw test                            # test the whole Spring Boot reactor
+./mvnw -pl applications/control-api spring-boot:run   # start the control API on port 8080
 ./mvnw -f flink/pom.xml clean package  # test and build the shaded Flink JAR
 npm --prefix web ci                    # install the locked frontend dependencies
 npm --prefix web run dev               # start Vite on port 5173

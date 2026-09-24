@@ -13,7 +13,6 @@ boundaries without turning every CRUD package into a network service.
 | `security-ops` | `alert`, `investigation`, `logsearch`, `search` | analyst queries, alerts and cases |
 | `detection-control` | `rules` | YAML validation, immutable revisions, plans and desired deployments; no physical runtime adapter |
 | `detection-runtime` | `detection.runtime` | transport-neutral lease/target/observation/port contracts, immutable artifact builder, stable job-name codec, and opt-in Flink process adapter |
-| `detection-controller` | `detection.controller` | independent non-web claim, lease/fencing, reconciliation, conditional adapter wiring and adapter health process |
 | `soar-core` | SOAR model, engine and handlers | transport-neutral playbook execution, lease, retry, approval and connector SPI; defines the consumer-owned `SecurityOperationPort`; no Kafka, Actuator health or JDK HTTP imports |
 | `soar-adapters` | SOAR Kafka/HTTP and security-operation adapters | lifecycle publisher, Kafka properties and record mapper, generic HTTP connector implementations, and the local `SecurityOperationPort` implementation |
 | `soar-worker-runtime` | SOAR worker runtime | Kafka consumer, Kafka health indicator and leased scheduled SOAR worker |
@@ -21,7 +20,7 @@ boundaries without turning every CRUD package into a network service.
 | `platform-operations-adapters` | optional process adapter implementations | WSL/Docker process adapters for existing non-Detection operations; explicitly included by `control-api` for compatibility, can be disabled with `app.operations.process-adapters=disabled`, and is a candidate for a future operations worker |
 | `agent-adapter` | `agent` | typed outbound integration with HISIEM-SOC-Copilot |
 
-The two executable Spring Boot applications are composition roots. Moving a package
+The three executable Spring Boot applications — `applications/control-api`, `applications/detection-controller` and `applications/soar-worker` — are composition roots; `detection-controller` is an **application, not a module** (an independent non-web `WebApplicationType.NONE` process owning durable claim, lease/fencing, reconciliation, conditional adapter wiring and adapter health). Moving a package
 into a Maven module is behavior-preserving; core modules must not depend on
 Spring MVC or controller classes. `SecurityOperationPort` is defined by its
 consumer in `soar-core` (`com.xscsiem.hsiem_platform.soar.port`) and exposes typed

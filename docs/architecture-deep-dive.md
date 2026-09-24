@@ -686,7 +686,8 @@ return sha1Hex(ruleId + "|" + entity + "|" + ts);
 
 ### 6.2 Flink sink 对分析师字段做 partial update 保护
 
-实现位置：`flink/src/main/java/com/siem/DetectionJob.java` 的 `toBulkOperation`。
+实现位置：`flink/src/main/java/com/siem/DetectionJob.java` 的 `alertOperation`。
+`DetectionJobSinkTest` 断言它产出 `BulkOperation.Kind.Update`，并且 `docAsUpsert()` **为 false**。
 
 ~~~java
 Map<String, Object> full = ALERT_MAPPER.readValue(element, Map.class);
@@ -695,19 +696,21 @@ Set<String> protectedFields = Set.of(
         "alert.status", "alert.analyst_verdict", "alert.operator",
         "alert.status_updated_at", "alert.case_id");
 protectedFields.forEach(patch::remove);
-
+JsonData fullDoc = JsonData.fromJson(element);
+JsonData partialDoc = JsonData.fromJson(ALERT_MAPPER.writeValueAsString(patch));
 return new UpdateOperation.Builder<JsonData, JsonData>()
         .index("siem-alerts")
         .id(alertId(element))
         .action(new UpdateAction.Builder<JsonData, JsonData>()
-                .doc(JsonData.fromJson(ALERT_MAPPER.writeValueAsString(patch)))
-                .upsert(JsonData.fromJson(element))
-                .docAsUpsert(true)
+                .doc(partialDoc)
+                .upsert(fullDoc)
                 .build())
         .build();
 ~~~
 
-首次命中用完整文档 upsert，后续检测更新只提交检测侧字段。窗口结束、作业重放或 suppression timer 不会把分析师刚写入的 status、verdict、operator、case 关系覆盖掉。
+首次命中用完整文档 upsert，后续检测更新只提交检测侧字段。
+
+**这里有一条必须写死的约束：不能加 `.docAsUpsert(true)`。** 它会让 Elasticsearch 在文档不存在时也用那个**被裁剪过的** partial doc 建文档，于是新告警反而缺字段。所以 `.doc(partialDoc)` 与 `.upsert(fullDoc)` 是成对的，`docAsUpsert` 必须保持默认的 false——`DetectionJobSinkTest` 把这一点固定成了断言。窗口结束、作业重放或 suppression timer 不会把分析师刚写入的 status、verdict、operator、case 关系覆盖掉。
 
 ### 6.3 分析师更新使用 ES 乐观锁，并且批量请求先预检查
 

@@ -54,7 +54,10 @@ npm.cmd --prefix web run test:e2e
 - 真实负载下的分区、checkpoint、索引生命周期、保留策略和 RTO/RPO 压测。
 - 多租户字段、索引隔离、文档级权限和更细粒度的角色模型。
 - 通知渠道、更多接入协议和可视化信息架构的持续评估。
-- lifecycle DLQ/replay、OR 条件、动态 map/while、子 Playbook、Connector 凭据/mTLS/代理/隔离、AI Agent，以及跨地域容量验证。
+- lifecycle DLQ/replay、OR 条件、动态 map/while、子 Playbook、Connector 凭据/mTLS/代理/隔离、**SOAR 内的 AI 节点**，以及跨地域容量验证。
+  （注意：这里的「AI Agent」指能在 Playbook 里充当判断节点的 AI；**AI 调查工作台**是另一条链路，由外部 SOC Copilot 经控制台 BFF 代理接入，已落地且不再是路线图事项——见[产品契约](product-contract.md)与[当前状态](current-status.md)。）
+
+- OCSF 可移植层补齐 4 个仍是「设计值」的字段（`ocsf.class_name`、`ocsf.category_uid`、`ocsf.metadata.version`、`ocsf.time`）——见 [design/ocsf-mapping.md](design/ocsf-mapping.md) §1 各行标着「待 `Ocsf.java` 补写」的格子。
 
 ## 学习路线
 

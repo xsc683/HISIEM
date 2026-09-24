@@ -4,6 +4,8 @@
 > ECS 是存储 schema(不变,详见 docs/event-alert-schema.md);本映射为输出侧补充的 OCSF 视图,
 > 使规则/看板未来换平台或对接 AWS Security Lake 时不必重写。
 
+> **治理要求**:本文件描述的是**部分落地**的映射。下表标着「设计值,待 `Ocsf.java` 补写」的字段属于「待实现」,已按 `docs/README.md` 的规则在[路线图](../roadmap.md)中登记为 P2 条目——不要把这些字段读成已存在。
+
 ## 1. 告警 → OCSF(Authentication 类)
 
 落地位置:`siem-alerts` 的 `ocsf.*` 字段(由 Flink 告警构建器附加)。

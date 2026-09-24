@@ -20,7 +20,7 @@
 | **实时** | 事件到达即检测,无需定时批处理 | 认证失败事件到达后立即逐条匹配规则 |
 | **有状态** | 跨事件记忆,支持窗口统计 | 统计"某源 IP 5 分钟内失败次数" |
 | **事件时间** | 按攻击发生时间聚合,容忍乱序 | 网络延迟导致的乱序事件仍按日志时间归入正确窗口 |
-| **容错** | checkpoint 使重启后从断点恢复 | Flink 故障重启后,从最近 checkpoint 继续消费,不重不漏(配合幂等) |
+| **容错** | checkpoint 使重启后从断点恢复 | Flink 故障重启后从最近 checkpoint 继续消费。**语义是 at-least-once**——少量在途记录会被重放,靠确定性 ES 文档 ID 收敛,不是「不重不漏」 |
 
 ## 3. 核心概念
 
@@ -117,7 +117,7 @@ flowchart LR
 2. **checkpoint 生命周期**:当前 Compose 已挂载 `flink-checkpoints` named volume；`docker compose down -v` 仍会删除它，普通 cancel 也按当前 cleanup mode 删除 checkpoint，升级恢复应使用 savepoint。
 3. **ES 至少一次重放**:当前使用确定性 `_id`，且已有告警只 partial update 检测字段；不能删掉该保护或覆盖分析师状态。
 4. **idle 分区拖住 watermark**:当前使用 `withIdleness(60s)`；新增事件时间分支必须复用同一 watermark 流，不能各自定义冲突语义。
-5. **算子无 `.uid()`**:缺少 `.uid()` 时,作业升级后无法从 savepoint 恢复状态,需为所有有状态算子设置。
+5. **算子必须显式 `.uid()`**:当前 `DetectionJob` 已为 13 处算子(含按规则 ID 拼接的窗口/CEP/基线算子)设置了固定 `.uid()`。**新增**算子时必须同样设置——否则升级作业时该算子的状态无法从 savepoint 映射回原位置。
 
 ## 6. 动手验证
 
@@ -129,8 +129,15 @@ docker exec siem-flink-jobmanager flink list
 # 浏览器打开 http://localhost:8081
 
 # 用 savepoint 停止并恢复（普通 cancel 默认会删除 checkpoint）
-docker exec siem-flink-jobmanager flink stop -p file:///opt/flink/savepoints <JobID>
-docker exec siem-flink-jobmanager flink run -d -s file:///opt/flink/savepoints/<savepoint> /opt/flink/detection-job-1.0.jar
+docker exec siem-flink-jobmanager flink stop -p file:///opt/flink/checkpoints/savepoints <JobID>
+docker exec siem-flink-jobmanager flink run -d -s file:///opt/flink/checkpoints/savepoints/<savepoint> /opt/flink/detection-job-1.0.jar
+```
+
+> **为什么写进 `checkpoints/` 而不是 `/opt/flink/savepoints`**：`infra/docker-compose.yml` 只把命名卷
+> `flink-checkpoints` 挂在 `/opt/flink/checkpoints`(jobmanager 与 taskmanager 各一份)。`/opt/flink/savepoints`
+> **不是挂载点**,写进去只落在容器可写层——`docker compose down` 或重新 `up` 重建容器时即丢失,演练出的
+> savepoint 也就没用了。真要单独放 savepoint,得先像 checkpoints 那样加一个卷。
+> 另外该目录的属主问题同样存在:全新卷属主是 root,需先 `chown -R flink:flink`。
 ```
 
 ## 7. 自测

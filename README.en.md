@@ -12,6 +12,14 @@ log ingestion, parsing and normalization, real-time detection, alert storage,
 an analyst console, and deterministic SOAR response execution.
 
 **Status.** The detection-engine baseline (Phase 3.0–3.5) and the console and
+operations capabilities (Phase 4.0–4.4.1) are complete and verified. Three further
+waves have landed since: the **deterministic SOAR loop** (V11–V15), the **Managed
+Detection Runtime** (5A/5B, with 5B an opt-in single-cluster process adapter), and
+the **SOC Copilot AI investigation workspace** (server-side BFF proxy, workspace UI,
+and the `/api/internal/**` service entry). Production security, high availability
+and cross-store consistency are **not** closed — and neither is the
+**cross-repository end-to-end loop against a real Copilot instance**. See
+[Known Limits](#12-known-limits) and [`docs/current-status.md`](docs/current-status.md).
 operations capabilities (Phase 4.0–4.4.1) are complete and verified. Production
 security, high availability and cross-store consistency are **not** closed — see
 [Known Limits](#12-known-limits).
@@ -23,7 +31,7 @@ security, high availability and cross-store consistency are **not** closed — s
 | | |
 |---|---|
 | Domain | Security operations — log ingestion, detection, alerting, incident response |
-| Role in the portfolio | **Project 1 of 2.** The security platform. Its AI investigation layer is a separate repository — see [§10](#10-project-relationship-to-hisiem-soc-copilot) |
+| Role in the portfolio | **Project 1 of 2.** The security platform. The AI *investigation engine* is a separate repository, but the seam into it (BFF proxy + workspace UI) lives here — see [§10](#10-project-relationship-to-hisiem-soc-copilot) |
 | Data plane | Logstash → Elasticsearch + Kafka → Flink (detection) → Elasticsearch alerts |
 | Control plane | Spring Boot + PostgreSQL (Flyway) — API, cases, rules, IAM, SOAR, operations |
 | Language / runtime | Java 21, Spring Boot 4.1, Apache Flink 2.1 |
@@ -31,8 +39,10 @@ security, high availability and cross-store consistency are **not** closed — s
 | Engineering focus | **Backend + distributed systems + stream processing + SIEM domain** |
 
 This is deliberately **not** an AI project. It is a streaming data platform with
-the reliability, consistency and operational concerns that implies. The AI layer
-that consumes it is a separate system (see [§10](#10-project-relationship-to-hisiem-soc-copilot)).
+the reliability, consistency and operational concerns that implies. The AI
+*investigation engine* that consumes it is a separate system — but the seam into it
+lives here: the server-side proxy in `modules/agent-adapter`, and the workspace UI in
+`web/src/views/copilot/` (see [§10](#10-project-relationship-to-hisiem-soc-copilot)).
 
 ---
 
@@ -418,8 +428,12 @@ covers the *why* behind the major choices.
 | SOAR execution chain | [`docs/soar.md`](docs/soar.md), [`docs/design/soar-runtime-architecture.md`](docs/design/soar-runtime-architecture.md) |
 | Managed detection runtime | [`docs/design/managed-detection-runtime.md`](docs/design/managed-detection-runtime.md) |
 | Security hardening gates | [`docs/design/security-rbac.md`](docs/design/security-rbac.md) |
+| **Entry guide** (project-first) | [`docs/guide/`](docs/guide/01-这个系统在解决什么问题.md) |
+| Index of the design reference set | [`docs/design/README.md`](docs/design/README.md) |
+| **Code-level evidence layer** | [`docs/architecture-analysis/`](docs/architecture-analysis/README.md) — per-subsystem `file:line` forensics; not a contract, and the contract wins on conflict |
 | Concepts and experiments | [`docs/learn/`](docs/learn/README.md) |
 | History / audit material | [`docs/archive/`](docs/archive/README.md) |
+| Agent conventions | [`AGENTS.md`](AGENTS.md) / [`CLAUDE.md`](CLAUDE.md) |
 
 Full index: [`docs/README.md`](docs/README.md).
 Interview-oriented review material: [`docs/interview/INTERVIEW_GUIDE.md`](docs/interview/INTERVIEW_GUIDE.md).

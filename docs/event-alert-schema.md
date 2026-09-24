@@ -6,7 +6,7 @@
 
 | 对象 | 索引 | `@timestamp` | 系统处理时间 |
 | --- | --- | --- | --- |
-| 正常事件 | `siem-events-*` | 日志发生时间（Logstash `date` 解析） | `event.ingested`（若有） |
+| 正常事件 | `siem-events-*` | 日志发生时间（Logstash `date` 解析） | **无**。`event.ingested` 在当前 Logstash 配置、索引模板和 Flink 代码里**都没有写入者**——本行列它只是为了让读者知道「不要依赖这个字段」 |
 | 解析失败事件 | `siem-events-raw-*` | 可解析则使用原始时间，否则使用处理时间 | 以 raw 文档为准 |
 | 告警 | `siem-alerts` | 单事件使用事件时间；窗口/关联告警使用窗口结束时间 | `alert.created_at` |
 
@@ -33,7 +33,7 @@
 | `log.source_name` | keyword | 数据源展示名 |
 | `message` | text | 可读消息 |
 | `pipeline` | keyword | Logstash pipeline 标识 |
-| `tags` | keyword[] | 解析状态等标签，失败事件通常含 `_parsefailure` |
+| `tags` | keyword[] | 解析状态等标签，失败事件通常含 `_parsefailure`。**注意映射位置**：`tags` 只在 `siem-events-raw-template.json` 里被显式映射，`siem-events` 模板**没有**它——正常事件索引里的 `tags` 走动态映射 |
 
 正常事件进入 Elasticsearch 和 Kafka；解析失败事件进入 `siem-events-raw-*`，不进入正常检测链路。DataHealth 必须合并正常桶和 raw 桶统计同一数据源。
 

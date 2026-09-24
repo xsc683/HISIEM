@@ -4,7 +4,7 @@
 
 基于 **Elastic Stack + Kafka + Flink** 的轻量级 SIEM(Security Information and Event Management)平台，控制面由 **Spring Boot** 承载；覆盖日志采集、解析与标准化、实时检测、告警存储、分析员控制台和确定性 SOAR 响应执行。
 
-**项目状态：** Phase 3.0–3.5 检测引擎基线与 Phase 4.0–4.4.1 控制台与运维能力均已完成并验证。当前数据面由 Elastic Stack + Kafka + Flink 承载，控制面由 Spring Boot + PostgreSQL/Flyway 承载。生产安全、高可用和跨存储一致性 **尚未** 闭环 —— 见 [§12 已知限制](#12-已知限制)。
+**项目状态：** Phase 3.0–3.5 检测引擎基线与 Phase 4.0–4.4.1 控制台与运维能力均已完成并验证；其后又落地三批能力——**确定性 SOAR 闭环**（V11–V15：生命周期消息、租约/fencing、逐 attempt 记录、持久并行与循环）、**Managed Detection Runtime**（5A durable claim/reconcile + 5B 单集群 opt-in process adapter）与**接入 SOC Copilot 的 AI 调查工作台**（BFF 代理 + 工作台页面 + `/api/internal/**` 服务间入口）。当前数据面由 Elastic Stack + Kafka + Flink 承载，控制面由 Spring Boot + PostgreSQL/Flyway 承载。生产安全、高可用、跨存储一致性，以及**与真实 Copilot 实例的跨仓端到端闭环**，均 **尚未** 闭环 —— 当前事实以 [docs/current-status.md](docs/current-status.md) 为准，见 [§12 已知限制](#12-已知限制)。
 
 ---
 
@@ -20,7 +20,7 @@
 | 前端 | Vue 控制台（分析员工作台、日志检索、规则编排、playbook 编辑器） |
 | 工程重心 | **后端 + 分布式系统 + 流处理 + SIEM 领域** |
 
-这刻意 **不是** 一个 AI 项目。它是一个流式数据平台，以及由此带来的可靠性、一致性和运维问题。消费它的 AI 层是独立系统（见 [§10](#10-与-hisiem-soc-copilot-的项目关系)）。
+这刻意 **不是** 一个 AI 项目。它是一个流式数据平台，以及由此带来的可靠性、一致性和运维问题。AI 的**调查与分析引擎**确实是独立系统（HISIEM-SOC-Copilot 仓），但**接它的那一层在本仓**——服务端代理 `modules/agent-adapter` 与工作台页面 `web/src/views/copilot/` 都在这里（见 [§10](#10-与-hisiem-soc-copilot-的项目关系)）。
 
 ---
 
@@ -107,7 +107,7 @@ SIEM/
 
 ### SOAR 模块依赖
 
-`soar-core`/`platform-contracts` 并承载 Kafka/HTTP adapter；`soar-worker-runtime`
+`soar-core`（传输无关的模型/引擎/SPI）与 `platform-contracts`；Kafka/HTTP adapter 在 `soar-adapters`（`soar-core` 自身不得引入 Kafka、Actuator health 或 JDK HTTP）；`soar-worker-runtime`
 依赖前两者并承载 Kafka/Actuator/Micrometer runtime。`control-api` 的生产依赖只有
 `soar-core`、`soar-adapters`（另依赖共享 migration 资源），worker-runtime 仅以 test
 scope 提供集中单元测试。`soar-worker` 依赖 core、adapters、worker-runtime、iam、
@@ -184,12 +184,15 @@ flowchart LR
   - 滑动时间窗口规则 1 条（同源 IP 5 分钟 ≥5 次失败 → 暴力破解 critical 告警）
   - CEP 攻击链和认证失败基线异常接入统一规则声明；实体风险由独立后台重算任务聚合
 - ✅ 告警扁平 Schema(`siem-alerts`,含 `event.raw`、`event_count`、`related_events`)
-- ✅ ES 索引模板 5 类（事件、raw、告警、案件镜像和实体风险）
+- ✅ ES 索引模板 6 类（事件、raw、告警、案件镜像、实体风险和资产关键性），其中 4 类带 ILM 保留策略（事件 365 天、告警/案件 180 天、raw 30 天）
 - ✅ Kibana "SIEM 总览" dashboard
 - ✅ Flink checkpointing + committed offsets；至少一次重放由确定性告警 ID 收敛
 - ✅ Spring Boot 控制面:PostgreSQL/Flyway、登录会话、RBAC、审计、案件、通知、后台任务
 - ✅ 运维能力:六组件健康扫描、Actuator/Micrometer、数据源停用/删除回滚、ES 备份恢复演练
-- ✅ 前端：Vue 3 模块化路由、规则可视化 CRUD、结构化告警/案件详情和 Vue Flow SOAR 设计器
+- ✅ 前端：Vue 3 模块化路由、规则可视化 CRUD、结构化告警/案件详情、Vue Flow SOAR 设计器和 AI 调查工作台
+- ✅ **确定性 SOAR 执行**：生命周期 outbox + 租约/fencing + 逐 attempt 记录；Condition/Business/Human/Wait/Parallel/Join/Loop/Connector 节点；发布门禁与 revision 乐观锁（V11–V15）
+- ✅ **Managed Detection Runtime**：检测期望状态与物理运行时分离；5A durable claim/lease/reconcile core；5B 是 opt-in 的单集群 process adapter（默认 `app.detection.runtime-adapter=disabled`，只报 `UNKNOWN`），非 HA
+- ✅ **AI 调查工作台**：控制台内从告警/案件详情启动 Copilot 调查，BFF 只读代理工作台读模型，响应提案走「人工批准 → 持久命令 → HISIEM SOAR 执行」。**HISIEM 侧已有测试覆盖；与真实 Copilot 实例的跨仓端到端闭环尚未验证**
 
 ---
 
@@ -375,8 +378,12 @@ cd web && npx playwright test
 | [docs/roadmap.md](docs/roadmap.md) | 统一阶段路线图、验收基线和后续优先级 |
 | [docs/product-contract.md](docs/product-contract.md) | 当前页面、API、用户旅程和验收契约 |
 | [docs/agent-integration.md](docs/agent-integration.md) | 从告警/案件详情启动 HISIEM-SOC-Copilot 的服务端代理 |
+| [docs/guide/](docs/guide/01-这个系统在解决什么问题.md) | **入门指引**（项目优先）：这个系统在解决什么问题 → 一条日志的完整旅程 → 从告警到处置决策 |
+| [docs/design/README.md](docs/design/README.md) | `docs/design/` 专项参考的索引（分工、状态规则、使用边界） |
+| [docs/architecture-analysis/](docs/architecture-analysis/README.md) | **代码级证据层**：按子系统的 `file:line` 取证与反直觉形态；不是契约，冲突时以契约为准 |
 | [docs/learn/README.md](docs/learn/README.md) | 从 SIEM 基础到 Kafka/ES/Flink/Logstash 的学习地图 |
 | [docs/archive/](docs/archive/README.md) | 历史 / 审计资料 |
+| [AGENTS.md](AGENTS.md) / [CLAUDE.md](CLAUDE.md) | 面向 AI 编码助手的仓库约定（英文 / 中文） |
 
 完整索引：[`docs/README.md`](docs/README.md)。
 面向面试的审阅材料：[`docs/interview/INTERVIEW_GUIDE.md`](docs/interview/INTERVIEW_GUIDE.md)。

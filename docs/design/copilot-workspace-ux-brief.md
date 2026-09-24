@@ -80,11 +80,17 @@ UI 不合并任何中间状态：提案 ≠ 审批 ≠ 提交 ≠ 执行成功�
 
 Start / Cancel / Approve / Reject / 创建提案全部经 `web/src/api/index.js` → HISIEM BFF → Copilot 正式应用边界；UI 不做任何本地业务变更，不生成审批或执行真值。
 
-## 10. 本轮增量（gap）
+## 10. 本轮增量（gap）——已全部落地
 
-1. 状态摘要（需要处理 / 响应生命周期）— §5 缺失项。
-2. 权威类别标签（Platform Fact / Knowledge Context 等）— §4/§8 缺失项。
-3. Knowledge 证据「支持性上下文」+ citation/version/release 展示 — §8/§10 缺失项。
-4. AI 调查结论显式命名 + 支持性 Findings + 局限性 — §11 缺失项。
-5. 窄屏行为 — §15/§16 缺失项。
-6. 上述各项的单元与浏览器验收测试 — §18 缺失项。
+这份清单是**当时**的增量范围。六项都已实现，本节保留为「设计条目 ↔ 落地位置」的对应记录：
+
+| # | 增量（当时的缺失项） | 落地位置 |
+| --- | --- | --- |
+| 1 | 状态摘要（需要处理 / 响应生命周期） | `web/src/components/copilot/InvestigationStateSummary.vue` |
+| 2 | 权威类别标签（Platform Fact / Knowledge Context 等） | `web/src/components/copilot/AuthorityTag.vue` |
+| 3 | Knowledge 证据「支持性上下文」+ citation/version/release 展示 | `EvidenceDetailDrawer.vue`、`EvidenceList.vue`（citation 身份来自服务端读模型，前端不构造） |
+| 4 | AI 调查结论显式命名 + 支持性 Findings + 局限性 | `VerdictCard.vue`、`FindingList.vue`、`UncertaintyList.vue` |
+| 5 | 窄屏行为 | `InvestigationWorkspaceView.vue` 的 pane 布局 |
+| 6 | 上述各项的单元与浏览器验收测试 | `web/e2e/copilot-authority.spec.js`（权威语义 / 知识来源 / 状态表达 / 窄屏）、`web/e2e/response-workflow.spec.js`（响应生命周期） |
+
+**所以本节不是「设计稿」**：对应界面已在 `web/` 中实现。但**测试的执行状态要单独看**——`web/e2e/` 的 Playwright 用例在最近一轮验证中**未执行**，以 [../current-status.md](../current-status.md) 为准。

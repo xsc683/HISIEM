@@ -533,7 +533,7 @@ sequenceDiagram
 
 **`copilot/` 与 `soar/` 合计 31 个，占 40 个的 77.5%**——**这两个模块的前端复杂度远高于其他**。
 
-**论断 4：`copilot/` 的 16 个组件对应 Agent 调查工作台的各个区块。**
+**论断 4：`copilot/` 的 18 个组件对应 Agent 调查工作台的各个区块。**
 
 A AI 调查工作台（`views/copilot/InvestigationWorkspaceView.vue`）由这些组件拼成：`InvestigationHeader`、`InvestigationOverview`、`InvestigationPlan`、`InvestigationStateSummary`、`InvestigationTimeline`、`InvestigationResponse`、`FindingList`、`FindingCard`、`HypothesisList`、`EvidenceList`、`EvidenceDetailDrawer`、`VerdictCard`、`UncertaintyList`、`ResponseRecommendationList`、`ResponseProposalForm`、`ToolActivityList`、`AttackMappingList`、`AuthorityTag`。
 
@@ -656,7 +656,7 @@ flowchart TB
 
 #### 2.1.1 关键论断
 
-**论断 1：7 个运行容器 + 5 个命名卷，端口映射见表。**
+**论断 1：7 个运行容器 + 6 个命名卷，端口映射见表。**
 
 ```yaml
 # infra/docker-compose.yml（节选，行号为文件内位置）
@@ -702,8 +702,8 @@ flowchart TB
 
 **三处值得注意**：
 
-1. **Logstash 开了 7 个接入端口（5000–5007）+ 一个监控端口（9600）** —— 每个端口可接一类日志源。**实测 6 个 log-source pipeline**（见 §2.4），所以 5001–5007 大致一源一端口。
-2. **Kafka 是 `9092:9094`，不是 `9092:9092`** —— 主机 9092 映射到容器 9094。这是 Kafka 多监听器配置下的常见手法（容器内 `advertised.listeners` 用 9094 供**容器间**通信，9092 供**主机**访问）。
+1. **Logstash 开了 7 个接入端口（5000、5001、5002、5004、5005、5006、5007——没有 5003）+ 一个监控端口（9600）** —— 每个端口可接一类日志源。**实测 6 个 log-source pipeline**（见 §2.4），所以 5001–5007 大致一源一端口（5000 归 `main` pipeline）。
+2. **Kafka 是 `9092:9094`，不是 `9092:9092`** —— 主机 9092 映射到容器 9094。这是 Kafka 多监听器配置下的常见手法，但方向别记反：`KAFKA_LISTENERS` = `INTERNAL://:9092,EXTERNAL://:9094,CONTROLLER://:9093`，`KAFKA_ADVERTISED_LISTENERS` = `INTERNAL://kafka:9092,EXTERNAL://localhost:9092`。所以**容器间**走 `INTERNAL`（`kafka:9092`），**宿主机**走 `EXTERNAL`（`localhost:9092`，实际落在容器 9094，再由端口映射回到宿主机 9092）。
 3. **`flink-taskmanager` 无端口映射** —— 它只与 jobmanager 通信，不需要对外暴露。
 
 **注意 `5003` 没有映射** —— 端口列表是 `5000–5002, 5004–5007`。这是一个**端口空缺**（可能是刻意留出或历史遗留）。
@@ -782,7 +782,7 @@ flowchart TB
 | `siem-events-raw-template.json` | `siem-events-raw-*` | **200** |
 | `siem-alerts-template.json` | `siem-alerts` | — |
 | `siem-cases-template.json` | `siem-cases` | — |
-| `siem-entity-risk-template.json` | `siem-entity-risk-*` | — |
+| `siem-entity-risk-template.json` | `siem-entity-risk`（**无通配符**：实体风险是单索引聚合，不按天滚动） | — |
 
 **`siem-events-raw-*` 与 `siem-events-*` 共享前缀**，所以必须靠优先级区分——`logstash.conf:93-94` 的注释明确了这一点：**raw 模板 priority 200 > 主模板 100，避免平级模板 tie-break 覆盖 `match_only_text` 语义**（02 篇 §1.1 论断 2）。
 
@@ -1108,15 +1108,15 @@ windows-security.yaml
 | # | 不变式 | 强制点 | 违反后果 |
 | --- | --- | --- | --- |
 | 1 | **所有 API 请求经单一 `request()` 出口** | `web/src/api/index.js:37`；调用方不直接 `fetch` | 漏发 Bearer/租户头，或漏处理 401 |
-| 2 | **每次导航都重新校验角色** | `web/src/router/index.js:59-73` `beforeEach` | 角色变更后旧标签页仍有权限 |
-| 3 | **角色不足跳落地页而非报错** | `web/src/router/index.js:69` `landingRoute(user.role)` | 用户卡在 403 页面 |
-| 4 | **401 走全局事件而非就地处理** | `web/src/api/index.js:73` 广播；`router/index.js:75` 订阅 | 多处重复实现登出逻辑 |
+| 2 | **每次导航都重新校验角色** | `web/src/router/index.js:57` `beforeEach`（守卫体到 :72） | 角色变更后旧标签页仍有权限 |
+| 3 | **角色不足跳落地页而非报错** | `web/src/router/index.js:67` `landingRoute(user.role)` | 用户卡在 403 页面 |
+| 4 | **401 走全局事件而非就地处理** | `web/src/api/index.js:73` 广播；`router/index.js:74` 订阅（回调体 `:75`） | 多处重复实现登出逻辑 |
 | 5 | **登录失败不触发跳转循环** | `web/src/api/index.js:71` `path !== '/auth/login'` | 登录页无限重定向 |
 | 6 | **路径参数必须编码** | `web/src/api/index.js:17` `segment()` | 含特殊字符的参数产生错误路径 |
 | 7 | **请求有 12 秒默认超时** | `web/src/api/index.js:2,40` `AbortController` | 请求悬挂，用户无反馈 |
 | 8 | **定时器在 `finally` 清理** | `web/src/api/index.js:58-60` | 定时器泄漏 |
 | 9 | **`/api` 代理到 8080** | `web/vite.config.js:32-34` | 前端连不上后端 |
-| 10 | **chunk 拆分归一化路径分隔符** | `web/vite.config.js:20` `replaceAll('\\', '/')` | Windows 上 vendor chunk 拆分失效 |
+| 10 | **chunk 拆分归一化路径分隔符** | `web/vite.config.js:21` `replaceAll('\\', '/')` | Windows 上 vendor chunk 拆分失效 |
 | 11 | **Kafka topic 必须显式创建** | `infra/kafka/create-topics.sh`；`auto.create.topics.enable=false` | 生产者写到不存在的 topic |
 | 12 | **topic 分区只能增不能减** | `create-topics.sh:17` 注释 + 只在不足时扩容 | 试图减分区导致失败 |
 | 13 | **`siem-events-raw-*` 模板优先级必须高于主模板** | raw=200，主=100 | 解析失败日志的 mapping 被主模板覆盖 |

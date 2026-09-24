@@ -708,7 +708,7 @@ return new Response(status, Map.of("error", e.getMessage()));
 
 | 子包 | 文件数 | 职责 |
 | --- | --- | --- |
-| `onboarding/` | 13 | 日志源接入、Logstash 配置生成、grok 测试、解析模板 |
+| `onboarding/` | 14 | 日志源接入、Logstash 配置生成、grok 测试、解析模板 |
 | `settings/` | 4 | 关键性（criticality）设置与重算 |
 | `control/` | 3 | 后台任务恢复、配置修订日志、生产安全校验 |
 | `health/` | 2 | 数据健康、运维健康 |

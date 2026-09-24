@@ -126,10 +126,16 @@ echo 'Aug 1 10:20:00 server03 sshd[9999]: Failed password for test from 172.16.1
 | elastic | 超管 | — | 仅初始化/排障,不做日常操作 |
 
 > **分析师 Kibana 访问**:`siem_analyst` 的 ES 角色之外,还需在 Kibana 建角色(如 `siem_analyst_kibana`)给 `kibana_admin` 或 SIEM 空间 `all` + `.kibana` 读权限,分析师登录后进入 SIEM 空间。
-> **多租户**:按 index name pattern 分角色;敏感字段(如用户 IP)可用 FLS(field_security)隐藏,例如角色里加:
+> **多租户**:按 index name pattern 分角色;敏感字段(如用户 IP)可用 FLS(field_security)隐藏。两种写法,别混:
 > ```json
-> "field_security": { "grant": ["@timestamp", "event.*", "source.ip", "user.name", "alert.*", "threat.*"], "except": ["user.name"] }
+> // 白名单:只给这些字段。要隐藏 user.name,就是从 grant 里去掉它
+> "field_security": { "grant": ["@timestamp", "event.*", "source.ip", "alert.*", "threat.*"], "except": [] }
+>
+> // 黑名单:先全给,再扣掉个别字段
+> "field_security": { "grant": ["*"], "except": ["user.name"] }
 > ```
+>
+> `except` 是从 `grant` 结果里再扣掉的例外。不要把同一个字段同时写进 `grant` 和 `except`——虽然 ES 会按 `except` 生效,但读起来是自相矛盾的。
 
 ## 4. 当前状态与风险
 

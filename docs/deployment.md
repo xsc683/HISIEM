@@ -152,7 +152,7 @@ export SIEM_DETECTION_SAVEPOINT_ROOT=file:///opt/flink/savepoints
 bash /mnt/d/Project/SIEM/infra/validate-deployment.sh
 ```
 
-脚本以非 0 退出表示失败,检查 Compose 配置、7 个容器状态、健康检查、6 个 Logstash 输入端口、PostgreSQL/ES/Kibana/Flink API、三个 Kafka topic 及检测作业 RUNNING。
+脚本以非 0 退出表示失败,检查 Compose 配置、7 个容器状态、健康检查、6 个 Logstash 输入端口、PostgreSQL/ES/Kibana/Flink API、**四个** Kafka topic（`siem-events`、`siem-events-dlq`、`siem-alert-lifecycle`、`siem-case-lifecycle`）及检测作业 RUNNING。
 只启动数据面而未提交 Flink 作业时可用 `REQUIRE_DETECTION_JOB=0`。
 Spring Boot 启动并完成 Flyway 后，可追加 `REQUIRE_CONTROL_PLANE_SCHEMA=1` 检查 PostgreSQL 基础控制面表；SOAR V15 Handler/attempt、并行、循环和触发类型由 Flyway/Testcontainers 迁移测试单独校验。
 
