@@ -18,6 +18,7 @@
 | 解析规则库 | `/parser-templates` | 独立浏览模板、测试日志和查看 ECS/Grok 逻辑 | `/api/parser-templates/*` |
 | 检测规则 | `/rules`、`/rules/new`、`/rules/:id`、`/rules/:id/edit` | 逻辑摘要、完整 DSL、创建编辑和启停/部署 | `/api/detection-rules/*` |
 | 告警台 | `/alerts`、`/alerts/:id` | 风险排序、批量处置及结构化证据详情 | `/api/alerts/*` |
+| AI 调查工作台 | `/copilot/investigations/:investigationId` | 菜单归属 `/alerts`；展示调查概览、证据与发现、调查计划/假设/工具活动、时间线，以及响应提案与人工审批。数据由 SOC Copilot 提供，HISIEM 只做服务端代理 | `/api/agent-investigations/*`；启动入口为 `/api/alerts/{id}/agent-investigation`、`/api/cases/{id}/agent-investigation` |
 | 调查台 | `/cases`、`/cases/new`、`/cases/:id` | 自动聚合、手动建案和完整调查工作区 | `/api/cases/*` |
 | SOAR 自动化 | `/soar/playbooks`、`/soar/playbooks/new`、`/soar/playbooks/:id/edit`、`/soar/executions`、`/soar/executions/:id`、`/soar/approvals` | 生命周期驱动的 Playbook、执行 I/O 和人工审批 | `/api/soar/*` |
 | 数据健康 | `/health` | 数据源事件量、失败率、趋势和失败下钻 | `/api/data-health/*` |
@@ -26,6 +27,8 @@
 | 资产关键度 | `/criticality`、`/criticality/new`、`/criticality/:type/:key/edit` | IP/用户/主机风险权重维护和重算 | `/api/settings/criticality/*` |
 | 通知中心 | `/notifications` | 查看、已读和删除控制面通知 | `/api/notifications/*` |
 | 用户与权限 | `/rbac/users`、`/rbac/users/new`、`/rbac/users/:username`、`/rbac/roles`、`/rbac/audit` | 用户生命周期、角色矩阵和审计 | `/api/auth/*` |
+
+「AI 调查工作台」是控制台上唯一接入 SOC Copilot 的通道，且没有独立菜单项——入口挂在告警台和调查台的详情页。浏览器只访问 HISIEM：Copilot 地址、工作台跳转基址和服务凭据只存在于服务端配置（`app.agent.*`），启动请求只把 `provider`/`resource_type`/`address_id` 这类资源引用交给 Copilot。启动后后端返回 `investigationId` 和跳转地址，浏览器落到本站路由 `/copilot/investigations/:investigationId`；再进入同一告警/案件时用服务端查询（GET 同路径）取活动或最近一次调查，不依赖前端存储。`ADMIN/ANALYST/AUDIT` 都可只读打开工作台；启动调查、派生响应提案和批准/拒绝审批只开放 `ADMIN/ANALYST`。
 
 页面之间不通过页面状态互相猜测，统一使用下面的标识关联：
 
@@ -41,6 +44,7 @@
 | SOAR 执行 | `exec-{uuid}` | 触发 message ID、Playbook 图快照、目标告警/案件和节点 I/O |
 | Playbook | `tenant + playbookId + revision` | 草稿/发布/停用状态和执行快照 |
 | 实体 | `source.ip` 优先，其次 `user.name`/`host.name` | 规则、告警、案件、实体风险 |
+| AI 调查 | Copilot 返回的 `investigationId` | 工作台路由 `/copilot/investigations/{id}`、告警/案件的再进入查询、响应提案的 `approvalRequestId` |
 
 ## 2. API 契约索引
 
@@ -124,6 +128,25 @@ POST   /api/cases/aggregate
 
 告警状态和 verdict 必须分别校验；批量关闭前必须完成 verdict。两个 `summary` 接口为大屏返回全量状态计数和最新 7 条时间序列，不能用风险排序或最多 200 条的工作列表估算总体。案件聚合默认使用事件时间、实体分组、30 分钟窗口和至少 2 条告警，页面必须把当前窗口、阈值和分组方式显示出来。
 
+### AI 调查工作台（HISIEM 代理 SOC Copilot）
+
+```text
+GET    /api/agent-investigations/{id}
+GET    /api/agent-investigations/{id}/workspace
+POST   /api/agent-investigations/{id}/cancel
+POST   /api/agent-investigations/{id}/response-proposals
+POST   /api/agent-investigations/response-approvals/{approvalRequestId}/approve
+POST   /api/agent-investigations/response-approvals/{approvalRequestId}/reject
+
+POST   /api/alerts/{id}/agent-investigation
+GET    /api/alerts/{id}/agent-investigation
+POST   /api/cases/{id}/agent-investigation
+```
+
+这一族是 BFF 代理，不是浏览器直连 Copilot：浏览器只带 HISIEM 会话，租户和操作人取自服务端已校验的上下文（`TenantContext` + Spring Security principal），请求体或请求头无法覆盖；响应只回传 Copilot 的有界 JSON DTO，绝不回传服务凭据。三个 GET（概览、workspace、告警再进入）开放 `ADMIN/ANALYST/AUDIT`；取消调查、派生响应提案、批准/拒绝开放 `ADMIN/ANALYST`，审计角色请求这三类操作返回 403。响应提案正文只接受有界字段 `action_key`/`evidence_ids`/`parameters`/`reason`，出现 `target`/`tenant_id`/`actor` 等越界字段时返回 400 `INVALID_ARGUMENT`，不静默丢弃；批准或拒绝由路由决定，请求体不能翻转决定。批准只记录人工决定并交由 Copilot 的持久化队列异步发起，`/api/internal/soar` 是它的下游，不是浏览器的第二条执行路径。
+
+启动语义：`app.agent.bearer-token`（`HISIEM_AGENT_BEARER_TOKEN`）为空时进程直接启动失败，不发匿名请求；Copilot 不可达或超时返回 503 `AGENT_UNAVAILABLE`，Copilot 4xx 映射为 502 `AGENT_REJECTED`，两种情况都不回显上游响应体。启动响应里的跳转地址是 `app.agent.investigation-route-base` 加 `/copilot/investigations/{id}`；基址留空时得到站内相对路由，前端据此决定站内跳转还是整页跳转。
+
 ### 日志检索
 
 ```text
@@ -183,6 +206,15 @@ PUT    /api/tenants/{tenantId}/members/{username}
 
 Playbook 和执行以 V11–V15 PostgreSQL 表为准，不从 `infra/soar/*.yaml` 加载；lifecycle outbox 由 V19 持久化。Kafka lifecycle 与 `POST /api/soar/executions` 分别提供自动和人工入口，使用 message/request ID 去重并进入同一个持久内核。节点由 Spring 自动收集的 Handler 执行；除基础六类外，Parallel/Join 使用持久分支 execution 与计数器，Loop/Loop End 使用持久串行 frame，Connector 通过注册表、幂等回执和审计脱敏执行。完整实现见 [`soar.md`](soar.md) 与 [`design/soar-capability-runtime.md`](design/soar-capability-runtime.md)。
 
+### 服务间内部接口（浏览器不可调用）
+
+```text
+POST   /api/internal/soar/executions
+GET    /api/internal/soar/executions/{executionId}
+```
+
+这两个端点**不是浏览器接口**：`/api/internal/**` 走独立安全链，要求 `Authorization: Bearer`（比对 `app.internal-service.token`／`HISIEM_INTERNAL_SERVICE_TOKEN`）与 `X-Tenant-ID`，两者任一缺失、错误或凭据未配置都直接 401 且不暴露失败细节；该链不校验用户成员关系，也不落回用户会话链，用户会话在这里无效。这两个端点是为 SOC Copilot 设计的服务间入口（代码声明它是唯一的内部端点）：它把人工批准过的命令通过这里提交到 HISIEM 的 SOAR 持久执行内核，复用 `SoarService.triggerExecution` 的持久化、幂等（`Idempotency-Key`）和租户隔离语义，不引入第二条执行路径。持有服务凭据的任何调用方都能到达该入口，因此它只依赖凭据强度，不做来源 IP 或网络隔离。响应只含执行 id、状态、空 result 和截断后的错误文本，绝不回显上游请求体、令牌或平台凭据；执行是否真的发生，以 HISIEM 观察到的执行记录为最终事实。
+
 ## 3. 端到端主旅程
 
 ### 接入一类新日志
@@ -202,6 +234,16 @@ Playbook 和执行以 V11–V15 PostgreSQL 表为准，不从 `infra/soar/*.yaml
 4. 先设置 verdict，再按状态机进行 acknowledged/investigating/closed 等处置。
 5. 在 `/cases` 选择告警执行自动或手动聚合；确认实体、关联告警、时间线和证据。
 6. 结案时提供 verdict；案件不能在仍有关联告警时删除。
+
+### 从告警到 AI 调查与响应授权
+
+1. 在 `/alerts/:id` 或 `/cases/:id` 点击启动 AI 调查（仅 `ADMIN/ANALYST`）；请求只携带 HISIEM 资源引用，不携带任何 Copilot 凭据。
+2. 后端返回 `investigationId` 与跳转地址，浏览器落到 `/copilot/investigations/:investigationId`。再进入同一告警/案件时用服务端查询取活动或最近一次调查，不依赖前端存储。
+3. 工作台轮询 workspace 读模型（概览、证据与发现、调查计划/假设/工具活动、时间线）。调查状态在 CREATED → RUNNING → COMPLETED/FAILED/CANCELLED 之间流转；响应审批是调查结束之后的独立生命周期，调查本身不会进入 WAITING_APPROVAL。拉取失败时保留上一次快照并标记为陈旧，不清空页面。
+4. 调查未结束前可取消；是否可取消由后端权威判定，前端不自行推断。
+5. 在「响应」页派生响应提案；提案只接受有界字段，越界字段返回 400，审计角色只能读。
+6. 对提案批准或拒绝。这一步只记录人工决定；真正的执行由 Copilot 的持久化队列经服务间接口 `/api/internal/soar/executions` 落到 HISIEM 的 SOAR 执行内核，浏览器不接触该内部入口。
+7. 回到 `/soar/executions` 按执行 id 核对实际执行状态：HISIEM 观察到的执行记录是最终事实，不是 Copilot 认为它提交了什么。
 
 ### 规则、风险和通知
 
@@ -241,9 +283,15 @@ Playbook 和执行以 V11–V15 PostgreSQL 表为准，不从 `infra/soar/*.yaml
 - Playbook 编辑页离开前保存最新图；保存失败阻止路由跳转，未保存状态触发浏览器关闭确认。
 - `X-Tenant-ID` 必须通过成员关系校验；Playbook、执行、审批和 message 去重不能跨租户读取。
 - SOAR 不订阅 `siem-events`；Flink 只有在告警 ES 更新成功后才发布 `alert.created`。
-- 页面和 API 已提供通用 HTTP Connector、Parallel/Join、静态 item Loop 与手动触发；不得把子 Playbook、AI、Vault/mTLS、动态 map、灰度或四眼发布写成已实现。
+- 页面和 API 已提供通用 HTTP Connector、Parallel/Join、静态 item Loop 与手动触发；不得把子 Playbook、SOAR 内的 AI 节点、Vault/mTLS、动态 map、灰度或四眼发布写成已实现（AI 调查工作台是独立的 Copilot 代理链路，不属于 SOAR 节点能力）。
+- AI 调查工作台路由 `/copilot/investigations/:investigationId` 与 `web/src/router/index.js` 一致（标题「AI 调查工作台」，菜单归属 `/alerts`，角色 admin/analyst/audit）；`AUDIT` 可只读打开工作台，但取消调查、派生提案、批准/拒绝返回 403。
+- 工作台是纯代理：浏览器不持有 Copilot 凭据，租户与操作人由服务端上下文派生，请求体或请求头不能覆盖；响应不含服务凭据。
+- 响应提案的越界字段（`target`/`tenant_id`/`actor`）返回 400 `INVALID_ARGUMENT`，不被静默丢弃；批准/拒绝由路由决定，请求体不能翻转决定。
+- Copilot 不可达或超时为 503 `AGENT_UNAVAILABLE`，Copilot 4xx 映射为 502 `AGENT_REJECTED`，都不回显上游响应体；`app.agent.bearer-token` 为空时进程启动失败。
+- `/api/internal/**` 缺 Bearer、Bearer 错误或 `X-Tenant-ID` 缺失/为空都返回 401（有测试），且用户会话在该链上无效；服务凭据未配置时同一过滤器继续 fail closed（代码路径保证，无专门的未配置凭据用例）。
+- 上述 AI 调查与响应授权能力的验证状态：HISIEM 侧已有测试覆盖（`AgentInvestigationControllerTest`、`AgentInvestigationServiceTest`、`AgentLaunchControllerTest`、`AgentLaunchServiceTest`、`AgentResponseBffSecurityTest` 覆盖角色边界，`InternalSoarControllerIntegrationTest` 覆盖内部链与幂等），即各自侧已验证；HISIEM ↔ SOC Copilot 双仓联调未验证，工作台在真实 Copilot 上的端到端结论尚未取得。
 - 变更后执行根项目测试、Flink 测试、前端单元测试、生产构建和 Playwright E2E；涉及 `infra/` 时再执行健康扫描和端到端冒烟。GitHub Actions 对这三类工程门禁并行执行。
 
 ## 5. 不在当前契约中的内容
 
-ES/Kafka 生产 TLS/高可用、外部通知投递、完整 OCSF 合规，以及全 SIEM 数据面多租户、lifecycle DLQ/replay 管理、Cron/Webhook、具体厂商 Connector 与凭据库、mTLS/出口代理/隔离执行、子 Playbook、动态 map/while、AI Agent 和跨地域恢复仍是路线图事项。V8–V10 历史代码不是当前运行事实。
+ES/Kafka 生产 TLS/高可用、外部通知投递、完整 OCSF 合规，以及全 SIEM 数据面多租户、lifecycle DLQ/replay 管理、Cron/Webhook、具体厂商 Connector 与凭据库、mTLS/出口代理/隔离执行、子 Playbook、动态 map/while 和跨地域恢复仍是路线图事项。**AI 调查与响应授权不再是路线图事项**：HISIEM 侧已提供 BFF 代理、工作台页面和服务间 SOAR 入口（见 §1–§4），调查分析、工具调用、证据组织、结论和响应提案由 SOC Copilot 提供，因此 Copilot 不可用时工作台只有错误或陈旧快照，没有本地降级数据。V8–V10 历史代码不是当前运行事实。
