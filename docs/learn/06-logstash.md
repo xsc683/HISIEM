@@ -42,7 +42,7 @@
 | **date** | 将字符串时间解析为标准化时间 | 设置 `@timestamp` 为日志时间(事件时间) |
 | **mutate** | 字段操作(新增、修改、删除、重命名) | 补充 ECS 字段、删除中间变量 |
 | **dissect** | 基于分隔符的线性解析,比 grok 快但不够灵活 | 固定格式日志性能瓶颈时考虑替换 |
-| **geoip** | 根据 IP 查询地理位置 | 增加 `source.geo.*` 字段（已实现：`infra/logstash/pipeline/logstash.conf` 的 `geoip` 块，Phase 3.3） |
+| **geoip** | 根据 IP 查询地理位置 | 增加 `source.geo.*` 字段（已配置：`infra/logstash/pipeline/logstash.conf` 的 `geoip` 块，Phase 3.3） |
 
 ### 3.3 grok 解析原理
 
@@ -56,7 +56,7 @@ pattern: %{USERNAME:user.name}  from  %{IP:source.ip}
 结果:   user.name = "test",  source.ip = "172.16.1.20"
 ```
 
-**场景举例(解析失败的处理)**:若文本格式与 pattern 不匹配,grok 解析失败并给事件打上 `_grokparsefailure` 标签。默认行为是静默漏过该事件,导致部分日志无法进入检测。设计稿 P0 建议显式配置 `tag_on_failure => ["_parsefailure"]`,使解析失败行可被计数与排查。
+**场景举例(解析失败的处理)**:若文本格式与 pattern 不匹配,grok 解析失败并给事件打上 `_grokparsefailure` 标签。默认行为是静默漏过该事件,导致部分日志无法进入检测。本项目已配置 `tag_on_failure => ["_parsefailure"]`(见 `infra/logstash/pipeline/logstash.conf`),使解析失败行可被计数与排查;解析失败事件随后被分流到 `siem-events-raw-*` 索引,不进 Flink 检测。
 
 ### 3.4 队列机制(可靠性)
 
@@ -68,14 +68,14 @@ pattern: %{USERNAME:user.name}  from  %{IP:source.ip}
 | 队列 | 解决的问题 | 本项目状态 |
 | --- | --- | --- |
 | 内存队列 | 无(默认行为) | 当前 |
-| 持久化队列 | Logstash 崩溃瞬间 tcp 事件的丢失 | 已启用（`infra/logstash/config/logstash.yml` 的 `queue.type: persisted`，Phase 3.0-L4） |
-| 死信队列 | ES 拒收(字段冲突等)事件不丢失 | 已启用（同文件 `dead_letter_queue.enable: true`，Phase 3.1-L5） |
+| 持久化队列 | Logstash 崩溃瞬间 tcp 事件的丢失 | 已配置（`infra/logstash/config/logstash.yml` 的 `queue.type: persisted`，Phase 3.0-L4） |
+| 死信队列 | ES 拒收(字段冲突等)事件不丢失 | 已配置（同文件 `dead_letter_queue.enable: true`，Phase 3.1-L5） |
 
 **场景举例(持久化队列的必要性)**:TCP 输入**没有确认机制**,事件一旦被 Logstash 接收即视为成功。若 Logstash 在事件处理前崩溃,内存队列中的事件全部丢失。启用持久化队列后,事件先落盘,崩溃恢复后继续处理,消除该丢失窗口。
 
 ## 4. logstash.conf 逐段解释
 
-配置文件 `infra/logstash/pipeline/logstash.conf`:
+当前 `infra/logstash/pipeline/logstash.conf` 的主干(为便于逐段讲解,此处省略了多行 grok 变体、GeoIP/威胁情报富化与解析失败分流):
 
 ```ruby
 input {
@@ -106,7 +106,7 @@ output {
     topic_id => "siem-events"
     codec => json
   }
-  stdout { codec => rubydebug } # ⑦ 调试输出(设计稿 P0:生产环境应关闭)
+  stdout { codec => rubydebug } # ⑦ 调试输出(当前配置中该段已注释关闭)
 }
 ```
 
@@ -116,7 +116,7 @@ output {
 - ③ date:设置事件时间(注意时区为 Asia/Shanghai)。
 - ④ mutate:补充规则所依赖的 ECS 标准字段。
 - ⑤⑥ output:双写 ES 与 Kafka(存储与检测解耦)。
-- ⑦ stdout:调试输出;每个事件序列化到控制台会浪费 CPU/IO,生产环境应通过条件或环境变量门控关闭。
+- ⑦ stdout:调试输出;每个事件序列化到控制台会浪费 CPU/IO,生产环境应关闭——当前 `logstash.conf` 中该段已注释,调试时临时取消注释并 restart 即可。
 
 ## 5. 常见问题与设计关注点
 

@@ -54,7 +54,7 @@
 | 术语 | 定义 | 示例 / 说明 |
 | --- | --- | --- |
 | **severity(严重级)** | 告警的静态严重等级,表示危险的粗略分档 | `info / low / medium / high / critical` 五档 |
-| **risk_score(风险分)** | 数值化危险评分(0-100),可参与计算与排序,比 severity 更精细 | 设计稿中的 `alert.risk_score`,如暴力破解 73 分 |
+| **risk_score(风险分)** | 数值化危险评分(0-100),可参与计算与排序,比 severity 更精细 | 已实现:`alert.risk_score`(见 `infra/elasticsearch/siem-alerts-template.json`),如暴力破解 73 分 |
 | **rule_id / rule_name** | 命中规则的唯一标识与展示名 | `rule-ssh-auth-failure-001` / `SSH 认证失败` |
 
 ### 3.2 告警质量

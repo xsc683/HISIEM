@@ -57,7 +57,7 @@ SingleOutputStreamOperator<Event> parsed = env
 
 **场景举例(乱序事件)**:事件 A(`10:20:00`)因网络延迟在事件 B(`10:20:04`)之后到达。若按处理时间分组,二者会被错误拆到不同窗口;事件时间 + watermark 则按日志时间归组,保证正确聚合。
 
-**关键问题(日志暂停)**:若事件流长时间无新事件,watermark 不会推进,已开始的窗口可能迟迟不关闭。解决方案是 `withIdleness`——当某个输入空闲超过阈值时,强制推进 watermark,使窗口及时关闭。本项目窗口分支当前缺少该配置,已列入设计稿 P1。
+**关键问题(日志暂停)**:若事件流长时间无新事件,watermark 不会推进,已开始的窗口可能迟迟不关闭。解决方案是 `withIdleness`——当某个输入空闲超过阈值时,强制推进 watermark,使窗口及时关闭。本项目窗口分支已配置 `withIdleness(Duration.ofSeconds(60))`,见 `flink/src/main/java/com/siem/DetectionJob.java`。
 
 ### 3.4 窗口(window)
 
