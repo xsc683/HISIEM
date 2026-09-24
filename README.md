@@ -78,7 +78,7 @@ SIEM/
 │   ├── platform-contracts/   跨域稳定契约
 │   ├── platform-migrations/  共享 Flyway migration 资源（resource-only）
 │   ├── iam/                  认证、会话、租户与控制面存储
-│   ├── agent-adapter/        HISIEM-Agent 出站适配
+│   ├── agent-adapter/        HISIEM-SOC-Copilot 出站适配
 │   ├── security-ops/         告警、案件、日志检索与 ES 网关
 │   ├── platform-operations/  接入、通知、健康与运维任务
 │   ├── platform-operations-adapters/  WSL/Docker ProcessBuilder 物理命令适配
@@ -297,13 +297,13 @@ HISIEM 是本组合 **两个仓库中的一个**。另一个是：
 
 > **关于前端的说明。** Copilot 用户看到的分析员工作台 UI 实现 *在本仓库*（`web/`），因为 HISIEM 拥有平台的 Web 应用。Copilot 仓库不含前端。如果你在审阅 Copilot 项目，它的 UI 就在这里。
 
-**HISIEM-Agent 出站适配。** 从告警/案件详情启动 HISIEM-Agent 的服务端代理位于 `modules/agent-adapter`，细节见 [`docs/agent-integration.md`](docs/agent-integration.md)。
+**HISIEM-SOC-Copilot 出站适配。** 从告警/案件详情启动 HISIEM-SOC-Copilot 的服务端代理位于 `modules/agent-adapter`，细节见 [`docs/agent-integration.md`](docs/agent-integration.md)。
 
 ---
 
 ## 11. 验证 / 测试
 
-本仓库的测试规模（Java 测试类数、`@Test` 方法数、Playwright 浏览器用例、`infra/rules/` 下的规则数、Flyway 迁移数）**不在此处重复** —— 这些数字会随代码漂移，以英文版 [`README.en.md` §11](README.en.md) 与 [`docs/current-status.md`](docs/current-status.md) 为准。
+本仓库的测试规模（Java 测试类数、`@Test` 方法数、Playwright 浏览器用例、`infra/rules/` 下的规则数、Flyway 迁移数）**不在此处重复** —— 这些数字会随代码漂移，唯一权威落点是 [`docs/current-status.md`](docs/current-status.md) 的「测试规模」一节。
 
 交付验证覆盖：根项目（Maven reactor）、Flink 模块测试与前端生产构建。
 
@@ -374,7 +374,7 @@ cd web && npx playwright test
 | [docs/soar.md](docs/soar.md) | SOAR 执行链路；另见 [docs/design/soar-runtime-architecture.md](docs/design/soar-runtime-architecture.md) |
 | [docs/roadmap.md](docs/roadmap.md) | 统一阶段路线图、验收基线和后续优先级 |
 | [docs/product-contract.md](docs/product-contract.md) | 当前页面、API、用户旅程和验收契约 |
-| [docs/agent-integration.md](docs/agent-integration.md) | 从告警/案件详情启动 HISIEM-Agent 的服务端代理 |
+| [docs/agent-integration.md](docs/agent-integration.md) | 从告警/案件详情启动 HISIEM-SOC-Copilot 的服务端代理 |
 | [docs/learn/README.md](docs/learn/README.md) | 从 SIEM 基础到 Kafka/ES/Flink/Logstash 的学习地图 |
 | [docs/archive/](docs/archive/README.md) | 历史 / 审计资料 |
 

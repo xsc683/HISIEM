@@ -74,9 +74,9 @@
 | --- | --- | --- |
 | **归一化 (normalization)** | 将不同来源的字段统一为同一套命名与类型 | Logstash 将自定义字段转为 ECS 字段(`source.ip`) |
 | **关联 (correlation)** | 组合多个事件或信号进行判断 | 时间窗口规则、CEP 攻击链规则 |
-| **抑制 (suppression)** | 同一实体命中同一规则时,在时间窗内仅产出一条告警 | 设计稿 P0:keyed state + TTL |
+| **抑制 (suppression)** | 同一实体命中同一规则时,在时间窗内仅产出一条告警 | 已实现:`AlertSuppressor`(单事件命中,keyed state + 定时器)与 `WindowAlertSuppressor`(窗口命中),接线见 `flink/src/main/java/com/siem/DetectionJob.java`;测试见 `SuppressionTest`、`WindowAlertSuppressorTest` |
 | **去重 (dedup)** | 相同或等价的告警仅保留一条 | 与抑制配合使用 |
-| **富化 (enrichment)** | 为事件补充外部上下文(地理位置、IP 信誉等) | 设计稿 P2:GeoIP |
+| **富化 (enrichment)** | 为事件补充外部上下文(地理位置、IP 信誉等) | 摄入侧已实现:Logstash 写 `source.geo.*`(GeoIP)与 `threat.is_malicious`(本地威胁情报查表),见 `infra/logstash/pipeline/logstash.conf` |
 
 ### 3.4 时间语义
 

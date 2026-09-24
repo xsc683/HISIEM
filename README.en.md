@@ -330,14 +330,13 @@ observed in HISIEM is the final truth**, not whatever the Copilot believes it su
 
 ## 11. Verification / Tests
 
-| What | Scale |
-|---|---|
-| Java test classes | 80 |
-| Java `@Test` methods | 366 |
-| Playwright browser specs | 5 (`web/e2e/`) — investigation workspace, authority semantics, response workflow, log search, playbook editor |
-| Vue/JS unit tests | run via `npm test` in `web/` |
-| Detection rules | 6 YAML rules under `infra/rules/` |
-| Migrations | 19 Flyway migrations |
+Test scale — Java test classes, `@Test` methods, Playwright browser specs, rules under
+`infra/rules/` and Flyway migrations — is **not repeated here**, because those numbers
+drift with the code. [`docs/current-status.md`](docs/current-status.md) is the single
+authoritative source for test scale.
+
+Delivery verification covers the root project (Maven reactor), the Flink module tests,
+and the frontend production build.
 
 Run:
 

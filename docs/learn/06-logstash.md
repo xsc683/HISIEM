@@ -42,7 +42,7 @@
 | **date** | 将字符串时间解析为标准化时间 | 设置 `@timestamp` 为日志时间(事件时间) |
 | **mutate** | 字段操作(新增、修改、删除、重命名) | 补充 ECS 字段、删除中间变量 |
 | **dissect** | 基于分隔符的线性解析,比 grok 快但不够灵活 | 固定格式日志性能瓶颈时考虑替换 |
-| **geoip**(设计稿 P2) | 根据 IP 查询地理位置 | 增加 `source.geo.*` 字段 |
+| **geoip** | 根据 IP 查询地理位置 | 增加 `source.geo.*` 字段（已实现：`infra/logstash/pipeline/logstash.conf` 的 `geoip` 块，Phase 3.3） |
 
 ### 3.3 grok 解析原理
 
@@ -68,8 +68,8 @@ pattern: %{USERNAME:user.name}  from  %{IP:source.ip}
 | 队列 | 解决的问题 | 本项目状态 |
 | --- | --- | --- |
 | 内存队列 | 无(默认行为) | 当前 |
-| 持久化队列 | Logstash 崩溃瞬间 tcp 事件的丢失 | 设计稿 P0:启用 |
-| 死信队列 | ES 拒收(字段冲突等)事件不丢失 | 设计稿 P1:启用 |
+| 持久化队列 | Logstash 崩溃瞬间 tcp 事件的丢失 | 已启用（`infra/logstash/config/logstash.yml` 的 `queue.type: persisted`，Phase 3.0-L4） |
+| 死信队列 | ES 拒收(字段冲突等)事件不丢失 | 已启用（同文件 `dead_letter_queue.enable: true`，Phase 3.1-L5） |
 
 **场景举例(持久化队列的必要性)**:TCP 输入**没有确认机制**,事件一旦被 Logstash 接收即视为成功。若 Logstash 在事件处理前崩溃,内存队列中的事件全部丢失。启用持久化队列后,事件先落盘,崩溃恢复后继续处理,消除该丢失窗口。
 

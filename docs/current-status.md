@@ -2,7 +2,7 @@
 
 > 定位：这是项目当前事实的单一入口。内容以代码、`infra/` 配置和最近一次可复现验证为准；详细方案、阶段记录和验收用例分别见设计文档与 Story 文档。
 >
-> 基线日期：2026-09-04（WSL2 + Docker Desktop）
+> 基线日期：2026-09-04（WSL2 + Docker Desktop）。2026-09-24 增补「AI 调查工作台」能力行、「测试规模」一节与对应的风险项；这几处已按当日实测重新核对，其余基线内容未重跑。
 
 ## 一句话结论
 
@@ -18,8 +18,24 @@ HISIEM 已完成检测链路、控制面、接入向导、告警处置、调查�
 | 运行态 | PostgreSQL、Elasticsearch、Kafka、Logstash、Flink、Kibana 均有健康扫描 | [运维手册](operations.md) |
 | Managed Detection Runtime | Phase 5A foundation and Phase 5B single-cluster process path are implemented: V17 desired/observed state + V18 controller reconcile state、durable lease/fencing、独立 non-web detection-controller、typed runtime port、immutable job-group artifact、structured Flink job identity、startup manifest verification、real-job/artifact observation and disabled/process adapter selection；control-api deploy API remains `202 PENDING` and has no physical deployment permission | [managed detection runtime 设计](design/managed-detection-runtime.md)、[模块边界](design/module-boundaries.md)、`modules/detection-runtime`、`flink/` |
 | SOAR | lifecycle + 手动入口、11 类节点、持久 Parallel/Join 与 Loop、Connector SPI/HTTP、验证器链、节点 I/O、消息去重、租约续期/fencing 和 Vue Flow 编辑器可用 | [SOAR 设计](soar.md)、`modules/soar-*`、`applications/*` |
-| 自动化验证 | Java 21 编译、根/独立 Flink Spotless 检查和独立 Flink `clean package` 通过；根 `mvn test` 于 2026-09-04 全绿（Docker Desktop 可用时 Testcontainers 的 `PostgresMigrationContainerTest` 与 SOAR 持久化集成用例均执行） | 本次验收命令与 `target/surefire-reports` |
+| AI 调查工作台 | 控制台内从告警/案件详情启动 SOC Copilot 调查（`POST /api/alerts/{id}/agent-investigation`、`POST /api/cases/{id}/agent-investigation`），并由 BFF 只读代理调查概览/工作台读模型/取消（`/api/agent-investigations/**`），含响应闭环（派生提案 → 人工批准/驳回）；浏览器只访问 HISIEM，Copilot 地址、工作台跳转基址与服务凭据只在服务端；反向由 Copilot 经 `/api/internal/soar/**` 专用安全链提交已批准命令。**2026-09-24 实测通过**：Agent/BFF/内部安全链相关 Java 用例 49 项、前端 `npm test` 40 项。**未验证**：与真实 Copilot 实例的跨仓端到端闭环、`web/e2e/` 的 Playwright 用例，本轮均未执行 | `applications/control-api/.../agent/`、`.../soar/InternalSoarController.java`、`.../auth/InternalServiceAuthFilter.java`、`modules/agent-adapter/`、`web/src/views/copilot/`、[工作台 UX brief](design/copilot-workspace-ux-brief.md)、[当前产品契约](product-contract.md) |
+| 自动化验证 | Java 21 编译、根/独立 Flink Spotless 检查和独立 Flink `clean package` 通过；根 `mvn test` 于 2026-09-04 全绿（Docker Desktop 可用时 Testcontainers 的 `PostgresMigrationContainerTest` 与 SOAR 持久化集成用例均执行）。当前测试规模见下一节 | 本次验收命令与 `target/surefire-reports` |
 | 备份恢复 | ES 临时索引备份恢复演练通过 | `infra/elasticsearch/backup-restore-rehearsal.sh` |
+
+## 测试规模（权威数值）
+
+> 本页是仓库测试规模数字的**唯一权威落点**；[README](../README.md) 与 [README.en](../README.en.md) 只指向本页，不再硬编码这些数字。以下数值为 2026-09-24 在本机（Windows + Git Bash，Java 21）实测统计。
+
+| 项目 | 规模 | 统计口径 |
+| --- | --- | --- |
+| Java 测试类 | 80 | `**/src/test/java/**/*.java` |
+| Java `@Test` 方法 | 364 | 全仓 `@Test` 注解计数；另有 1 个 `@ParameterizedTest`（`modules/soar-core`）未计入 |
+| Playwright 浏览器用例 | 5 | `web/e2e/*.spec.js`：调查工作台、权威语义、响应工作流、日志检索、playbook 编辑器；本轮**未执行** |
+| 前端单元测试 | 5 个文件 / 40 项用例 | `web/src/**/*.test.js`，`npm test`（node --test）；2026-09-24 实测 40/40 通过 |
+| 检测规则 | 6 | `infra/rules/*.yaml` |
+| Flyway 迁移 | 19 | `modules/platform-migrations/src/main/resources/db/migration/` |
+
+注：`@Test` 方法数按注解计数，`@Testcontainers`、`@TestConfiguration` 之类的注解不计入。
 
 ## 当前部署基线
 
@@ -44,6 +60,7 @@ HISIEM 已完成检测链路、控制面、接入向导、告警处置、调查�
 - Case 镜像删除把任意 2xx 和 404 视为幂等成功；SOAR 状态提交校验 owner、fencing token 与未过期租约，长节点执行时持续续租。
 - Playbook 路由离开会等待最新草稿保存；保存失败会阻止导航，浏览器刷新/关闭时对未保存内容给出原生确认。
 - Flink 对坏 JSON、缺失或非法 `@timestamp` 使用 side output 写入 `siem-events-dlq`，不再用处理时间掩盖事件时间错误或让作业反复重启。
+- AI 调查工作台的 BFF 边界已闭环：浏览器只带 HISIEM 会话，租户与操作人由服务端上下文派生，请求体/请求头无法覆盖；响应只回传 Copilot 的有界 JSON DTO，不回传服务凭据；响应提案正文只接受有界字段，出现越界字段返回 400 而不是静默丢弃，批准/驳回方向由路由决定；`/api/internal/**` 是独立的服务间安全链，凭据未配置时 fail closed。启动路径要求服务凭据非空，为空时进程直接启动失败，不发匿名请求。
 
 ## 仍需解决的生产风险
 
@@ -55,6 +72,7 @@ HISIEM 已完成检测链路、控制面、接入向导、告警处置、调查�
 4. SOAR 控制面按 tenant 隔离 Playbook/执行/审批；告警、案件和 ES 数据面仍缺少完整 tenant 字段、索引隔离和文档级权限。
 5. 真实生产负载下的容量、保留策略、升级回滚和灾备 RTO/RPO 还需要环境级压测与演练。
 6. Lifecycle publisher 已写入 PostgreSQL outbox，由 dispatcher 以 at-least-once 语义发布 Kafka；Kafka ACK 与数据库 completion 之间仍允许重复发送，下游依赖稳定 `message_id` 幂等。ES 告警更新与 outbox enqueue 之间仍存在 residual crash gap，需要 reconciliation；生产仍缺凭据治理、mTLS/出口代理、限流/熔断/隔离、子流程、AI、长时间压测与跨地域恢复演练。
+7. AI 调查工作台依赖独立仓库的 SOC Copilot 服务：本仓只验证了 BFF 与内部入口的契约测试、前端单元测试，**与真实 Copilot 实例的跨仓实时闭环未在本仓验证**。服务间凭据（`HISIEM_AGENT_BEARER_TOKEN`、`HISIEM_INTERNAL_SERVICE_TOKEN`）目前是静态共享密钥，尚无轮换与 mTLS；内部入口只依赖凭据强度，不校验来源 IP，也不做网络隔离。
 
 ## 文档使用规则
 

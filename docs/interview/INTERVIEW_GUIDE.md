@@ -93,7 +93,7 @@ modules/
   platform-contracts/        cross-domain stable contracts
   platform-migrations/       shared Flyway migration resources (resource-only)
   iam/                       auth, session, tenant, control-plane storage
-  agent-adapter/             HISIEM-Agent outbound adapter
+  agent-adapter/             HISIEM-SOC-Copilot outbound adapter
   security-ops/              alerts, cases, log search, ES gateway
   platform-operations/       ingest, notification, health, operational jobs
   platform-operations-adapters/
