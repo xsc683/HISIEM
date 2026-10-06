@@ -204,7 +204,7 @@ POST   /api/tenants
 PUT    /api/tenants/{tenantId}/members/{username}
 ```
 
-Playbook 和执行以 V11–V15 PostgreSQL 表为准，不从 `infra/soar/*.yaml` 加载；lifecycle outbox 由 V19 持久化。Kafka lifecycle 与 `POST /api/soar/executions` 分别提供自动和人工入口，使用 message/request ID 去重并进入同一个持久内核。节点由 Spring 自动收集的 Handler 执行；除基础六类外，Parallel/Join 使用持久分支 execution 与计数器，Loop/Loop End 使用持久串行 frame，Connector 通过注册表、幂等回执和审计脱敏执行。完整实现见 [`soar.md`](soar.md) 与 [`design/soar-capability-runtime.md`](design/soar-capability-runtime.md)。
+Playbook 和执行以 V11–V15 PostgreSQL 表为准，不从 `infra/soar/*.yaml` 加载；lifecycle outbox 由 V19 持久化。Kafka lifecycle 与 `POST /api/soar/executions` 分别提供自动和人工入口，使用 message/request ID 去重并进入同一个持久内核。节点由 Spring 自动收集的 Handler 执行；除基础六类外，Parallel/Join 使用持久分支 execution 与计数器，Loop/Loop End 使用持久串行 frame，Connector 通过注册表、幂等回执和审计脱敏执行。完整实现见 [`soar.md`](../status/soar.md) 与 [`design/soar-capability-runtime.md`](../design/soar-capability-runtime.md)。
 
 ### 服务间内部接口（浏览器不可调用）
 

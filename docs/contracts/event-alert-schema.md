@@ -87,4 +87,4 @@ Flink sink 使用保护分析师字段的 partial update；后续检测写入不
 3. Spring Boot DTO、查询字段白名单和前端展示；
 4. 告警 partial update 是否保护分析师处置字段；
 5. 事件、告警、案件、健康页和备份恢复测试；
-6. [当前产品契约](product-contract.md)和[当前状态](current-status.md)是否需要同步。
+6. [当前产品契约](product-contract.md)和[当前状态](../status/current-status.md)是否需要同步。

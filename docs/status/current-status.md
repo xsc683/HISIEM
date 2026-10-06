@@ -13,18 +13,18 @@ HISIEM 已完成检测链路、控制面、接入向导、告警处置、调查�
 | 领域 | 当前结论 | 事实来源 |
 | --- | --- | --- |
 | 数据链路 | Logstash → Elasticsearch/Kafka → Flink → 告警索引链路可运行；规则发布遵循 YAML → RuleRevision → DetectionPlan → FlinkArtifactCompiler → RuleDecl → DetectionJob；Flink 解析毒消息进入独立 Kafka DLQ | [架构](architecture.md)、`infra/` |
-| 控制面 | Spring Boot + PostgreSQL/Flyway + MyBatis，认证、RBAC、案件、审计、通知和后台任务可用；持久化 SQL 已统一到 MyBatis（control 域工厂 + detection 域工厂 + soar 域工厂，见 CLAUDE.md「持久化与 MyBatis 约定」） | [部署](deployment.md)、[路线图](roadmap.md)、`modules/iam`、`modules/soar-core` |
-| 前端 | Vue 3/Vite + vue-router + Ant Design Vue 控制台；统一色彩、排版、间距、控件状态和页面/卡片/筛选/表格视觉壳，租户与账户操作收纳在侧栏底部；桌面侧栏与移动抽屉、响应式表单/表格、结构化加载/空/错误状态、受控 ES 日志检索、安全运营大屏、Kibana 入口、深链详情与 Vue Flow SOAR 画布可构建 | `web/`、[当前产品契约](product-contract.md) |
-| 运行态 | PostgreSQL、Elasticsearch、Kafka、Logstash、Flink、Kibana 均有健康扫描 | [运维手册](operations.md) |
-| Managed Detection Runtime | Phase 5A foundation and Phase 5B single-cluster process path are implemented: V17 desired/observed state + V18 controller reconcile state、durable lease/fencing、独立 non-web detection-controller、typed runtime port、immutable job-group artifact、structured Flink job identity、startup manifest verification、real-job/artifact observation and disabled/process adapter selection；control-api deploy API remains `202 PENDING` and has no physical deployment permission | [managed detection runtime 设计](design/managed-detection-runtime.md)、[模块边界](design/module-boundaries.md)、`modules/detection-runtime`、`flink/` |
+| 控制面 | Spring Boot + PostgreSQL/Flyway + MyBatis，认证、RBAC、案件、审计、通知和后台任务可用；持久化 SQL 已统一到 MyBatis（control 域工厂 + detection 域工厂 + soar 域工厂，见 CLAUDE.md「持久化与 MyBatis 约定」） | [部署](../operations/deployment.md)、[路线图](roadmap.md)、`modules/iam`、`modules/soar-core` |
+| 前端 | Vue 3/Vite + vue-router + Ant Design Vue 控制台；统一色彩、排版、间距、控件状态和页面/卡片/筛选/表格视觉壳，租户与账户操作收纳在侧栏底部；桌面侧栏与移动抽屉、响应式表单/表格、结构化加载/空/错误状态、受控 ES 日志检索、安全运营大屏、Kibana 入口、深链详情与 Vue Flow SOAR 画布可构建 | `web/`、[当前产品契约](../contracts/product-contract.md) |
+| 运行态 | PostgreSQL、Elasticsearch、Kafka、Logstash、Flink、Kibana 均有健康扫描 | [运维手册](../operations/operations.md) |
+| Managed Detection Runtime | Phase 5A foundation and Phase 5B single-cluster process path are implemented: V17 desired/observed state + V18 controller reconcile state、durable lease/fencing、独立 non-web detection-controller、typed runtime port、immutable job-group artifact、structured Flink job identity、startup manifest verification、real-job/artifact observation and disabled/process adapter selection；control-api deploy API remains `202 PENDING` and has no physical deployment permission | [managed detection runtime 设计](../design/managed-detection-runtime.md)、[模块边界](../design/module-boundaries.md)、`modules/detection-runtime`、`flink/` |
 | SOAR | lifecycle + 手动入口、11 类节点、持久 Parallel/Join 与 Loop、Connector SPI/HTTP、验证器链、节点 I/O、消息去重、租约续期/fencing 和 Vue Flow 编辑器可用 | [SOAR 设计](soar.md)、`modules/soar-*`、`applications/*` |
-| AI 调查工作台 | 控制台内从告警/案件详情启动 SOC Copilot 调查（`POST /api/alerts/{id}/agent-investigation`、`POST /api/cases/{id}/agent-investigation`），并由 BFF 只读代理调查概览/工作台读模型/取消（`/api/agent-investigations/**`），含响应闭环（派生提案 → 人工批准/驳回）；浏览器只访问 HISIEM，Copilot 地址、工作台跳转基址与服务凭据只在服务端；反向由 Copilot 经 `/api/internal/soar/**` 专用安全链提交已批准命令。**2026-09-24 实测通过**：Agent/BFF/内部安全链相关 Java 用例 49 项、前端 `npm test` 40 项。**未验证**：与真实 Copilot 实例的跨仓端到端闭环、`web/e2e/` 的 Playwright 用例，本轮均未执行 | `applications/control-api/.../agent/`、`.../soar/InternalSoarController.java`、`.../auth/InternalServiceAuthFilter.java`、`modules/agent-adapter/`、`web/src/views/copilot/`、[工作台 UX brief](design/copilot-workspace-ux-brief.md)、[当前产品契约](product-contract.md) |
+| AI 调查工作台 | 控制台内从告警/案件详情启动 SOC Copilot 调查（`POST /api/alerts/{id}/agent-investigation`、`POST /api/cases/{id}/agent-investigation`），并由 BFF 只读代理调查概览/工作台读模型/取消（`/api/agent-investigations/**`），含响应闭环（派生提案 → 人工批准/驳回）；浏览器只访问 HISIEM，Copilot 地址、工作台跳转基址与服务凭据只在服务端；反向由 Copilot 经 `/api/internal/soar/**` 专用安全链提交已批准命令。**2026-09-24 实测通过**：Agent/BFF/内部安全链相关 Java 用例 49 项、前端 `npm test` 40 项。**未验证**：与真实 Copilot 实例的跨仓端到端闭环、`web/e2e/` 的 Playwright 用例，本轮均未执行 | `applications/control-api/.../agent/`、`.../soar/InternalSoarController.java`、`.../auth/InternalServiceAuthFilter.java`、`modules/agent-adapter/`、`web/src/views/copilot/`、[工作台 UX brief](../design/copilot-workspace-ux-brief.md)、[当前产品契约](../contracts/product-contract.md) |
 | 自动化验证 | Java 21 编译、根/独立 Flink Spotless 检查和独立 Flink `clean package` 通过；根 `mvn test` 于 2026-09-04 全绿（Docker Desktop 可用时 Testcontainers 的 `PostgresMigrationContainerTest` 与 SOAR 持久化集成用例均执行）。当前测试规模见下一节 | 本次验收命令与 `target/surefire-reports` |
 | 备份恢复 | ES 临时索引备份恢复演练通过 | `infra/elasticsearch/backup-restore-rehearsal.sh` |
 
 ## 测试规模（权威数值）
 
-> 本页是仓库测试规模数字的**唯一权威落点**；[README](../README.md) 与 [README.en](../README.en.md) 只指向本页，不再硬编码这些数字。以下数值为 2026-09-24 在本机（Windows + Git Bash，Java 21）实测统计。
+> 本页是仓库测试规模数字的**唯一权威落点**；[README](../README.md) 与 [README.en](../../README.en.md) 只指向本页，不再硬编码这些数字。以下数值为 2026-09-24 在本机（Windows + Git Bash，Java 21）实测统计。
 
 | 项目 | 规模 | 统计口径 |
 | --- | --- | --- |
@@ -42,7 +42,7 @@ HISIEM 已完成检测链路、控制面、接入向导、告警处置、调查�
 - 编排文件：`infra/docker-compose.yml`，固定 Compose 项目名为 `infra`。
 - Kafka：内部客户端使用 `kafka:9092`，宿主机验证入口使用 `localhost:9092`；`siem-events`、`siem-events-dlq`、`siem-alert-lifecycle`、`siem-case-lifecycle` 均配置为 3 个分区。
 - Elasticsearch keystore 是部署环境的敏感运行态文件：Git 明确忽略，`deploy.sh` 同步配置时也不会覆盖目标环境 keystore。
-- Logstash：容器内监控 API 在 `127.0.0.1:9600`，宿主机扫描显示 `UP / degraded TCP` 时，只代表端口监听，需按[运维手册](operations.md)进入容器确认 pipeline。
+- Logstash：容器内监控 API 在 `127.0.0.1:9600`，宿主机扫描显示 `UP / degraded TCP` 时，只代表端口监听，需按[运维手册](../operations/operations.md)进入容器确认 pipeline。
 - 数据源配置：`infra/log-sources/` 与 `infra/logstash/pipeline/log-sources/` 是可审计的项目配置；生成或修改配置必须走控制面接口或部署脚本，不能直接改运行容器。
 
 ## 已闭环的重点问题
@@ -105,15 +105,15 @@ HISIEM 已完成检测链路、控制面、接入向导、告警处置、调查�
 | Case 镜像 DELETE 200 被判断为失败 | 任意 2xx/404 均视为幂等成功 |
 | keystore 被 Git 或 rsync 带入仓库/覆盖环境 | `.gitignore` 与 `deploy.sh` 双重排除 |
 
-旧 V8–V10 SOAR 原型仍不是运行事实。当前以 V11–V15、[`soar.md`](soar.md) 和 [`design/soar-capability-runtime.md`](design/soar-capability-runtime.md) 为准。
+旧 V8–V10 SOAR 原型仍不是运行事实。当前以 V11–V15、[`soar.md`](soar.md) 和 [`design/soar-capability-runtime.md`](../design/soar-capability-runtime.md) 为准。
 
 ## 文档使用规则
 
-- “现在是什么”：先看本页、[架构](architecture.md)和[运维手册](operations.md)。
-- “怎么部署”：看[部署指南](deployment.md)；不要从 Story 或学习文档复制部署命令。
-- “为什么这样设计”：看[设计决策](design/decisions.md)和 `docs/design/`。
-- “怎么验收一个功能”：看[当前产品契约](product-contract.md)；它是当前验收契约，不复制历史 Story 长文。
+- “现在是什么”：先看本页、[架构](architecture.md)和[运维手册](../operations/operations.md)。
+- “怎么部署”：看[部署指南](../operations/deployment.md)；不要从 Story 或学习文档复制部署命令。
+- “为什么这样设计”：看[设计决策](../design/decisions.md)和 `docs/design/`。
+- “怎么验收一个功能”：看[当前产品契约](../contracts/product-contract.md)；它是当前验收契约，不复制历史 Story 长文。
 - “怎么学习组件”：看 `docs/learn/`；学习文档允许保留简化示例，不替代生产配置。
-- “历史审计证据”：看 [`archive/architecture-audit-2026-08.md`](archive/architecture-audit-2026-08.md)。它保留分析过程和风险证据，不作为日常入口。
+- “历史审计证据”：看 [`archive/architecture-audit-2026-08.md`](../archive/architecture-audit-2026-08.md)。它保留分析过程和风险证据，不作为日常入口。
 
-状态有变化时，先更新本页、[路线图](roadmap.md)和[当前产品契约](product-contract.md)。**当前风险登记只在本页维护，关闭条件只在路线图维护**；不要在模块文档里再建一份状态表。
+状态有变化时，先更新本页、[路线图](roadmap.md)和[当前产品契约](../contracts/product-contract.md)。**当前风险登记只在本页维护，关闭条件只在路线图维护**；不要在模块文档里再建一份状态表。

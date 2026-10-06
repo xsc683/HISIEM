@@ -23,4 +23,4 @@ Spring Boot 控制面默认连接 `localhost:5432/siem`，Flyway 在应用启动
 
 数据源停用会先移除 Logstash pipeline 和宿主端口映射，再同步并重启 Logstash；同步/重启失败会恢复原配置。ES 快照恢复演练使用 `elasticsearch/backup-restore-rehearsal.sh`，仅操作临时索引并自动清理。
 
-> 新机器完整部署步骤见 [docs/deployment.md](../docs/deployment.md)。
+> 新机器完整部署步骤见 [docs/deployment.md](../docs/operations/deployment.md)。

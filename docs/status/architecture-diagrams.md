@@ -6,7 +6,7 @@ Two canonical diagrams for the platform:
 2. **[Data flow diagram](#2-data-flow-diagram)** — *what happens when a real log line flows through it*
 
 Companion documents: [`architecture.md`](architecture.md) (data/control plane boundaries),
-[`evidence/architecture-analysis/`](evidence/architecture-analysis/README.md) (code-level evidence).
+[`evidence/architecture-analysis/`](../evidence/architecture-analysis/README.md) (code-level evidence).
 
 ---
 
@@ -282,7 +282,7 @@ flowchart LR
 **There is no `allowedLateness` configuration in this job, and no late-event side output.**
 The boundary is therefore: reordering inside the 10-second bound is absorbed; an event that
 arrives after its window has already fired does not contribute to that window's result and is
-not separately captured. See [Known Limits](../README.en.md#12-known-limits).
+not separately captured. See [Known Limits](../../README.en.md#12-known-limits).
 
 
 

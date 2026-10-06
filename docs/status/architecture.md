@@ -1,10 +1,10 @@
 # 系统架构
 
-> 定位：当前实现的架构总览。运行态和风险以 [`current-status.md`](current-status.md) 为准，产品页面/API 以 [`product-contract.md`](product-contract.md) 为准，部署命令以 [`deployment.md`](deployment.md) 和 [`operations.md`](operations.md) 为准；专项设计见 `design/`。
+> 定位：当前实现的架构总览。运行态和风险以 [`current-status.md`](current-status.md) 为准，产品页面/API 以 [`product-contract.md`](../contracts/product-contract.md) 为准，部署命令以 [`deployment.md`](../operations/deployment.md) 和 [`operations.md`](../operations/operations.md) 为准；专项设计见 `design/`。
 >
 > 当前实现分为两条链路：Elastic Stack + Kafka + Flink 组成数据面，Spring Boot + PostgreSQL/Flyway 组成控制面。数据面负责事件检测，控制面负责配置、处置、权限和运维状态。
 >
-> 若要查看实现细节、反直觉形态与关键不变式（每条带 `file:line`），请阅读 [`evidence/architecture-analysis/`](evidence/architecture-analysis/README.md)。
+> 若要查看实现细节、反直觉形态与关键不变式（每条带 `file:line`），请阅读 [`evidence/architecture-analysis/`](../evidence/architecture-analysis/README.md)。
 
 ## 1. 整体架构
 
@@ -226,4 +226,4 @@ flowchart LR
 - 窗口规则：当前 SSH 规则为事件时间 5 分钟窗口、1 分钟滑动；未配置 `slidingMinutes` 时才使用 tumbling window。
 - CEP 与基线分支分别识别事件序列和统计偏离，四条分支最终合并到同一安全告警写入链路。
 
-详见 [rule-engine.md](rule-engine.md)、[product-contract.md](product-contract.md) 与 [deployment.md](deployment.md)。
+详见 [rule-engine.md](rule-engine.md)、[product-contract.md](../contracts/product-contract.md) 与 [deployment.md](../operations/deployment.md)。

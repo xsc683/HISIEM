@@ -93,4 +93,4 @@ Start / Cancel / Approve / Reject / 创建提案全部经 `web/src/api/index.js`
 | 5 | 窄屏行为 | `InvestigationWorkspaceView.vue` 的 pane 布局 |
 | 6 | 上述各项的单元与浏览器验收测试 | `web/e2e/copilot-authority.spec.js`（权威语义 / 知识来源 / 状态表达 / 窄屏）、`web/e2e/response-workflow.spec.js`（响应生命周期） |
 
-**所以本节不是「设计稿」**：对应界面已在 `web/` 中实现。但**测试的执行状态要单独看**——`web/e2e/` 的 Playwright 用例在最近一轮验证中**未执行**，以 [../current-status.md](../current-status.md) 为准。
+**所以本节不是「设计稿」**：对应界面已在 `web/` 中实现。但**测试的执行状态要单独看**——`web/e2e/` 的 Playwright 用例在最近一轮验证中**未执行**，以 [../current-status.md](../status/current-status.md) 为准。

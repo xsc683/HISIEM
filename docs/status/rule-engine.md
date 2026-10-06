@@ -106,7 +106,7 @@ baseline:
 
 1. 在 `infra/rules/` 新增或修改 YAML，保持 `id` 唯一并填写 `category`、规则元数据和引用。
 2. 运行 Flink 模块测试和规则 lint，确认 YAML 可加载、条件合法、声明与执行分支一致。
-3. 运行根项目测试；若改变 Schema 或告警字段，同时检查 `docs/event-alert-schema.md` 和 ES 模板。
+3. 运行根项目测试；若改变 Schema 或告警字段，同时检查 `docs/contracts/event-alert-schema.md` 和 ES 模板。
 4. 通过规则部署流程生成并校验 DetectionPlan/Flink artifact，由 detection-controller reconcile；确认最终 observed state 与实际 Flink `RUNNING` 状态一致。
 5. 发送带有正确事件时间的正/负样例，检查 Kafka offset、Flink checkpoint、`siem-alerts` 和 partial update。
 6. 规则启停或阈值变化必须在审计中记录真实操作者；失败时保留旧 YAML、旧 job 和旧告警。
@@ -138,4 +138,4 @@ docker exec siem-flink-jobmanager flink list
 curl -fsS http://localhost:9200/siem-alerts/_count
 ```
 
-涉及规则部署、Kafka 分区、checkpoint 或 ES mapping 时，继续执行[运维手册](operations.md)中的端到端路径；不要只凭单元测试判断运行态规则已生效。
+涉及规则部署、Kafka 分区、checkpoint 或 ES mapping 时，继续执行[运维手册](../operations/operations.md)中的端到端路径；不要只凭单元测试判断运行态规则已生效。

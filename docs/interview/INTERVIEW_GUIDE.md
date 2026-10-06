@@ -911,7 +911,7 @@ Ordered by risk, not effort.
 16. *Why is detection-control separate from detection-runtime?* → §21.
 17. *What stops two workers from advancing the same execution?* → §22: leases and fencing.
 18. *How do you know the pipeline is healthy?* → Health scans, end-to-end smoke tests and
-    deployment validation (`docs/operations.md`, `infra/validate-deployment.sh`); gaps noted
+    deployment validation (`docs/operations/operations.md`, `infra/validate-deployment.sh`); gaps noted
     in §26.
 19. *What would you change if you started over?* → Adaptive per-source watermark bounds and
     a late-event side output; automated DLQ replay; derived parallelism.

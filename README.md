@@ -4,7 +4,7 @@
 
 基于 **Elastic Stack + Kafka + Flink** 的轻量级 SIEM(Security Information and Event Management)平台，控制面由 **Spring Boot** 承载；覆盖日志采集、解析与标准化、实时检测、告警存储、分析员控制台和确定性 SOAR 响应执行。
 
-**项目状态：** Phase 3.0–3.5 检测引擎基线与 Phase 4.0–4.4.1 控制台与运维能力均已完成并验证；其后又落地三批能力——**确定性 SOAR 闭环**（V11–V15：生命周期消息、租约/fencing、逐 attempt 记录、持久并行与循环）、**Managed Detection Runtime**（5A durable claim/reconcile + 5B 单集群 opt-in process adapter）与**接入 SOC Copilot 的 AI 调查工作台**（BFF 代理 + 工作台页面 + `/api/internal/**` 服务间入口）。当前数据面由 Elastic Stack + Kafka + Flink 承载，控制面由 Spring Boot + PostgreSQL/Flyway 承载。生产安全、高可用、跨存储一致性，以及**与真实 Copilot 实例的跨仓端到端闭环**，均 **尚未** 闭环 —— 当前事实以 [docs/current-status.md](docs/current-status.md) 为准，见 [§12 已知限制](#12-已知限制)。
+**项目状态：** Phase 3.0–3.5 检测引擎基线与 Phase 4.0–4.4.1 控制台与运维能力均已完成并验证；其后又落地三批能力——**确定性 SOAR 闭环**（V11–V15：生命周期消息、租约/fencing、逐 attempt 记录、持久并行与循环）、**Managed Detection Runtime**（5A durable claim/reconcile + 5B 单集群 opt-in process adapter）与**接入 SOC Copilot 的 AI 调查工作台**（BFF 代理 + 工作台页面 + `/api/internal/**` 服务间入口）。当前数据面由 Elastic Stack + Kafka + Flink 承载，控制面由 Spring Boot + PostgreSQL/Flyway 承载。生产安全、高可用、跨存储一致性，以及**与真实 Copilot 实例的跨仓端到端闭环**，均 **尚未** 闭环 —— 当前事实以 [docs/current-status.md](docs/status/current-status.md) 为准，见 [§12 已知限制](#12-已知限制)。
 
 ---
 
@@ -65,9 +65,9 @@ SIEM 必须持续、在规模上回答一个问题：*面对海量安全事件�
 | Spring Boot | 接入 API、案件处置、鉴权、SOAR 编排、运维 API |
 | PostgreSQL | 控制面事务事实与执行状态 |
 
-上表是组件职责的单一来源；案件跨 PG/ES 的具体同步、补偿和 outbox 边界见[系统架构](docs/architecture.md)。
+上表是组件职责的单一来源；案件跨 PG/ES 的具体同步、补偿和 outbox 边界见[系统架构](docs/status/architecture.md)。
 
-完整架构图见 [`docs/architecture-diagrams.md`](docs/architecture-diagrams.md)。
+完整架构图见 [`docs/status/architecture-diagrams.md`](docs/status/architecture-diagrams.md)。
 
 ### 仓库结构
 
@@ -253,7 +253,7 @@ flowchart LR
 1. **checkpointing 与投递语义是两种不同的保证。** Flink 的 `EXACTLY_ONCE` checkpoint 模式管的是 *内部状态一致性与 source offset 提交*。它不会让一个非事务的外部 sink 变成 exactly-once。这里的 sink 保证被显式选为 `AT_LEAST_ONCE`，正确性改由它下游的幂等写入获得。
 2. **重复抑制是设计属性，不是偶然。** 它依赖告警 id 是 `(rule, entity, event time)` 的纯函数，以及生命周期 `message_id` 是 `(event type, tenant, object type, alert id, occurrence time)` 的纯函数。两者任一变的不确定，重放就会产生重复。
 
-**跨存储一致性。** 一个案件可以同时引用 Elasticsearch（告警/事件检索）和 PostgreSQL（案件状态）。对于必须作为事务状态变更后果发布的生命周期消息，系统使用 **outbox** 模式，并对 outbox 行施加租约所有权与回收语义。这是两个平面相遇的边界；`docs/architecture.md` 有详细描述。
+**跨存储一致性。** 一个案件可以同时引用 Elasticsearch（告警/事件检索）和 PostgreSQL（案件状态）。对于必须作为事务状态变更后果发布的生命周期消息，系统使用 **outbox** 模式，并对 outbox 行施加租约所有权与回收语义。这是两个平面相遇的边界；`docs/status/architecture.md` 有详细描述。
 
 ---
 
@@ -300,13 +300,13 @@ HISIEM 是本组合 **两个仓库中的一个**。另一个是：
 
 > **关于前端的说明。** Copilot 用户看到的分析员工作台 UI 实现 *在本仓库*（`web/`），因为 HISIEM 拥有平台的 Web 应用。Copilot 仓库不含前端。如果你在审阅 Copilot 项目，它的 UI 就在这里。
 
-**HISIEM-SOC-Copilot 出站适配。** 从告警/案件详情启动 HISIEM-SOC-Copilot 的服务端代理位于 `modules/agent-adapter`，细节见 [`docs/agent-integration.md`](docs/agent-integration.md)。
+**HISIEM-SOC-Copilot 出站适配。** 从告警/案件详情启动 HISIEM-SOC-Copilot 的服务端代理位于 `modules/agent-adapter`，细节见 [`docs/contracts/agent-integration.md`](docs/contracts/agent-integration.md)。
 
 ---
 
 ## 11. 验证 / 测试
 
-本仓库的测试规模（Java 测试类数、`@Test` 方法数、Playwright 浏览器用例、`infra/rules/` 下的规则数、Flyway 迁移数）**不在此处重复** —— 这些数字会随代码漂移，唯一权威落点是 [`docs/current-status.md`](docs/current-status.md) 的「测试规模」一节。
+本仓库的测试规模（Java 测试类数、`@Test` 方法数、Playwright 浏览器用例、`infra/rules/` 下的规则数、Flyway 迁移数）**不在此处重复** —— 这些数字会随代码漂移，唯一权威落点是 [`docs/status/current-status.md`](docs/status/current-status.md) 的「测试规模」一节。
 
 交付验证覆盖：根项目（Maven reactor）、Flink 模块测试与前端生产构建。
 
@@ -323,7 +323,7 @@ cd web && npm test && npx eslint .
 cd web && npx playwright test
 ```
 
-本地全栈启动（Elasticsearch、Kibana、Logstash、Kafka、Flink、PostgreSQL、模拟器）见 [`docs/deployment.md`](docs/deployment.md) 与 [`docs/operations.md`](docs/operations.md)；`infra/` 是配置的唯一来源。
+本地全栈启动（Elasticsearch、Kibana、Logstash、Kafka、Flink、PostgreSQL、模拟器）见 [`docs/operations/deployment.md`](docs/operations/deployment.md) 与 [`docs/operations/operations.md`](docs/operations/operations.md)；`infra/` 是配置的唯一来源。
 
 ---
 
@@ -347,36 +347,36 @@ cd web && npx playwright test
 - 高可用与多节点部署不在当前基线之内。
 - 规则集是演示集，不是生产检测内容库。
 
-权威的未闭环事项清单（含风险 ID 与关闭条件）见 [`docs/current-status.md`](docs/current-status.md)。
+权威的未闭环事项清单（含风险 ID 与关闭条件）见 [`docs/status/current-status.md`](docs/status/current-status.md)。
 
 ---
 
 ## 13. 文档阅读顺序
 
-**如果你只有 3 分钟：** 本文件，加上[架构图与数据流图](docs/architecture-diagrams.md)。
+**如果你只有 3 分钟：** 本文件，加上[架构图与数据流图](docs/status/architecture-diagrams.md)。
 
-**如果你有 30 分钟：** 加上 [`docs/architecture.md`](docs/architecture.md)（数据面 / 控制面 / 边界）。
+**如果你有 30 分钟：** 加上 [`docs/status/architecture.md`](docs/status/architecture.md)（数据面 / 控制面 / 边界）。
 
 **如果你想要工程深度：** [`docs/evidence/architecture-analysis/`](docs/evidence/architecture-analysis/README.md) 是按子系统的 `file:line` 取证（配置编译、流处理、可靠性、安全、前端的实现细节都在里面，且每条都能回到代码与测试）。[`docs/design/decisions.md`](docs/design/decisions.md) 覆盖主要选择背后的 *为什么*。
 
-日常先看[当前状态](docs/current-status.md)，再按目标选择部署、运行、架构或产品契约文档；专项设计和学习资料作为深入参考。
+日常先看[当前状态](docs/status/current-status.md)，再按目标选择部署、运行、架构或产品契约文档；专项设计和学习资料作为深入参考。
 
 | 目标 / 文档 | 内容 |
 | --- | --- |
-| [docs/current-status.md](docs/current-status.md) | 最近一次验证的能力、部署基线和未闭环生产风险 |
-| [docs/architecture.md](docs/architecture.md) | 系统架构、数据流、Schema、规则引擎概览 |
+| [docs/current-status.md](docs/status/current-status.md) | 最近一次验证的能力、部署基线和未闭环生产风险 |
+| [docs/architecture.md](docs/status/architecture.md) | 系统架构、数据流、Schema、规则引擎概览 |
 | [docs/evidence/architecture-analysis/](docs/evidence/architecture-analysis/README.md) | 代码级取证：实现细节、反直觉形态与关键不变式（每条带 `file:line`） |
-| [docs/deployment.md](docs/deployment.md) | **新机器部署指南**(换环境必备) |
-| [docs/operations.md](docs/operations.md) | 日常启动、健康扫描、端到端冒烟、排障和回滚 |
+| [docs/deployment.md](docs/operations/deployment.md) | **新机器部署指南**(换环境必备) |
+| [docs/operations.md](docs/operations/operations.md) | 日常启动、健康扫描、端到端冒烟、排障和回滚 |
 | [docs/design/module-boundaries.md](docs/design/module-boundaries.md) | 模块依赖、进程角色与隔离规则 |
 | [docs/design/managed-detection-runtime.md](docs/design/managed-detection-runtime.md) | Phase 5A/5B detection controller、immutable artifact、真实 observed state、process adapter 与限制 |
 | [docs/design/security-rbac.md](docs/design/security-rbac.md) | 安全加固门禁 |
-| [docs/event-alert-schema.md](docs/event-alert-schema.md) | Event/Alert Schema 与 ES mapping 详细设计 |
-| [docs/rule-engine.md](docs/rule-engine.md) | 规则引擎使用与扩展 |
-| [docs/soar.md](docs/soar.md) | SOAR 执行链路；另见 [docs/design/soar-runtime-architecture.md](docs/design/soar-runtime-architecture.md) |
-| [docs/roadmap.md](docs/roadmap.md) | 统一阶段路线图、验收基线和后续优先级 |
-| [docs/product-contract.md](docs/product-contract.md) | 当前页面、API、用户旅程和验收契约 |
-| [docs/agent-integration.md](docs/agent-integration.md) | 从告警/案件详情启动 HISIEM-SOC-Copilot 的服务端代理 |
+| [docs/event-alert-schema.md](docs/contracts/event-alert-schema.md) | Event/Alert Schema 与 ES mapping 详细设计 |
+| [docs/rule-engine.md](docs/status/rule-engine.md) | 规则引擎使用与扩展 |
+| [docs/soar.md](docs/status/soar.md) | SOAR 执行链路；另见 [docs/design/soar-runtime-architecture.md](docs/design/soar-runtime-architecture.md) |
+| [docs/roadmap.md](docs/status/roadmap.md) | 统一阶段路线图、验收基线和后续优先级 |
+| [docs/product-contract.md](docs/contracts/product-contract.md) | 当前页面、API、用户旅程和验收契约 |
+| [docs/agent-integration.md](docs/contracts/agent-integration.md) | 从告警/案件详情启动 HISIEM-SOC-Copilot 的服务端代理 |
 | [docs/guide/](docs/guide/01-这个系统在解决什么问题.md) | **入门指引**（项目优先）：这个系统在解决什么问题 → 一条日志的完整旅程 → 从告警到处置决策 |
 | [docs/design/README.md](docs/design/README.md) | `docs/design/` 专项参考的索引（分工、状态规则、使用边界） |
 | [docs/evidence/architecture-analysis/](docs/evidence/architecture-analysis/README.md) | **代码级证据层**：按子系统的 `file:line` 取证与反直觉形态；不是契约，冲突时以契约为准 |
@@ -423,6 +423,6 @@ echo 'Aug 1 10:20:00 server03 sshd[9999]: Failed password for test from 172.16.1
 npm --prefix web run dev
 ```
 
-> 详细步骤见 [docs/deployment.md](docs/deployment.md)。
+> 详细步骤见 [docs/deployment.md](docs/operations/deployment.md)。
 
-新环境搭建见 [`docs/deployment.md`](docs/deployment.md)；健康扫描、端到端冒烟测试、排障与回滚见 [`docs/operations.md`](docs/operations.md)。[`infra/README.md`](infra/README.md) 记录各组件配置文件与用于生成流量的日志模拟器。
+新环境搭建见 [`docs/operations/deployment.md`](docs/operations/deployment.md)；健康扫描、端到端冒烟测试、排障与回滚见 [`docs/operations/operations.md`](docs/operations/operations.md)。[`infra/README.md`](infra/README.md) 记录各组件配置文件与用于生成流量的日志模拟器。

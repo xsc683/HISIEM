@@ -45,4 +45,4 @@ export SIEM_BOOTSTRAP_PASSWORD='<至少 12 位临时口令>'
 `/api/auth/users|roles|audit-logs`)仍由各控制器按 `ROLE_PERMS` 判定为 `admin`。
 
 `/api/internal/**` 走的是**另一条**独立安全链(服务间凭据,不校验用户会话),不在这张表里,
-见 [agent-integration.md](../../docs/agent-integration.md)。
+见 [agent-integration.md](../../docs/contracts/agent-integration.md)。

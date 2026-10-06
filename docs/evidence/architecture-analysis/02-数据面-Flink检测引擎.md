@@ -1347,7 +1347,7 @@ return new UpdateOperation.Builder<JsonData, JsonData>()
 
 **`.doc()` 与 `.upsert()` 是成对的，`docAsUpsert` 必须保持默认的 false**：一旦加上 `.docAsUpsert(true)`，Elasticsearch 会在文档不存在时也用那份**被裁剪过的** partial doc 建文档，于是新告警恰好缺掉那 5 个字段。`DetectionJobSinkTest` 把这一点固定成了断言（不变式 18）。
 
-契约层面的同一事实写在 [`soar.md`](../../soar.md) §2——那里是它作为契约的主人。
+契约层面的同一事实写在 [`soar.md`](../../status/soar.md) §2——那里是它作为契约的主人。
 
 ---
 

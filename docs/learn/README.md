@@ -1,6 +1,6 @@
 # docs/learn — 入门功课(基础概念与关键组件)
 
-> 本系列为**基础性学习材料**,系统讲解 SIEM 平台设计概念、事件→告警→案件流程的称谓,以及关键组件(Kafka、Elasticsearch、Flink、Logstash)的核心原理。控制面实践还应结合 `src/`、PostgreSQL/Flyway 与统一路线图 [`docs/roadmap.md`](../roadmap.md) 阅读。
+> 本系列为**基础性学习材料**,系统讲解 SIEM 平台设计概念、事件→告警→案件流程的称谓,以及关键组件(Kafka、Elasticsearch、Flink、Logstash)的核心原理。控制面实践还应结合 `src/`、PostgreSQL/Flyway 与统一路线图 [`docs/status/roadmap.md`](../status/roadmap.md) 阅读。
 > 每一份文档均以 **正式定义 + 场景举例 + 本项目对应** 的方式组织,并锚定本项目的实际代码与配置,可作为理解 `docs/design/` 设计文档的基础。
 
 ## 阅读建议(推荐顺序)
@@ -15,7 +15,7 @@
 读完     → 回看 docs/product-contract.md 的模块与 API,再用控制台验证案件/权限/运维控制面
 ```
 
-> 前置要求:能跑通本项目部署(见 `docs/deployment.md`),并发送过一条测试日志。当前部署与端到端验证已完成；学习者仍需自行完成每篇文档末尾的自测。
+> 前置要求:能跑通本项目部署(见 `docs/operations/deployment.md`),并发送过一条测试日志。当前部署与端到端验证已完成；学习者仍需自行完成每篇文档末尾的自测。
 
 ## 文档地图
 
@@ -47,6 +47,6 @@
 
 - 能否画出本项目的完整数据流(日志 → 事件 → 命中 → 告警),并指出每个阶段的组件与文件?
 - 能否解释:`@timestamp` 为何采用事件时间、watermark 的作用、确定性 `_id` 防什么、mapping 为何创建后不可修改?
-- 能否从 `docs/architecture.md`、`docs/operations.md` 和 `infra/` 配置解释每个组件改动哪个文件、为什么?
+- 能否从 `docs/status/architecture.md`、`docs/operations/operations.md` 和 `infra/` 配置解释每个组件改动哪个文件、为什么?
 
 > 若某份文档仍有疑问,请指出具体段落,可针对性补充讲解。

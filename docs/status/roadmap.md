@@ -34,7 +34,7 @@ npm.cmd --prefix web run build
 npm.cmd --prefix web run test:e2e
 ```
 
-本轮新增代码的测试数量不在文档中预填；最终以本轮 Maven、Flink 和 CI 输出为准。涉及基础设施时还要执行 Docker Compose、健康扫描、Kafka/Flink/lifecycle 链路和 ES 备份恢复验证。结果与环境说明集中记录在[当前状态](current-status.md)和[运维手册](operations.md)。
+本轮新增代码的测试数量不在文档中预填；最终以本轮 Maven、Flink 和 CI 输出为准。涉及基础设施时还要执行 Docker Compose、健康扫描、Kafka/Flink/lifecycle 链路和 ES 备份恢复验证。结果与环境说明集中记录在[当前状态](current-status.md)和[运维手册](../operations/operations.md)。
 
 ## 下一阶段优先级
 
@@ -105,13 +105,13 @@ npm.cmd --prefix web run test:e2e
 - `SCALE-01`：以目标 EPS、保存周期、查询延迟和 RTO/RPO 为输入完成容量模型与压力测试。
 - `INT-01`/`DATA-01`：外部通知、TI、身份源和 OCSF 合规应各自有数据契约与失败降级，不在主链路中直接堆叠同步调用。
 - lifecycle DLQ/replay、OR 条件、动态 map/while、子 Playbook、Connector 凭据/mTLS/代理/隔离、**SOAR 内的 AI 节点**，以及跨地域容量验证。
-  （注意：这里的「AI Agent」指能在 Playbook 里充当判断节点的 AI；**AI 调查工作台**是另一条链路，由外部 SOC Copilot 经控制台 BFF 代理接入，已落地且不再是路线图事项——见[产品契约](product-contract.md)与[当前状态](current-status.md)。）
+  （注意：这里的「AI Agent」指能在 Playbook 里充当判断节点的 AI；**AI 调查工作台**是另一条链路，由外部 SOC Copilot 经控制台 BFF 代理接入，已落地且不再是路线图事项——见[产品契约](../contracts/product-contract.md)与[当前状态](current-status.md)。）
 
-- OCSF 可移植层补齐 4 个仍是「设计值」的字段（`ocsf.class_name`、`ocsf.category_uid`、`ocsf.metadata.version`、`ocsf.time`）——见 [design/ocsf-mapping.md](design/ocsf-mapping.md) §1 各行标着「待 `Ocsf.java` 补写」的格子。
+- OCSF 可移植层补齐 4 个仍是「设计值」的字段（`ocsf.class_name`、`ocsf.category_uid`、`ocsf.metadata.version`、`ocsf.time`）——见 [design/ocsf-mapping.md](../design/ocsf-mapping.md) §1 各行标着「待 `Ocsf.java` 补写」的格子。
 
 ## 学习路线
 
-学习任务不再和产品阶段混写：按 [`learn/README.md`](learn/README.md) 的“概念 → 小实验 → 项目改造 → 测试 → 部署 → 复盘”推进。每个改造任务应注明它是项目修复、学习实践或两者兼有。
+学习任务不再和产品阶段混写：按 [`learn/README.md`](../learn/README.md) 的“概念 → 小实验 → 项目改造 → 测试 → 部署 → 复盘”推进。每个改造任务应注明它是项目修复、学习实践或两者兼有。
 
 ## 变更规则
 

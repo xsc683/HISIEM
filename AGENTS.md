@@ -29,7 +29,7 @@ npm --prefix web run dev               # start Vite on port 5173
 npm --prefix web run build             # create the production frontend bundle
 ```
 
-On Windows, use `mvnw.cmd`. Use `wsl bash /mnt/d/Project/SIEM/infra/deploy.sh` only for integration deployment; see `docs/deployment.md` first.
+On Windows, use `mvnw.cmd`. Use `wsl bash /mnt/d/Project/SIEM/infra/deploy.sh` only for integration deployment; see `docs/operations/deployment.md` first.
 
 ## Coding Style & Naming Conventions
 

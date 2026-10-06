@@ -1,6 +1,6 @@
 # 部署指南(新机器/换环境)
 
-> 定位：新环境、重建和升级的操作权威。日常启动、健康扫描和故障处理见 [`operations.md`](operations.md)，当前验证结论见 [`current-status.md`](current-status.md)。
+> 定位：新环境、重建和升级的操作权威。日常启动、健康扫描和故障处理见 [`operations.md`](operations.md)，当前验证结论见 [`current-status.md`](../status/current-status.md)。
 >
 > 本仓库是**唯一来源**,所有基础设施配置、代码、文档都在这。部署环境(旧 PC 的 WSL2)失效后,按本文档可在新机器完整重建。
 
@@ -204,7 +204,7 @@ REQUIRE_PRODUCTION_SECURITY=1 REQUIRE_CONTROL_PLANE_SCHEMA=1 \
   bash /mnt/d/Project/SIEM/infra/validate-deployment.sh
 ```
 
-详细的证书、凭据和 truststore 要求见 [`infra/SECURITY.md`](../infra/SECURITY.md)；密钥和证书不提交 Git。
+详细的证书、凭据和 truststore 要求见 [`infra/SECURITY.md`](../../infra/SECURITY.md)；密钥和证书不提交 Git。
 
 ## 10. 验证链路
 

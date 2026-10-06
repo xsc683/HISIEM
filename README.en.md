@@ -19,7 +19,7 @@ the **SOC Copilot AI investigation workspace** (server-side BFF proxy, workspace
 and the `/api/internal/**` service entry). Production security, high availability
 and cross-store consistency are **not** closed — and neither is the
 **cross-repository end-to-end loop against a real Copilot instance**. See
-[Known Limits](#12-known-limits) and [`docs/current-status.md`](docs/current-status.md).
+[Known Limits](#12-known-limits) and [`docs/status/current-status.md`](docs/status/current-status.md).
 operations capabilities (Phase 4.0–4.4.1) are complete and verified. Production
 security, high availability and cross-store consistency are **not** closed — see
 [Known Limits](#12-known-limits).
@@ -99,7 +99,7 @@ Component responsibilities:
 | Spring Boot | Ingest APIs, case handling, auth, SOAR orchestration, operations APIs |
 | PostgreSQL | Control-plane transactional truth and execution state |
 
-Full diagrams: [`docs/architecture-diagrams.md`](docs/architecture-diagrams.md).
+Full diagrams: [`docs/status/architecture-diagrams.md`](docs/status/architecture-diagrams.md).
 
 ---
 
@@ -277,7 +277,7 @@ Two consequences worth stating explicitly:
 search) and PostgreSQL (case state). The system uses an **outbox** pattern for lifecycle
 messages that must be published as a consequence of a transactional state change, with
 lease ownership and reclaim semantics on the outbox rows. This is the boundary where the
-two planes meet; `docs/architecture.md` describes it in detail.
+two planes meet; `docs/status/architecture.md` describes it in detail.
 
 ---
 
@@ -342,7 +342,7 @@ observed in HISIEM is the final truth**, not whatever the Copilot believes it su
 
 Test scale — Java test classes, `@Test` methods, Playwright browser specs, rules under
 `infra/rules/` and Flyway migrations — is **not repeated here**, because those numbers
-drift with the code. [`docs/current-status.md`](docs/current-status.md) is the single
+drift with the code. [`docs/status/current-status.md`](docs/status/current-status.md) is the single
 authoritative source for test scale.
 
 Delivery verification covers the root project (Maven reactor), the Flink module tests,
@@ -362,8 +362,8 @@ cd web && npx playwright test
 ```
 
 Local full-stack bring-up (Elasticsearch, Kibana, Logstash, Kafka, Flink, PostgreSQL,
-the simulator) is documented in [`docs/deployment.md`](docs/deployment.md) and
-[`docs/operations.md`](docs/operations.md); `infra/` is the single source of truth for
+the simulator) is documented in [`docs/operations/deployment.md`](docs/operations/deployment.md) and
+[`docs/operations/operations.md`](docs/operations/operations.md); `infra/` is the single source of truth for
 configuration.
 
 ---
@@ -400,16 +400,16 @@ explicit. None of these is a defect being hidden — each is a scope boundary.
 - High availability and multi-node deployment are not part of the current baseline.
 - The rule set is a demonstration set, not a production detection content library.
 
-See [`docs/current-status.md`](docs/current-status.md) for the authoritative
+See [`docs/status/current-status.md`](docs/status/current-status.md) for the authoritative
 open-item register (risk IDs and their closure conditions).
 
 ---
 
 ## 13. Documentation Reading Order
 
-**If you have 3 minutes:** this file, plus the [architecture & data-flow diagrams](docs/architecture-diagrams.md).
+**If you have 3 minutes:** this file, plus the [architecture & data-flow diagrams](docs/status/architecture-diagrams.md).
 
-**If you have 30 minutes:** add [`docs/architecture.md`](docs/architecture.md) (data plane /
+**If you have 30 minutes:** add [`docs/status/architecture.md`](docs/status/architecture.md) (data plane /
 control plane / boundaries).
 
 **If you want the engineering depth:**
@@ -420,11 +420,11 @@ reliability, security, frontend), and every claim in it traces back to code and 
 
 | Goal | Document |
 |---|---|
-| Current verified state and open risks | [`docs/current-status.md`](docs/current-status.md) |
-| Real routes, APIs, acceptance checklist | [`docs/product-contract.md`](docs/product-contract.md) |
-| Stream processing internals | [`docs/evidence/architecture-analysis/02`](docs/evidence/architecture-analysis/02-数据面-Flink检测引擎.md), [`docs/rule-engine.md`](docs/rule-engine.md) |
-| Event/alert schema and ES mappings | [`docs/event-alert-schema.md`](docs/event-alert-schema.md) |
-| SOAR execution chain | [`docs/soar.md`](docs/soar.md), [`docs/design/soar-runtime-architecture.md`](docs/design/soar-runtime-architecture.md) |
+| Current verified state and open risks | [`docs/status/current-status.md`](docs/status/current-status.md) |
+| Real routes, APIs, acceptance checklist | [`docs/contracts/product-contract.md`](docs/contracts/product-contract.md) |
+| Stream processing internals | [`docs/evidence/architecture-analysis/02`](docs/evidence/architecture-analysis/02-数据面-Flink检测引擎.md), [`docs/status/rule-engine.md`](docs/status/rule-engine.md) |
+| Event/alert schema and ES mappings | [`docs/contracts/event-alert-schema.md`](docs/contracts/event-alert-schema.md) |
+| SOAR execution chain | [`docs/status/soar.md`](docs/status/soar.md), [`docs/design/soar-runtime-architecture.md`](docs/design/soar-runtime-architecture.md) |
 | Managed detection runtime | [`docs/design/managed-detection-runtime.md`](docs/design/managed-detection-runtime.md) |
 | Security hardening gates | [`docs/design/security-rbac.md`](docs/design/security-rbac.md) |
 | **Entry guide** (project-first) | [`docs/guide/`](docs/guide/01-这个系统在解决什么问题.md) |
@@ -461,7 +461,7 @@ java -jar applications/control-api/target/*.jar
 #    Vue console: see docs/deployment.md
 ```
 
-See [`docs/deployment.md`](docs/deployment.md) for a new-environment bring-up, and
-[`docs/operations.md`](docs/operations.md) for health scans, end-to-end smoke tests,
+See [`docs/operations/deployment.md`](docs/operations/deployment.md) for a new-environment bring-up, and
+[`docs/operations/operations.md`](docs/operations/operations.md) for health scans, end-to-end smoke tests,
 troubleshooting and rollback. [`infra/README.md`](infra/README.md) documents the
 component configuration files and the log simulator used to generate traffic.

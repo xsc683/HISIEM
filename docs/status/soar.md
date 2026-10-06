@@ -4,8 +4,8 @@
 
 **本文的范围：SOAR 的契约与限制**——生命周期消息契约、发布门禁、条件与模板、节点运行语义、持久表与并发、API 与页面、当前限制。SOAR 的机制叙述与能力扩展不在本文：
 
-- 基础执行内核的机制见 [`design/soar-runtime-architecture.md`](design/soar-runtime-architecture.md)；
-- 并行、循环、Connector、手动触发和验证器链见 [`design/soar-capability-runtime.md`](design/soar-capability-runtime.md)。
+- 基础执行内核的机制见 [`design/soar-runtime-architecture.md`](../design/soar-runtime-architecture.md)；
+- 并行、循环、Connector、手动触发和验证器链见 [`design/soar-capability-runtime.md`](../design/soar-capability-runtime.md)。
 
 ## 1. 能力边界
 
@@ -17,7 +17,7 @@
 
 从 Flink 检测结果到 SOAR 节点推进的完整链路——告警如何落库、生命周期消息如何产生、
 Worker 如何领取并推进一个持久节点——由
-[`design/soar-runtime-architecture.md`](design/soar-runtime-architecture.md) §3–§5 完整展开
+[`design/soar-runtime-architecture.md`](../design/soar-runtime-architecture.md) §3–§5 完整展开
 （含链路图），**本文不重复**。职责划分见文首「本文的范围」。
 
 以下是**只在这里定义的两条契约性事实**：
@@ -87,7 +87,7 @@ GET /api/soar/action-dictionary?objectType=alert|case
 
 节点参数支持严格模板：`${alert.id}`、`${case.id}`、`${nodes.<nodeId>.output.<field>}`、`${execution.id}`、`${trigger.messageId}`、`${trigger.kafka.topic}` 和 `${variables.<name>}`。
 
-**解析与传递的机制**（`SoarTemplateResolver` 的递归与类型保留、`SoarExecutionContext` 如何从持久化状态重建、`input_json`/`output_json` 的写入时机）见 [`design/soar-runtime-architecture.md`](design/soar-runtime-architecture.md) §8。**以下是契约事实**：路径不存在或值为 null 直接使节点失败，不会把未解析的 `${...}` 发送给业务服务；后续节点只引用已持久化输出，因此服务重启后参数传递不依赖 JVM 内存。
+**解析与传递的机制**（`SoarTemplateResolver` 的递归与类型保留、`SoarExecutionContext` 如何从持久化状态重建、`input_json`/`output_json` 的写入时机）见 [`design/soar-runtime-architecture.md`](../design/soar-runtime-architecture.md) §8。**以下是契约事实**：路径不存在或值为 null 直接使节点失败，不会把未解析的 `${...}` 发送给业务服务；后续节点只引用已持久化输出，因此服务重启后参数传递不依赖 JVM 内存。
 
 ## 6. 节点运行语义
 
@@ -115,7 +115,7 @@ SOAR 没有复制一套告警/案件写逻辑。例如 `alert.create_case` 调�
 ## 7. 持久执行和并发
 
 **表结构与关系**（V11–V15 各表的字段、约束与 ER 图）见
-[`design/soar-runtime-architecture.md`](design/soar-runtime-architecture.md) §11；
+[`design/soar-runtime-architecture.md`](../design/soar-runtime-architecture.md) §11；
 **Worker 的领取、租约、fencing 与心跳续租机制**见同篇 §5 与 §12。**本文不重复机制叙述**，
 只保留以下契约与边界：
 

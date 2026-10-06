@@ -4,19 +4,34 @@
 
 本目录只保留能指导当前开发、部署、使用和验收的文档。阅读时遵循“当前事实 → 产品契约 → 操作交付 → 技术参考 → 学习资料”的顺序；旧阶段稿和重复 Story 详文已删除，避免 AI 编码助手读取过时接口。
 
+## 目录结构
+
+| 目录 | 放什么 | 什么时候读 |
+| --- | --- | --- |
+| `README.md` | 本导航 | 第一次进来 |
+| [`status/`](status/) | **现在是什么**：当前状态与风险登记、架构、架构图与数据流图、路线图、SOAR 能力、规则引擎 | 想知道现状、想知道哪些没闭环 |
+| [`contracts/`](contracts/) | **必须遵守什么**：产品契约（页面/API/路由/验收）、事件与告警 Schema、↔ Copilot 集成边界 | 要改接口、路由或验收 |
+| [`operations/`](operations/) | 部署与运维 | 要把它跑起来、要排障 |
+| [`design/`](design/) | **为什么这样设计**：专项理由、机制与边界 | 要改设计或评估取舍 |
+| [`guide/`](guide/) | 项目优先入门（从场景切入） | 第一次理解这个项目 |
+| [`learn/`](learn/) | 技术概念优先（先讲 Kafka/ES/Flink 本身） | 想学组件原理 |
+| [`evidence/`](evidence/) | **代码级取证**：每条论断带 `file:line` | 要核实"代码真的是这样吗" |
+| [`interview/`](interview/) | 面试复习材料 | — |
+| [`archive/`](archive/) | 历史材料，**不进入默认阅读路径** | 只在需要追溯时进入 |
+
 ## 先看这 7 份
 
-1. [当前状态](current-status.md)：已验证能力、部署基线、未闭环生产风险与风险登记。
-2. [当前产品契约](product-contract.md)：真实前端路由、API、主旅程、对象关联和验收清单。
-3. [系统架构](architecture.md)：数据面/控制面、数据流和边界。
-4. [架构图与数据流图](architecture-diagrams.md)：两张规范图、组件职责表、七条可靠性边界（外加事件时间、单 JVM 锁与部署边界），以及三种失败策略的并列对照。
-5. [部署指南](deployment.md)：新环境、重建和升级。
-6. [运行与排障手册](operations.md)：健康扫描、端到端冒烟、排障和回滚。
-7. [统一路线图](roadmap.md)：已完成阶段、验收基线、后续优先级和每项风险的关闭条件。
+1. [当前状态](status/current-status.md)：已验证能力、部署基线、未闭环生产风险与风险登记。
+2. [当前产品契约](contracts/product-contract.md)：真实前端路由、API、主旅程、对象关联和验收清单。
+3. [系统架构](status/architecture.md)：数据面/控制面、数据流和边界。
+4. [架构图与数据流图](status/architecture-diagrams.md)：两张规范图、组件职责表、七条可靠性边界（外加事件时间、单 JVM 锁与部署边界），以及三种失败策略的并列对照。
+5. [部署指南](operations/deployment.md)：新环境、重建和升级。
+6. [运行与排障手册](operations/operations.md)：健康扫描、端到端冒烟、排障和回滚。
+7. [统一路线图](status/roadmap.md)：已完成阶段、验收基线、后续优先级和每项风险的关闭条件。
 
 ## 新增:架构总览与访谈材料
 
-- [架构图与数据流图](architecture-diagrams.md):两张规范图(平面化架构图 + 端到端数据流时序图),含组件职责表、真相处、七条可靠性边界,以及三种失败策略的并列对照。
+- [架构图与数据流图](status/architecture-diagrams.md):两张规范图(平面化架构图 + 端到端数据流时序图),含组件职责表、真相处、七条可靠性边界,以及三种失败策略的并列对照。
 - [访谈复习指南](interview/INTERVIEW_GUIDE.md):面向技术面试的系统复习材料,自 30 秒介绍到深度追问,每一条技术陈述都以本仓库实现为依据。
 
 ## 跨项目面试学习资料（已迁出本仓库）
@@ -34,8 +49,8 @@
 | 文档 | 适用问题 |
 | --- | --- |
 | [设计决策](design/decisions.md) | 为什么采用 ECS、事件时间、Kafka/Flink checkpoint、YAML 规则和当前部署方式 |
-| [事件与告警 Schema](event-alert-schema.md) | 当前事件、告警、时间字段、处置字段和 ES mapping 约束 |
-| [规则引擎](rule-engine.md) | 如何理解和扩展单事件、窗口、CEP、基线检测 |
+| [事件与告警 Schema](contracts/event-alert-schema.md) | 当前事件、告警、时间字段、处置字段和 ES mapping 约束 |
+| [规则引擎](status/rule-engine.md) | 如何理解和扩展单事件、窗口、CEP、基线检测 |
 | [Managed detection runtime Phase 5A/5B](design/managed-detection-runtime.md) | detection controller 的 claim/lease/fencing、immutable artifact、Flink process adapter、real observed state、adapter 模式与 5B 限制 |
 | [SOAR 后端架构与数据流](design/soar-runtime-architecture.md) | 从事实落库、Kafka 消费到租约 Worker、节点推进、挂起恢复和一致性保护的完整执行链 |
 | [SOAR 能力扩展架构](design/soar-capability-runtime.md) | 持久并行/循环、手动触发、Connector 与验证器链的数据流和边界 |
@@ -47,17 +62,17 @@
 | [模块边界与进程角色](design/module-boundaries.md) | Maven 模块边界、依赖方向、进程角色与隔离规则（`CLAUDE.md` 与根 `README.md` 指向的同一入口） |
 | [Copilot 调查工作台 UX 基线](design/copilot-workspace-ux-brief.md) | AI 调查工作台的信息层级与增量补齐基线（实现级；其 `Authority` 指向 Copilot 仓的冻结契约） |
 
-`docs/design/` 现在只存独立的专项参考，不再存按阶段复制架构、产品和路线图的长文档。专项文档若描述“待实现”，必须同时在[路线图](roadmap.md)中登记，不能被当作现成功能。
+`docs/design/` 现在只存独立的专项参考，不再存按阶段复制架构、产品和路线图的长文档。专项文档若描述“待实现”，必须同时在[路线图](status/roadmap.md)中登记，不能被当作现成功能。
 
 ## 代码级证据层
 
 [`evidence/architecture-analysis/`](evidence/architecture-analysis/README.md) 是**代码级取证层**：7 篇（`00`–`06`）按子系统记录 `file:line` 锚点、反直觉的真实形态和边界，回答的是「代码真的是这样吗」。
 
-它**不是契约，也不是入门材料**：权威仍在[产品契约](product-contract.md)、[系统架构](architecture.md) 和代码本身；与契约冲突时以契约为准，而**代码是最终事实**。想快速建立整体认知，先读[入门指引](guide/01-这个系统在解决什么问题.md) 或[架构图与数据流图](architecture-diagrams.md)。
+它**不是契约，也不是入门材料**：权威仍在[产品契约](contracts/product-contract.md)、[系统架构](status/architecture.md) 和代码本身；与契约冲突时以契约为准，而**代码是最终事实**。想快速建立整体认知，先读[入门指引](guide/01-这个系统在解决什么问题.md) 或[架构图与数据流图](status/architecture-diagrams.md)。
 
 ## 入门材料
 
-[入门指引](guide/) 按**项目优先**组织：从一个具体场景切入，讲清这个系统在解决什么问题、一条日志怎么走完全程、告警之后怎么处置。它**不替代契约**——接口、路由和验收仍在[产品契约](product-contract.md)。
+[入门指引](guide/) 按**项目优先**组织：从一个具体场景切入，讲清这个系统在解决什么问题、一条日志怎么走完全程、告警之后怎么处置。它**不替代契约**——接口、路由和验收仍在[产品契约](contracts/product-contract.md)。
 
 推荐顺序：[`guide/01`](guide/01-这个系统在解决什么问题.md) → [`guide/02`](guide/02-一条日志的完整旅程.md) → [`guide/03`](guide/03-从告警到处置决策.md)；之后用 [`guide/04`](guide/04-想深入读哪一篇.md) 决定往哪深入。
 
@@ -65,15 +80,15 @@
 
 ## 学习资料
 
-[学习地图](learn/README.md)按“SIEM 基础 → 全链路 → Kafka → Elasticsearch → Flink → Logstash”组织。学习文档用于解释概念和实验，不替代代码、`infra/` 配置或[产品契约](product-contract.md)。
+[学习地图](learn/README.md)按“SIEM 基础 → 全链路 → Kafka → Elasticsearch → Flink → Logstash”组织。学习文档用于解释概念和实验，不替代代码、`infra/` 配置或[产品契约](contracts/product-contract.md)。
 
 ## Story 迁移
 
-`docs/story/` **已整体删除**（含 `story-01`–`story-11` 与模板）：它们重复 API、路由和状态，产生多份互相矛盾的契约。当前接口统一在[产品契约](product-contract.md)，验收路径在[部署](deployment.md)与[运维](operations.md)。
+`docs/story/` **已整体删除**（含 `story-01`–`story-11` 与模板）：它们重复 API、路由和状态，产生多份互相矛盾的契约。当前接口统一在[产品契约](contracts/product-contract.md)，验收路径在[部署](operations/deployment.md)与[运维](operations/operations.md)。
 
 ## 审计与历史材料
 
-[架构审计归档](archive/architecture-audit-2026-08.md)保留历史分析、验证证据和风险记录，仅用于追溯，不作为开发入口。[阶段任务清单](archive/project-task-status.md)（原名 `design/project-task-status.md`）于 2026-09-23 归档：按本文规则 2，阶段计划只写入[路线图](roadmap.md)。归档内容可能包含当时已修复的问题或旧接口，使用前必须回到[当前状态](current-status.md)和代码确认。
+[架构审计归档](archive/architecture-audit-2026-08.md)保留历史分析、验证证据和风险记录，仅用于追溯，不作为开发入口。[阶段任务清单](archive/project-task-status.md)（原名 `design/project-task-status.md`）于 2026-09-23 归档：按本文规则 2，阶段计划只写入[路线图](status/roadmap.md)。归档内容可能包含当时已修复的问题或旧接口，使用前必须回到[当前状态](status/current-status.md)和代码确认。
 
 ## 基础设施局部说明
 
