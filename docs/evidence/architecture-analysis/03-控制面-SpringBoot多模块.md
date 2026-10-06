@@ -512,7 +512,7 @@ flowchart TB
 
 `control-api` main 目录 23 个 Java 文件 = **16 个控制器** + 3 个过滤器 + `SecurityConfig` + `CorsConfig` + `GlobalExceptionHandler` + 组合根。
 
-**完整端点表见 01 篇附录 A**——本文不重复。
+**完整端点清单的权威来源是 [`product-contract.md`](../../contracts/product-contract.md)**——本文与 01 篇都不再各存一份。
 
 **论断 2：全局异常处理把域异常映射到固定的 HTTP 状态与错误码。**
 
