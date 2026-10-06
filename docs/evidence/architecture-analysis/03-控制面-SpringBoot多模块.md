@@ -9,18 +9,6 @@
 
 ---
 
-## 为什么控制面独立成篇
-
-**边界由三个代码事实确定**：
-
-1. **独立构建单元**：`modules/*` 都继承根 `pom.xml`，而 `flink/` 不继承——控制面是「一个 reactor + 三个进程」。
-2. **独立进程**：`control-api`（Web）、`detection-controller`（`WebApplicationType.NONE`）、`soar-worker`（`WebApplicationType.NONE`）。
-3. **独立 schema owner**：控制面写 PostgreSQL（19 个迁移），数据面不碰 PG。
-
-**但本篇有一个明确的取舍**：SOAR 运行时（`soar-core` / `soar-adapters` / `soar-worker-runtime` + `soar-worker`）与检测控制（`detection-control` / `detection-runtime` / `detection-controller`）**各有独立进程与独立迁移组**，所以它们各自成篇（**04 篇**与**05 篇**）。本篇聚焦**共享的装配骨架 + 安全边界 + 持久化分层 + 面向 API 的四类业务模块**。
-
----
-
 ## 1. 模块规模与依赖（main / test 分列）
 
 | 模块 | main | test | 职责 |
@@ -954,9 +942,3 @@ flowchart LR
 本节 10 条待核实项均已解答，答案已并入正文：`ProductionSafetyValidator` 的 4 条 fail-closed 规则、`ConfigRevisionJournal` 是工具类不是表、ES 网关的 `e.getMessage()` 虽进 body 但当前无可达泄漏路径、ES 客户端未配连接池/超时/重试、`TenantContext.DEFAULT_TENANT` 的零成员关系自动补建为 default、`CorsConfig` 硬编码两个源。
 
 ---
-
-## 修订记录
-
-| 版本 | 日期 | 变更 | 作者 |
-| --- | --- | --- | --- |
-| 1.0 | 2026-09-22 | 首版。基于 `add_frame` @ `36b967f` 取证，覆盖控制面 `modules/` 193 个 main 文件 + `control-api` 23 个 main 文件 + 19 个迁移。 | code-level-architecture-docs skill |

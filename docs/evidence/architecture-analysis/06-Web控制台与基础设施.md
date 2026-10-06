@@ -15,23 +15,6 @@
 
 ---
 
-## 为什么这两块合一篇
-
-**这两块都不是「有状态子系统」，而是「交付物」**：
-
-| 维度 | 前五篇的子系统 | 本篇两块 |
-| --- | --- | --- |
-| 有没有独立进程 | 有（三个 Spring Boot + 一个 Flink） | **都没有**（Web 是静态资源；infra 是配置） |
-| 有没有 schema owner | 有 | **都没有** |
-| 有没有业务状态机 | 有 | **都没有** |
-| 出错的表现 | 数据不一致 | 页面打不开 / 容器起不来 |
-
-**按 铁律 2 的判据（独立构建模块 / 独立进程 / 独立 schema owner / 独立部署单元）**，这两块各自**是**独立的构建与部署单元（`web/` 有 `package.json`；`infra/` 是 docker compose 工程），但**内部没有子系统边界可再拆**。
-
-**所以合为一篇，两块各占一节。** 这是「不为凑数硬拆，也不为省事合并」（铁律 2）在本篇的落点。
-
----
-
 ## 1. Web 控制台
 
 ### 1.1 技术栈与构建
@@ -1132,9 +1115,3 @@ windows-security.yaml
 本节 15 条待核实项均已解答，答案已并入正文：仓库内**确无** SPA 回落配置、Stage D 指本仓 `docs/design/copilot-workspace-ux-brief.md`、`runtimeUrls.js` 只导出 `kibanaUrl`、Playwright 配置在 `web/playwright.config.js` 覆盖 5 个 spec、`landingRoute` 是 `role==='ops'?'/health':'/overview'`、`canAccessRoles` **缺省放行**、`LogstashConfigGenerator` 自己不写文件**是 `ActivationCoordinator` 更新 `pipelines.yml`**、TI 富化在主 pipeline 的 `if [source.ip]` 内、`infra/auth/users.yaml` 是**空列表**、`SECURITY.md` 18 行 4 条硬要求、`validate-deployment.sh` 6 组校验、`update-ti.py` 数据源是 AbuseIPDB CSV。
 
 ---
-
-## 修订记录
-
-| 版本 | 日期 | 变更 | 作者 |
-| --- | --- | --- | --- |
-| 1.0 | 2026-09-22 | 首版。基于 `add_frame` @ `36b967f` 取证，覆盖 `web/src` 92 个文件 + `infra/` 81 个文件。**修正「三条 Kafka topic」为实测四条（含 `siem-case-lifecycle`）。** | code-level-architecture-docs skill |

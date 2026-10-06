@@ -9,23 +9,6 @@
 
 ---
 
-## 为什么 SOAR 独立成篇
-
-**四条代码事实确定了这条边界**：
-
-1. **独立进程**：`applications/soar-worker` 是 `WebApplicationType.NONE` 的独立 Spring Boot 应用。
-2. **独立的三层模块链**：`soar-core` → `soar-adapters` → `soar-worker-runtime` 是单向依赖，**与其他域无交叉**（只依赖 `platform-contracts`、`iam`、`security-ops`）。
-3. **独立迁移组**：V8–V15 共 8 个迁移，全部是 SOAR 主题。
-4. **独立组合根**：`SoarWorkerApplication` 只扫 control + soar，**不依赖 control-api**（`CLAUDE.md` §仓库布局）。
-
-**分层强制是显式的**（`CLAUDE.md` §关键知识点 12）：
-
-> `soar-core` 只包含传输无关模型/引擎/SPI，**不得引入 Kafka、Actuator health、`java.net.http` 或 scheduled worker loop**；Kafka/HTTP 适配在 `soar-adapters`，Kafka consumer/health/lease worker 在 `soar-worker-runtime`。
-
-**实测这条约束在文件分布上成立**：`soar-adapters` 里有 `SoarKafkaConsumer` 之外的 Kafka/HTTP 代码，`soar-core` 的 `pom.xml` 不含对应依赖。
-
----
-
 ## 1. 三层模块与职责
 
 ```mermaid
@@ -1255,9 +1238,3 @@ flowchart LR
 本节 12 条待核实项均已解答，答案已并入正文：复数表零代码引用且无删除迁移、`soar_node_run`→`soar_node_execution` 是 V12 的行级搬迁、`deletePlaybook` 的 TOCTOU 窗口存在且无外层保护、`auditSafeConfig` 只有 1 个 handler 覆写（其余 10 个走恒等默认）、模板语法就是 `${path.to.value}` 且无默认值/转义/函数、条件求值纯 AND 且 7 个操作符、`ConnectorAuditSanitizer` 只按 key 名子串匹配不含 value、`SoarKafkaHealthIndicator` 只看 lag 无数值阈值。
 
 ---
-
-## 修订记录
-
-| 版本 | 日期 | 变更 | 作者 |
-| --- | --- | --- | --- |
-| 1.0 | 2026-09-22 | 首版。基于 `add_frame` @ `36b967f` 取证，覆盖 SOAR 三模块 70 个 main 文件 + V8–V15 共 8 个迁移。**修正 00 篇「12 个节点处理器」为实测 11 个。** | code-level-architecture-docs skill |

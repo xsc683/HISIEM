@@ -9,18 +9,6 @@
 
 ---
 
-## 为什么数据面独立成篇
-
-**一篇一篇按子系统拆，这一篇的边界由三条代码事实决定**：
-
-1. **独立构建单元**：`flink/pom.xml` **没有 `<parent>`**，不并入根 reactor。`CLAUDE.md` §常用命令明确要求 `./mvnw -f flink/pom.xml ...` 单独构建。
-2. **独立进程**：`com.siem.DetectionJob` 是 Flink 作业主类，跑在 Flink 集群，不是 Spring 容器。
-3. **零代码依赖**：`flink/` 不 import 任何 `com.xscsiem.hsiem_platform.*` 类——两侧**只通过 Kafka topic 与 ES 索引耦合**。
-
-> **与直觉不同的一点**：根 `pom.xml` 的 `<modules>` 里**列了 `flink`**，但 `flink/pom.xml` 自己**没有 parent**。所以它是「被聚合但不继承」——Maven 能一起构建，但版本、插件、依赖**全部由 `flink/pom.xml` 自己 pin**。这是刻意的隔离手法：数据面升级 Flink 版本时不会牵动控制面。
-
----
-
 ## 1. 关键类与聚合根
 
 ```mermaid
@@ -278,19 +266,6 @@ sequenceDiagram
         P->>DLQ: output(DLQ, 带 dlq.id 与 dlq.stage 的记录)
     end
 ```
-
-### 2.3 源码落点行
-
-| 行 | 内容 |
-| --- | --- |
-| `EventParser.java:23-28` | `parse(json)` → 扁平 Map |
-| `EventParser.java:30-33` | `parseEvent(json)` → `Event` |
-| `EventParser.java:46-56` | `flatten` 递归展开 |
-| `EventParsingProcessFunction.java:17` | `OutputTag DLQ` |
-| `EventParsingProcessFunction.java:28` | `context.output(DLQ, ...)` |
-| `EventParsingProcessFunction.java:48` | `dlq.id = sha256(original)` |
-
----
 
 ## 3. 规则模型：声明 → 运行时
 
@@ -1322,7 +1297,6 @@ sequenceDiagram
 | 17 | **告警写入不得覆盖分析师处置字段** | `DetectionJob.java:384-386` 从 partial doc 中移除 5 个受保护字段 | 窗口结束/重放/抑制定时器抹掉人工结论 |
 | 18 | **`docAsUpsert` 必须保持默认 false** | `DetectionJobSinkTest` 断言 `update.action().docAsUpsert()` 非 TRUE | 文档不存在时用裁剪后的 partial doc 建文档，新告警反而缺字段 |
 
-
 ### 8.1 告警 partial update 的受保护字段
 
 `DetectionJob.alertOperation(String)` 生成的是 **partial update**：先把完整告警转成 Map，再从副本里移除分析师字段，然后 `.doc(partialDoc).upsert(fullDoc)`。
@@ -1416,9 +1390,3 @@ flowchart LR
 本节 9 条待核实项均已解答，答案已并入正文：`loadEnabled` 确为死 API；`related_events` 确无上限；3 个运行参数确为死参数；CEP 的 `times` 被控制面 grammar 拦住但 Flink 侧 lint 不查；基线 `LinkedList` 确走 Kryo 序列化。
 
 ---
-
-## 修订记录
-
-| 版本 | 日期 | 变更 | 作者 |
-| --- | --- | --- | --- |
-| 1.0 | 2026-09-22 | 首版。基于 `add_frame` @ `36b967f` 取证，覆盖 30 个 Java 文件 + 6 条规则 YAML。 | code-level-architecture-docs skill |
