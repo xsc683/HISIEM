@@ -6,8 +6,7 @@ Two canonical diagrams for the platform:
 2. **[Data flow diagram](#2-data-flow-diagram)** — *what happens when a real log line flows through it*
 
 Companion documents: [`architecture.md`](architecture.md) (data/control plane boundaries),
-[`architecture-overview.md`](architecture-overview.md) (four-figure overview),
-[`architecture-deep-dive.md`](architecture-deep-dive.md) (full technical walkthrough).
+[`evidence/architecture-analysis/`](evidence/architecture-analysis/README.md) (code-level evidence).
 
 ---
 
@@ -232,6 +231,60 @@ Sibling-system execution view = NOT authoritative here; HISIEM's observed state 
 | 5 | Cross-store boundary | PostgreSQL ↔ Elasticsearch | No distributed transaction; convergence via `case_mirror_outbox` with lease + reclaim |
 | 6 | Execution boundary | Control plane → SOAR | Playbook advancement is lease-protected; **node-side-effect idempotency belongs to the connector** |
 | 7 | Cross-system boundary | HISIEM BFF → sibling system | Tenant/actor are server-asserted; the browser can never override them |
+| 8 | Single-JVM lock boundary | control plane in-process guards | `synchronized`, `lifecycleInFlight` and the port lock cover **one JVM only**; a multi-replica control plane needs a distributed lock |
+| 9 | Rule-state vs. deploy boundary | Flink savepoint ↔ detection-controller reconcile | Savepoints protect rule *state*; start/stop is driven by desired generation and reconcile, and the process adapter only rebuilds the affected job group when an artifact must be replaced. Wider scale still needs dynamic rule broadcast or versioned jobs |
+| 10 | Environment boundary | local Compose | PLAINTEXT, single node and RF=1 are local-only; production must pass `ProductionSafetyValidator`'s TLS/SASL gate and add topology HA |
+
+### Event-time boundary, in detail
+
+Three mechanisms that are easy to conflate, and the boundary that follows from them.
+
+```mermaid
+flowchart LR
+    subgraph ARRIVAL["Event arrival (processing time)"]
+        E1["e1 @ t=10s"]
+        E2["e2 @ t=14s<br/>arrives late, still inside bound"]
+        E3["e3 @ t=12s<br/>arrives after e2"]
+        E4["e4 @ t=45s<br/>arrives very late"]
+    end
+
+    subgraph CLOCK["Watermark computation"]
+        MAX["max observed event time<br/>= 14s"]
+        BOUND["bounded out-of-orderness<br/>- 10 seconds"]
+        WM["watermark = max - 10s"]
+        IDLE["idleness timeout<br/>60 seconds"]
+    end
+
+    subgraph RESULT["Effect"]
+        WINDOW["event-time window closes<br/>when watermark >= window end"]
+        LATE["event later than the closed window<br/>is NOT added to it"]
+        IDLEEFF["a silent key's watermark<br/>does not stall the job"]
+    end
+
+    E1 --> MAX
+    E2 --> MAX
+    E3 --> MAX
+    MAX --> BOUND
+    BOUND --> WM
+    WM --> WINDOW
+    E4 --> LATE
+    IDLE --> IDLEEFF
+    WM --> IDLEEFF
+    WINDOW --> LATE
+```
+
+| Mechanism | Value here | What it does |
+|---|---|---|
+| Bounded out-of-orderness | 10 seconds | Lets the watermark trail the newest observed event time by a fixed bound, so modest reordering is absorbed rather than treated as late |
+| Idleness | 60 seconds | Stops a source that has gone quiet from holding every window open forever |
+| Window trigger | watermark ≥ window end | Windows fire on event time. **Once a window has fired, there is no allowed-lateness re-fire** |
+
+**There is no `allowedLateness` configuration in this job, and no late-event side output.**
+The boundary is therefore: reordering inside the 10-second bound is absorbed; an event that
+arrives after its window has already fired does not contribute to that window's result and is
+not separately captured. See [Known Limits](../README.en.md#12-known-limits).
+
+
 
 ---
 

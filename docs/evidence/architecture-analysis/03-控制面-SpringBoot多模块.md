@@ -886,6 +886,18 @@ flowchart TB
 | 12 | **案件写路径不绕过端口直接写 ES** | `CaseStore.java:11-12` 接口 javadoc | 事实源与镜像不一致 |
 | 13 | **detection-controller 不用自动驼峰映射** | `CLAUDE.md` §持久化约定 5 | 列名映射错乱 |
 
+### 8.1 资产关键度：全量校验、单次原子替换
+
+`CriticalityService` 只接受 `ip`/`user`/`host` 三类键，校验键长度、字符集与 IP 格式；级别映射为 `low=0.5`、`medium=1.0`、`high=1.5`、`extreme=2.0`。批量接口先校验**最多 1000 条**全部输入，再写一次临时文件并原子替换——任何一项失败都不改变旧文件。
+
+异步重算不是「返回 200 就算完成」：`CriticalityRecalcCoordinator` 写入任务、claim 并心跳，`ProcessCriticalityDeployer` 实际调用
+
+```text
+wsl bash -c "python3 infra/elasticsearch/entity-risk.py --write"
+```
+
+成功后才更新任务、生成通知并记录 actor。外部命令输出会被清除 NUL 字符并限制在 4000 字节，避免 WSL 的编码污染 PostgreSQL。
+
 ---
 
 ## 9. 与其他子系统的边界

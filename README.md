@@ -67,7 +67,7 @@ SIEM 必须持续、在规模上回答一个问题：*面对海量安全事件�
 
 上表是组件职责的单一来源；案件跨 PG/ES 的具体同步、补偿和 outbox 边界见[系统架构](docs/architecture.md)。
 
-完整架构图见 [`docs/architecture-overview.md`](docs/architecture-overview.md)。
+完整架构图见 [`docs/architecture-diagrams.md`](docs/architecture-diagrams.md)。
 
 ### 仓库结构
 
@@ -347,26 +347,25 @@ cd web && npx playwright test
 - 高可用与多节点部署不在当前基线之内。
 - 规则集是演示集，不是生产检测内容库。
 
-权威的未闭环事项清单见 [`docs/current-status.md`](docs/current-status.md) 与 [`docs/project-progress.md`](docs/project-progress.md)。
+权威的未闭环事项清单（含风险 ID 与关闭条件）见 [`docs/current-status.md`](docs/current-status.md)。
 
 ---
 
 ## 13. 文档阅读顺序
 
-**如果你只有 3 分钟：** 本文件，加上[架构总览](docs/architecture-overview.md)。
+**如果你只有 3 分钟：** 本文件，加上[架构图与数据流图](docs/architecture-diagrams.md)。
 
 **如果你有 30 分钟：** 加上 [`docs/architecture.md`](docs/architecture.md)（数据面 / 控制面 / 边界）。
 
-**如果你想要工程深度：** [`docs/architecture-deep-dive.md`](docs/architecture-deep-dive.md) 是完整的技术走查（配置编译、流处理、可靠性、安全、前端）。[`docs/design/decisions.md`](docs/design/decisions.md) 覆盖主要选择背后的 *为什么*。
+**如果你想要工程深度：** [`docs/evidence/architecture-analysis/`](docs/evidence/architecture-analysis/README.md) 是按子系统的 `file:line` 取证（配置编译、流处理、可靠性、安全、前端的实现细节都在里面，且每条都能回到代码与测试）。[`docs/design/decisions.md`](docs/design/decisions.md) 覆盖主要选择背后的 *为什么*。
 
 日常先看[当前状态](docs/current-status.md)，再按目标选择部署、运行、架构或产品契约文档；专项设计和学习资料作为深入参考。
 
 | 目标 / 文档 | 内容 |
 | --- | --- |
 | [docs/current-status.md](docs/current-status.md) | 最近一次验证的能力、部署基线和未闭环生产风险 |
-| [docs/project-progress.md](docs/project-progress.md) | 当前能力进展、遗留问题、关闭条件与建议迭代顺序 |
 | [docs/architecture.md](docs/architecture.md) | 系统架构、数据流、Schema、规则引擎概览 |
-| [docs/architecture-deep-dive.md](docs/architecture-deep-dive.md) | 流处理内部机制（完整技术走查） |
+| [docs/evidence/architecture-analysis/](docs/evidence/architecture-analysis/README.md) | 代码级取证：实现细节、反直觉形态与关键不变式（每条带 `file:line`） |
 | [docs/deployment.md](docs/deployment.md) | **新机器部署指南**(换环境必备) |
 | [docs/operations.md](docs/operations.md) | 日常启动、健康扫描、端到端冒烟、排障和回滚 |
 | [docs/design/module-boundaries.md](docs/design/module-boundaries.md) | 模块依赖、进程角色与隔离规则 |

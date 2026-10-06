@@ -30,7 +30,7 @@
 
 ## 实现细节参考
 
-概念文档之外，项目实现亮点集中在 [`../architecture-deep-dive.md`](../architecture-deep-dive.md)，包括配置编译、数据质量隔离、Flink 状态、告警幂等、案件 outbox、任务租约、安全边界、运行态扫描和前端协议处理。它是实现分析，不是操作步骤。
+概念文档之外，项目的实现细节集中在 [`../evidence/architecture-analysis/`](../evidence/architecture-analysis/README.md)，包括配置编译、数据质量隔离、Flink 状态、告警幂等、案件 outbox、任务租约、安全边界、运行态扫描和前端协议处理。它是**代码级取证**（每条论断带 `file:line`），不是操作步骤，也不是契约。
 
 ## 统一组织方式
 

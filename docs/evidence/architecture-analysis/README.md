@@ -75,6 +75,25 @@
 
 ---
 
+## 实现片段 ↔ 验证它的测试
+
+取证集的每个论断都要能回到测试。下表是「实现片段 → 直接验证它的测试」的对应关系；代码片段、配置片段和测试需要**一起**看——单看 YAML 看不到发布补偿，单看 Java 看不到运行时字段，单看前端又看不到状态机和最终一致性。
+
+| 实现片段 | 直接验证它的测试 |
+| --- | --- |
+| ParserTemplate 正负样例门禁、Grok 首匹配 | `TemplateGateTest`、`ParserTemplateServiceTest` |
+| generateInput / generateFilter / generatePipeline 语法与 raw 分支 | `LogstashConfigGeneratorTest` |
+| 激活备份、配置校验、失败回滚、端口冲突 | `ActivationCoordinatorTest`、`LogSourceServiceTest` |
+| 条件树、窗口边界、CEP、基线、抑制状态 | `RuleEngineTest`、`WindowRuleTest`、`BaselineAnomalyTest`、`SuppressionTest` |
+| Flink 毒消息、事件时间门禁和 DLQ 契约 | `EventParsingProcessFunctionTest` |
+| 确定性告警 ID、partial update、处置状态机 | `DetectionJobSinkTest`、`AlertServiceTest` |
+| 案件关系、版本冲突、镜像删除 2xx 和控制面迁移 | `CaseServiceTest`、`CaseMirrorDispatcherTest`、`ControlPlaneStoreTest`、`PostgresMigrationContainerTest` |
+| SOAR fencing、续租、重试历史和生命周期恢复 | `SoarRuntimeIntegrationTest`、`SoarWorkerTest` |
+| 用户视图、首次改密、Bearer 权限 | `AuthUserViewTest`、`AuthServiceTest`、`SecurityApiTest` |
+| 健康指标、通知频控、关键度原子批量 | `DataHealthServiceTest`、`NotificationServiceTest`、`CriticalityServiceTest` |
+
+---
+
 ## 一、分析对象与代码事实基线
 
 ### 仓库定位表

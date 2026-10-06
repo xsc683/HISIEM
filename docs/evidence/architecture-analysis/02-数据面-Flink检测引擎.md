@@ -1319,6 +1319,35 @@ sequenceDiagram
 | 14 | **同一 Job Group 的 single_event 抑制时长必须一致** | `DetectionJob.java:328-330` 抛异常 | 共用一个抑制器却有两个时长，无法成立 |
 | 15 | **CEP 重复次数只能写在 `begin` 步** | `DetectionJob.java:425-440`（`next`/`followedBy` 分支不读 `timesMin`/`timesMax`） | 写在非首步时**静默失效** |
 | 16 | **CEP 步骤类型只接受 begin / next / followedBy** | `DetectionJob.java:438-440` 抛异常 | 拼错步骤类型静默产生错误序列 |
+| 17 | **告警写入不得覆盖分析师处置字段** | `DetectionJob.java:384-386` 从 partial doc 中移除 5 个受保护字段 | 窗口结束/重放/抑制定时器抹掉人工结论 |
+| 18 | **`docAsUpsert` 必须保持默认 false** | `DetectionJobSinkTest` 断言 `update.action().docAsUpsert()` 非 TRUE | 文档不存在时用裁剪后的 partial doc 建文档，新告警反而缺字段 |
+
+
+### 8.1 告警 partial update 的受保护字段
+
+`DetectionJob.alertOperation(String)` 生成的是 **partial update**：先把完整告警转成 Map，再从副本里移除分析师字段，然后 `.doc(partialDoc).upsert(fullDoc)`。
+
+```java
+// DetectionJob.java:379-395
+Set<String> protectedFields = Set.of(
+        "alert.status", "alert.analyst_verdict", "alert.operator",
+        "alert.status_updated_at", "alert.case_id");
+protectedFields.forEach(patch::remove);
+JsonData fullDoc = JsonData.fromJson(element);
+JsonData partialDoc = JsonData.fromJson(ALERT_MAPPER.writeValueAsString(patch));
+return new UpdateOperation.Builder<JsonData, JsonData>()
+        .index("siem-alerts")
+        .id(alertId(element))
+        .action(new UpdateAction.Builder<JsonData, JsonData>()
+                .doc(partialDoc)
+                .upsert(fullDoc)
+                .build())
+        .build();
+```
+
+**`.doc()` 与 `.upsert()` 是成对的，`docAsUpsert` 必须保持默认的 false**：一旦加上 `.docAsUpsert(true)`，Elasticsearch 会在文档不存在时也用那份**被裁剪过的** partial doc 建文档，于是新告警恰好缺掉那 5 个字段。`DetectionJobSinkTest` 把这一点固定成了断言（不变式 18）。
+
+契约层面的同一事实写在 [`soar.md`](../../soar.md) §2——那里是它作为契约的主人。
 
 ---
 

@@ -4,21 +4,19 @@
 
 本目录只保留能指导当前开发、部署、使用和验收的文档。阅读时遵循“当前事实 → 产品契约 → 操作交付 → 技术参考 → 学习资料”的顺序；旧阶段稿和重复 Story 详文已删除，避免 AI 编码助手读取过时接口。
 
-## 先看这 8 份
+## 先看这 7 份
 
-1. [当前状态](current-status.md)：已验证能力、部署基线和未闭环生产风险。
-2. [项目进展与遗留问题](project-progress.md)：面向交接的能力进展、风险登记、关闭条件和建议顺序。
-3. [当前产品契约](product-contract.md)：真实前端路由、API、主旅程、对象关联和验收清单。
-4. [系统架构](architecture.md)：数据面/控制面、数据流和边界。
-5. [架构实现亮点](architecture-deep-dive.md)：通读项目后提炼的配置编译、流处理、可靠性、安全和前端实现细节。
-6. [部署指南](deployment.md)：新环境、重建和升级。
-7. [运行与排障手册](operations.md)：健康扫描、端到端冒烟、排障和回滚。
-8. [统一路线图](roadmap.md)：已完成阶段、验收基线和后续优先级。
+1. [当前状态](current-status.md)：已验证能力、部署基线、未闭环生产风险与风险登记。
+2. [当前产品契约](product-contract.md)：真实前端路由、API、主旅程、对象关联和验收清单。
+3. [系统架构](architecture.md)：数据面/控制面、数据流和边界。
+4. [架构图与数据流图](architecture-diagrams.md)：两张规范图、组件职责表、七条可靠性边界（外加事件时间、单 JVM 锁与部署边界），以及三种失败策略的并列对照。
+5. [部署指南](deployment.md)：新环境、重建和升级。
+6. [运行与排障手册](operations.md)：健康扫描、端到端冒烟、排障和回滚。
+7. [统一路线图](roadmap.md)：已完成阶段、验收基线、后续优先级和每项风险的关闭条件。
 
 ## 新增:架构总览与访谈材料
 
 - [架构图与数据流图](architecture-diagrams.md):两张规范图(平面化架构图 + 端到端数据流时序图),含组件职责表、真相处、七条可靠性边界,以及三种失败策略的并列对照。
-- [架构总览](architecture-overview.md):一页式的四张核心图——端到端数据链路、事件时间处理时间线、控制面 vs 数据面、HISIEM ↔ HISIEM-SOC-Copilot 边界。适合作为快速入口。
 - [访谈复习指南](interview/INTERVIEW_GUIDE.md):面向技术面试的系统复习材料,自 30 秒介绍到深度追问,每一条技术陈述都以本仓库实现为依据。
 
 ## 跨项目面试学习资料（已迁出本仓库）
@@ -55,7 +53,7 @@
 
 [`evidence/architecture-analysis/`](evidence/architecture-analysis/README.md) 是**代码级取证层**：7 篇（`00`–`06`）按子系统记录 `file:line` 锚点、反直觉的真实形态和边界，回答的是「代码真的是这样吗」。
 
-它**不是契约，也不是入门材料**：权威仍在[产品契约](product-contract.md)、[系统架构](architecture.md) 和代码本身；与契约冲突时以契约为准，而**代码是最终事实**。想快速建立整体认知，先读[入门指引](guide/01-这个系统在解决什么问题.md) 或[架构总览](architecture-overview.md)。
+它**不是契约，也不是入门材料**：权威仍在[产品契约](product-contract.md)、[系统架构](architecture.md) 和代码本身；与契约冲突时以契约为准，而**代码是最终事实**。想快速建立整体认知，先读[入门指引](guide/01-这个系统在解决什么问题.md) 或[架构图与数据流图](architecture-diagrams.md)。
 
 ## 入门材料
 
@@ -90,7 +88,7 @@
 
 ## 文档变更规则
 
-1. 当前事实只写入 `current-status.md`、`architecture.md` 或 `product-contract.md`；`project-progress.md` 只做派生的管理视图和问题关闭登记。
+1. 当前事实只写入 `current-status.md`、`architecture.md` 或 `product-contract.md`。风险登记只写在 `current-status.md`，关闭条件只写在 `roadmap.md`。
 2. 阶段计划只写入 `roadmap.md`；不再新增 `roadmap-next.md` 或 `design/0x-roadmap.md`。
 3. 接口、路由和验收只写入 `product-contract.md`，代码测试是最终验证。
 4. Schema 变更同步 `event-alert-schema.md`、mapping、生产端和测试。

@@ -1,6 +1,6 @@
 # 项目路线图与完成基线
 
-> 定位：统一收纳阶段计划、已交付能力和后续优先级。旧阶段稿已删除；本页是唯一的路线图入口，日常只以本页的状态为准。遗留问题 ID、影响和可验证关闭条件见[项目进展与遗留问题](project-progress.md)。
+> 定位：统一收纳阶段计划、已交付能力和后续优先级。旧阶段稿已删除；本页是唯一的路线图入口。**问题 ID、影响与当前状态在[当前状态](current-status.md)的风险登记里；本页只写每条的关闭条件。**
 
 ## 已交付阶段
 
@@ -40,20 +40,70 @@ npm.cmd --prefix web run test:e2e
 
 ### P0：生产安全门禁
 
-- Elasticsearch/Kafka 认证与 TLS；多节点和 RF≥2；密钥、快照和最小权限策略。
-- 首次部署改密、密码轮换、会话失效和审计字段的持续回归。
+**关闭条件（`SEC-01` 数据面安全）**
+
+- ES HTTP/transport TLS 和认证启用，Kafka 使用 SASL_SSL/SCRAM 或等价机制；
+- PostgreSQL、ES、Kafka 凭据由环境密钥系统注入，仓库和镜像不包含生产秘密；
+- 宿主端口按最小暴露原则收敛，服务账户具有最小权限；
+- `REQUIRE_PRODUCTION_SECURITY=1` 的部署校验通过，并完成证书轮换演练。
+
+**关闭条件（`HA-01` 高可用）**
+
+- 形成经过评审的 ES/Kafka/Flink/PostgreSQL 生产拓扑，Kafka topic RF≥2；
+- 核心节点停止、重启、网络短暂中断时，业务能够恢复且数据损失边界可解释；
+- checkpoint、Kafka 数据、PG 数据和 ES snapshot 使用独立持久存储；
+- 故障演练记录实际 RTO/RPO，而不是只验证容器重新启动。
+
+**关闭条件（`REL-01` 可发布交付物）**
+
+- Spring Boot 与前端构建为版本化镜像，通过反向代理提供统一 HTTPS 入口；
+- 配置、密钥、数据库迁移和静态资源版本具有明确升级顺序；
+- 提供部署、健康确认、滚动升级和一键回滚流程；
+- 发布候选在接近生产的拓扑上完成端到端验收。
 
 ### P1：一致性与可恢复性
 
-- Case outbox 的重试、幂等、告警清理和断点演练。
-- 后台 task handler 自动重放、幂等键、跨实例租约和指标告警。
-- Flink 告警 partial update 的并发回归，以及事件/告警/案件的端到端测试。
+**关闭条件（`CON-01` Case 一致性）**
+
+- 对 PG 成功/ES 失败、ES 成功/PG 冲突、进程在各步骤退出执行自动故障注入；
+- outbox backlog、失败次数和最长滞留时间有指标与告警；
+- 提供 `case_alerts`、`alert.case_id` 和 `siem-cases` 的差异扫描及安全修复工具；
+- 多 dispatcher 领取策略经过并发验证，镜像在约定时间内收敛。
+
+**关闭条件（`CON-02` / `DLQ-01` lifecycle 可靠投递）**
+
+- 控制面业务事务同时写 lifecycle outbox，发布器使用稳定 `message_id` 并可重启续传；
+- 非法 lifecycle 消息进入可查询的 quarantine/DLQ，而不是只有日志；
+- 重放必须重新校验契约、保留原 topic/partition/offset，并提供审计和幂等结果；
+- 能证明「业务已提交但 Producer 失败」不会永久漏掉自动化触发。
+
+**关闭条件（`TASK-01` 后台任务恢复）**
+
+- 每类任务具有明确 handler、稳定幂等键、超时、最大重试和终端失败语义；
+- 进程在 handler 执行前后退出的测试可以自动恢复；
+- 多实例只允许一个 owner 提交结果，租约过期的旧执行不能覆盖新执行；
+- 管理页面可以区分等待、运行、重试、失败和需人工介入。
+
+**关闭条件（`TEST-01` / `OBS-01`）**
+
+- 增加真实环境 `日志 → 事件 → 告警 → 案件 → lifecycle → SOAR` 自动化测试；
+- 覆盖 Kafka 重放、Flink 重启、ES 暂停、PG 连接中断和 SOAR 租约接管；
+- 浏览器 E2E 至少覆盖登录/改密、规则部署、告警处置、案件和 Playbook 发布执行；
+- 对 Kafka lag、Flink checkpoint、raw/DLQ、Case outbox、lifecycle publish 和 SOAR lease 设置阈值告警。
 
 ### P2：容量与产品边界
 
 - 真实负载下的分区、checkpoint、索引生命周期、保留策略和 RTO/RPO 压测。
 - 多租户字段、索引隔离、文档级权限和更细粒度的角色模型。
 - 通知渠道、更多接入协议和可视化信息架构的持续评估。
+
+**关闭条件（P2 各项）**
+
+- `TENANT-01`：先统一 tenant 字段和权限模型，再设计索引/Topic/凭据隔离，禁止只在页面过滤。
+- `SOAR-01/02`：持久并行、静态 item 循环、手动触发、Connector SPI/HTTP 基线和审计脱敏已落地；下一步补凭据引用、mTLS/出口代理、限流/熔断/隔离、子 Playbook 与规模测试。
+- `RULE-01`：为 CEP/基线建立可视化 DSL、模拟数据测试和发布门禁后，才能开放写操作。
+- `SCALE-01`：以目标 EPS、保存周期、查询延迟和 RTO/RPO 为输入完成容量模型与压力测试。
+- `INT-01`/`DATA-01`：外部通知、TI、身份源和 OCSF 合规应各自有数据契约与失败降级，不在主链路中直接堆叠同步调用。
 - lifecycle DLQ/replay、OR 条件、动态 map/while、子 Playbook、Connector 凭据/mTLS/代理/隔离、**SOAR 内的 AI 节点**，以及跨地域容量验证。
   （注意：这里的「AI Agent」指能在 Playbook 里充当判断节点的 AI；**AI 调查工作台**是另一条链路，由外部 SOC Copilot 经控制台 BFF 代理接入，已落地且不再是路线图事项——见[产品契约](product-contract.md)与[当前状态](current-status.md)。）
 

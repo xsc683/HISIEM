@@ -99,7 +99,7 @@ Component responsibilities:
 | Spring Boot | Ingest APIs, case handling, auth, SOAR orchestration, operations APIs |
 | PostgreSQL | Control-plane transactional truth and execution state |
 
-Full diagrams: [`docs/architecture-overview.md`](docs/architecture-overview.md).
+Full diagrams: [`docs/architecture-diagrams.md`](docs/architecture-diagrams.md).
 
 ---
 
@@ -400,30 +400,29 @@ explicit. None of these is a defect being hidden — each is a scope boundary.
 - High availability and multi-node deployment are not part of the current baseline.
 - The rule set is a demonstration set, not a production detection content library.
 
-See [`docs/current-status.md`](docs/current-status.md) and
-[`docs/project-progress.md`](docs/project-progress.md) for the authoritative
-open-item register.
+See [`docs/current-status.md`](docs/current-status.md) for the authoritative
+open-item register (risk IDs and their closure conditions).
 
 ---
 
 ## 13. Documentation Reading Order
 
-**If you have 3 minutes:** this file, plus the [architecture overview](docs/architecture-overview.md).
+**If you have 3 minutes:** this file, plus the [architecture & data-flow diagrams](docs/architecture-diagrams.md).
 
 **If you have 30 minutes:** add [`docs/architecture.md`](docs/architecture.md) (data plane /
 control plane / boundaries).
 
-**If you want the engineering depth:** [`docs/architecture-deep-dive.md`](docs/architecture-deep-dive.md)
-is the full technical walkthrough (configuration compilation, stream processing,
-reliability, security, frontend). [`docs/design/decisions.md`](docs/design/decisions.md)
-covers the *why* behind the major choices.
+**If you want the engineering depth:**
+[`docs/evidence/architecture-analysis/`](docs/evidence/architecture-analysis/README.md)
+is the per-subsystem `file:line` forensics (configuration compilation, stream processing,
+reliability, security, frontend), and every claim in it traces back to code and tests.
+[`docs/design/decisions.md`](docs/design/decisions.md) covers the *why* behind the major choices.
 
 | Goal | Document |
 |---|---|
 | Current verified state and open risks | [`docs/current-status.md`](docs/current-status.md) |
-| Capability progress and risk register | [`docs/project-progress.md`](docs/project-progress.md) |
 | Real routes, APIs, acceptance checklist | [`docs/product-contract.md`](docs/product-contract.md) |
-| Stream processing internals | [`docs/architecture-deep-dive.md`](docs/architecture-deep-dive.md), [`docs/rule-engine.md`](docs/rule-engine.md) |
+| Stream processing internals | [`docs/evidence/architecture-analysis/02`](docs/evidence/architecture-analysis/02-数据面-Flink检测引擎.md), [`docs/rule-engine.md`](docs/rule-engine.md) |
 | Event/alert schema and ES mappings | [`docs/event-alert-schema.md`](docs/event-alert-schema.md) |
 | SOAR execution chain | [`docs/soar.md`](docs/soar.md), [`docs/design/soar-runtime-architecture.md`](docs/design/soar-runtime-architecture.md) |
 | Managed detection runtime | [`docs/design/managed-detection-runtime.md`](docs/design/managed-detection-runtime.md) |
