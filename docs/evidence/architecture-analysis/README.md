@@ -123,80 +123,15 @@
 
 ---
 
-## 二、Mermaid 校验记录
-
-```text
-mermaid@11.10.1
-块数=48 通过=48 失败=0
-exit 0
-```
-
-**校验方式**（可复现）：
-
-```bash
-# 在被分析项目之外的临时目录装一次依赖（不影响被分析项目）
-T="$TEMP/mermaid-check"; mkdir -p "$T" && cd "$T"
-echo '{"name":"mc","private":true,"type":"module"}' > package.json
-npm install --silent --no-audit --no-fund mermaid@11.10.1 jsdom
-node ~/.claude/skills/code-level-architecture-docs/scripts/validate-mermaid.mjs \
-     "D:/Project/SIEM/docs/architecture-analysis"
-```
-
-**分篇块数**：00×3、01×8、02×7、03×7、04×10、05×7、06×6 = **48**。
-
-### 本文档集遵循的 mermaid 语法约定
-
-| 约定 | 原因 |
-| --- | --- |
-| 每个 ` ```mermaid ` 块首部带 front-matter（`theme: base` + `fontFamily: YaHei`） | 中文字体渲染 |
-| **front-matter 后紧跟图表类型** | 只写 front-matter 会触发 `No diagram type detected` |
-| `sequenceDiagram` 消息**不含半角 `;`** | `;` 会中断解析 |
-| `classDiagram` 成员块内**不用花括号占位** | 触发 `Expecting 'STRUCT_STOP'` |
-| 含特殊字符的节点标签**一律双引号包裹** | 保留字/括号/斜杠 |
-
-**校验过程中修正的语法问题（2 处）**：
-
-1. **`sequenceDiagram` 消息里出现半角 `;`** —— 写 01 篇 §4 时消息文本含 `;`，解析失败；改为中文标点或逗号。
-2. **`erDiagram` 关系标签含括号** —— 05 篇表关系图的 `"rule_job_assignment"` 需引号包裹。
-
----
-
-## 三、核查记录（对实际源码的事实核对）
+## 二、核查记录（对实际源码的事实核对）
 
 **核查方式**：每篇成文后**回查每条 `file:line` 是否对应真实代码**，并用可复现的 `grep`/`find`/`wc` 命令重新计数。这不是自夸——下面列出**核对出什么、改了什么**。
 
-### 3.1 核查修正汇总
+### 2.1 核查结论
 
-**共修正约 90 处**，其中**实质错误 12 处**（会误导读者）、其余为计数错误与锚点偏移。
+本集初稿的事实错误已于 2026-09-22 逐条核证并更正（每条附 `file:line`，关键结论另经独立复核）。**更正过程的记录不再保留**——过程考古没有读者价值，结论已并入各篇正文与下面的 §3.2。
 
-**本集于 2026-09-22 经过一轮独立核证**：6 个核证 agent 逐条读代码取证，每条附 `file:line`；**关键结论另经本人独立复核**（不径信 agent 输出）。核证覆盖本集全部 64 条待核实项，**全部得到解答**。
-
-**12 处实质错误**（按严重度）：
-
-| # | 初稿写的 | 代码真相 | 篇 |
-| --- | --- | --- | --- |
-| 1 | 「全项目唯一关闭驼峰映射」 | **`control-api` 也关了**（两个应用的 `application.properties:3`） | 03 / 05 |
-| 2 | 8 个运行参数并列介绍 | **3 个是死参数**（`esBatchSize` / `esMaxInFlightRequests` / `esMaxTimeInBufferMs` 从不被读取），只有 `esMaxBufferedRequests` 被消费 | 02 |
-| 3 | `soar_approval` = 审批业务实体 | 是 **V11 冻结表**（V12 已取代），活表只有 `soar_approval_task` | 04 |
-| 4 | `finishNodeRun` 的 guard「校验租约/版本」 | 守卫的是 **node-run 状态白名单**；租约/版本校验在别的语句 | 04 |
-| 5 | ER 图画了 4 张零引用表为活表 | 应与 `soar_node_run` 等一起被排除（**图与本节「只引用 8 张表」自相矛盾**） | 04 |
-| 6 | V16 一次建 7 张表 | **V16 建 5 张、V17 建 4 张、V18 不建表** | 05 |
-| 7 | `.pyc` 被误提交进版本控制 | **不在版本控制中**（`.gitignore` 命中；用 `find` 推断 git 状态是错的） | 06 |
-| 8 | `utils/` 5 个文件、`views/` 35 个文件 0 测试 | **7 个 / 36 个且含 1 个测试**（那个测试正是本篇前文引用的） | 06 |
-| 9 | 附录 A 4 行端点数（合计 110 ≠ 自称 104） | `CaseController` 13 / `RuleController` 13 / `SoarController` 16 / `AuthController` 10 | 01 |
-| 10 | 单事件分支条件 `category == "single"` | **`"single_event"`** | 01 |
-| 11 | 「其余 10 个小类 13–27 各」 | `AlertElasticsearchIndexer` **70 行**、`RuleConfigLoader` **62 行** | 02 |
-| 12 | 待核实 9「影响报错信息中的 selected 值」 | 不一致时抛的是**固定串**，消息里无变量 | 02 |
-
-**错误的三类根因**（这是本轮核证最有价值的产出）：
-
-1. **从间接证据推断**（4 处）—— 用 `find` 推断 git 状态、用代码注释推断取值、用 `CLAUDE.md` 的「重点提到」推断「代码里唯一」、用 docstring 推断实现。
-2. **自相矛盾未自查**（3 处）—— ER 图与本节表格矛盾、`utils`/`views` 计数与同篇引用的 `package.json` 清单矛盾、附录 A 行合计与自称总数矛盾。
-3. **行号系统性偏移**（7 处，同一根因）—— 用 `sed -n 'A,Bp' | grep -n` 再**手工加基址**，算漏一次基址，偏差 299 行。**教训：行号必须用 `grep -n <pattern> <file>` 取绝对值。**
-
-**计数错误与锚点偏移**（约 65 处）已逐一修正，此处不逐条列。
-
-### 3.2 与直觉/旧文档不同的真实形态（逐条）
+### 2.2 与直觉/旧文档不同的真实形态（逐条）
 
 以下 **13 条**是核查中发现的**代码真实形态违反命名直觉**或**与 `CLAUDE.md` / 旧文档表述冲突**的地方。**文档已按代码如实处理**。
 
@@ -223,7 +158,7 @@ node ~/.claude/skills/code-level-architecture-docs/scripts/validate-mermaid.mjs 
 | **`reconcile`** | `DetectionRuntimeService.reconcileDesiredStates` —— 收敛**控制面的运行时视图** | `FlinkRuntimePort.apply/stop` —— 执行**物理部署动作** |
 | **`revision`** | **期望态身份**：`revisionId` 记录「谁部署的」，参与 `sameDesiredState` 判定 | **计划身份**：`planHash` 只看编译产物；`DetectionPlanCompiler.compile(rule, revision)` **显式丢弃** revision 参数 |
 
-### 3.3 核心实现结论表
+### 2.3 核心实现结论表
 
 | 主题 | 结论 | 证据来源 |
 | --- | --- | --- |
@@ -249,9 +184,9 @@ node ~/.claude/skills/code-level-architecture-docs/scripts/validate-mermaid.mjs 
 
 ---
 
-## 四、关键开关与运行模式
+## 三、关键开关与运行模式
 
-### 4.1 SOAR 运行时（`control-api` / `soar-worker`）
+### 3.1 SOAR 运行时（`control-api` / `soar-worker`）
 
 | 开关 | 默认 | 作用 | 证据 |
 | --- | --- | --- | --- |
@@ -267,7 +202,7 @@ node ~/.claude/skills/code-level-architecture-docs/scripts/validate-mermaid.mjs 
 | `app.soar.kafka-bootstrap` | `localhost:9092` | Kafka 引导地址 | `:48` |
 | `app.soar.kafka-sasl-jaas-config` | **空串** | SASL 口令，**未配置即 fail closed** | `:54` |
 
-### 4.2 检测控制（`detection-controller`）
+### 3.2 检测控制（`detection-controller`）
 
 | 开关 | 默认 | 作用 | 证据 |
 | --- | --- | --- | --- |
@@ -280,7 +215,7 @@ node ~/.claude/skills/code-level-architecture-docs/scripts/validate-mermaid.mjs 
 | `app.detection.source-commit` | `working-tree` | 期望态的来源版本标记 | `ManagedDetectionService.java:37` |
 | `app.detection.group-buckets` | `1` | 检测分组桶数 | `control-api/application.properties:41` |
 
-### 4.3 运维任务与进程角色
+### 3.3 运维任务与进程角色
 
 | 开关 | control-api 默认 | soar-worker 默认 | 作用 | 证据 |
 | --- | --- | --- | --- | --- |
@@ -290,7 +225,7 @@ node ~/.claude/skills/code-level-architecture-docs/scripts/validate-mermaid.mjs 
 
 > **⚠️ `CLAUDE.md` §13 的明确警告**：**不要仅依赖 `WebApplicationType` 判断**——`control-api` 与 `soar-worker` 都是 Spring Boot 应用，但 `app.operations.runtime-enabled` 的默认值**相反**。
 
-### 4.4 Flink（环境变量 / system property，system property 优先）
+### 3.4 Flink（环境变量 / system property，system property 优先）
 
 | 变量 | 默认 | 作用 | 证据 |
 | --- | --- | --- | --- |
@@ -308,7 +243,7 @@ node ~/.claude/skills/code-level-architecture-docs/scripts/validate-mermaid.mjs 
 
 > **非法值行为**：`RuntimeTuning.parseLong` **静默回退到默认值**（`RuntimeTuning.java:67-74`），只把**生效值**打到启动日志（`DetectionJob.java:118`）——**不报告哪个变量被忽略了**。
 
-### 4.5 前端（`web/`）
+### 3.5 前端（`web/`）
 
 | 配置 | 值 | 证据 |
 | --- | --- | --- |
@@ -320,81 +255,6 @@ node ~/.claude/skills/code-level-architecture-docs/scripts/validate-mermaid.mjs 
 
 ---
 
-## 五、待核实清单
-
-**64 条待核实项已于 2026-09-22 全部核证完毕**——**全部得到解答**，事实已并入各篇正文；各篇 §「待核实」现只保留核证结论与仍未定项。分布：01×6、02×9、03×10、04×12、05×12、06×15。
-
-### 5.1 最高优先级的 6 条（建议优先取证）
-
-| # | 待核实 | 为什么重要 | 见 |
-| --- | --- | --- | --- |
-| 1 | **`auditSafeConfig` 在各 handler 里剔除哪些字段** | **安全相关**：11 个 handler 各自实现脱敏，漏一个则 secret 进审计表 | 04 篇 §12 |
-| 2 | **`deletePlaybook` 的 TOCTOU 窗口** | `countActiveExecutions` → `deletePlaybook` 两步之间若有并发 `createExecution`，检查失效 | 04 篇 §12 |
-| 3 | **`ElasticsearchGateway` 错误消息是否脱敏** | `:72` 把 `e.getMessage()` 直接放进响应体，可能泄漏 ES 内部路径/连接串 | 03 篇 §10 |
-| 4 | **`related_events` 是否有大小上限** | `WindowRuleFunction.java:73` 无条件放入完整匹配列表，高频攻击下 ES 文档可能极大 | 02 篇 §10 |
-| 5 | **`soar_node_run` 与 `soar_node_execution` 的职责划分** | 两张表都在 V11/V12 建立，分工未取证 | 04 篇 §12 |
-| 6 | **生产环境的 SPA 回落配置** | `createWebHistory()` 要求未匹配路径回落 `index.html`，否则刷新详情页 404 | 06 篇 §4 |
-
-### 5.2 分篇清单
-
-**01 篇（6 条）**：`EventParsingProcessFunction` 时间戳校验细则；两个抑制器的状态保留策略；`SoarGraphRouter` 决策逻辑；四类事件 `occurred_at` 回退规则；`siem-alerts` 双写者冲突率与 409 重试策略；`ElasticsearchGateway` 的两条调用分支。
-
-**02 篇（9 条）**：`RuleConfigLoader.loadEnabled` 是否有生产调用方；`related_events` 上限；`RuntimeTuning` 静默回退的运维告警；`RuleRegistry` 硬编码规则是否仍被测试使用；`severity` 归一化责任归属；抑制状态清理与规则变更的交互；CEP `times` 非首步的启动期校验；基线 `LinkedList` 的序列化效率；`singleEventSuppressionMinutes` 遍历顺序的影响。
-
-**03 篇（10 条）**：`ProductionSafetyValidator` 规则集；`ConfigRevisionJournal` 记录范围；ES 网关错误脱敏；`ElasticsearchClientConfig` 连接池/超时/重试；`TenantContext.DEFAULT_TENANT` 取值与用途；四个子端口的方法集；`CaseMirrorReconcileJob` 与 dispatcher 的分工；45 个测试文件的模块覆盖；`CorsConfig` 的允许源策略；`platform-contracts` 各类的完整方法集。
-
-**04 篇（12 条）**：复数表是否有删除计划；`soar_node_run` / `soar_node_execution` 分工；`deletePlaybook` TOCTOU；`auditSafeConfig` 剔除字段；`SoarTemplateResolver` 语法与失败行为；`SoarConditionEvaluator` 表达式能力；`SoarConnectorRegistry` 注册与白名单；`SoarRetryPolicy.resolve` 合并规则；`SoarBusinessActionExecutor` 与 `SecurityOperationPort` 的适配；`ConnectorAuditSanitizer` 规则集；`SoarValidationContext` 字段构成；`SoarKafkaHealthIndicator` 健康判定。
-
-**05 篇（12 条）**：`ValidationProfile` 的档位集合；`ReconcileState` 阶段与合法迁移；`ControllerPollState` 字段；`observe` 的 fencing 实现；`RuntimeDiff` 比较逻辑；`DetectionRuntimeHealthIndicator` 判定；`DetectionArtifact` 产物形态；`DetectionJobNameCodec` 命名规则；`group-buckets` 作用范围；作业组分配策略；`ProcessFlinkRuntimeConfiguration` 装配细节；`sourceCommit` 生产传值。
-
-**06 篇（15 条）**：SPA 回落配置；`copilotStageD.test.js` 的 Stage D 对应关系；`utils/runtimeUrls.js` 逻辑；Playwright 配置位置；`utils/display.js` 与 `navigation.js` 内容；`landingRoute` 映射表（尤其 `ops`）；`canAccessRoles` 缺省行为；`LogstashConfigGenerator` 是否更新 `pipelines.yml`；TI 富化位置；`infra/auth/users.yaml` 与 `UserStore` 的关系；`infra/SECURITY.md` 内容；`__pycache__/*.pyc` 清理；`elasticsearch.keystore` 是否含敏感内容；`validate-deployment.sh` 校验项；`update-ti.py` 数据来源。
-
----
-
-## 六、阅读顺序建议
-
-**按目的选路径**：
-
-### 路径 A — 理解全貌（约 40 分钟）
-
-1. **本 README** —— 建立索引与可信度判断
-2. **`00`** —— 分层、依赖方向、三进程架构、开关表（**篇首 TL;DR 是整集电梯陈述**）
-3. **`01` §0 主链总览** —— 一张图看完全链路
-4. 按兴趣深挖 `02`–`06`
-
-### 路径 B — 面试 / 技术评审准备（约 2 小时）
-
-1. **`00`** —— 讲清「双平面 + 三进程 + 契约叶节点」
-2. **`01` §4 顺序不变式** —— 最值得讲的一处设计（ES 2xx 才放行生命周期事件）
-3. **`04` §3 执行内核 + §5 fencing** —— durable execution 的完整实现
-4. **`05` §2 期望态边界** —— 「control-api 不拥有物理部署权」
-5. **README §3.2 反直觉真实形态** —— 13 条最容易在评审中被追问的点
-
-### 路径 C — 改代码前必读（按改动类型）
-
-| 要改什么 | 先读 |
-| --- | --- |
-| 加检测规则 | `02` §3（声明→运行时）+ `infra/rules/*.yaml` |
-| 改 Flink 作业拓扑 | `02` §7（**uid 是 savepoint 寻址键**）+ `CLAUDE.md` §关键知识点 8 |
-| 加 SQL / 表 | `03` §3（四件套）+ `03` §7（迁移单一来源）+ `CLAUDE.md` §持久化约定 |
-| 加 HTTP 端点 | `03` §5（异常映射）+ `01` 附录 A |
-| 改 SOAR 节点类型 | `04` §4（11 个 handler + 6 种 Outcome + 契约校验） |
-| 改期望态 / 收敛 | `05` §2 + §4（**门禁必须在每个阶段边界检查**） |
-| 改前端页面 | `06` §1（路由 + 角色 + API 客户端） |
-| 加数据源 | `02` §1（Logstash 双出口）+ `06` §2.4（pipeline 声明） |
-
-### 路径 D — 只关心某一条链路
-
-| 链路 | 读 |
-| --- | --- |
-| 日志 → 告警 | `01` §1–§4 |
-| 告警 → SOAR 执行 | `01` §6 + `04` 全篇 |
-| 案件（PG → ES 镜像） | `01` §5 |
-| 规则部署（期望态 → 实际） | `05` 全篇 |
-| 登录 → 权限 → 租户 | `03` §4 + `06` §1.2 |
-
----
-
 ## 修订记录
 
 | 版本 | 日期 | 变更 | 作者 |
@@ -403,118 +263,3 @@ node ~/.claude/skills/code-level-architecture-docs/scripts/validate-mermaid.mjs 
 
 ---
 
-## 附录：核证记录（2026-09-22）
-
-> 本附录**逐字保留** 2026-09-22 核证修正过程中留在各篇正文里的自我更正叙述与过程性说明，各篇正文只保留结论——读者无需再看「作者当初错在哪」。
-
-
-### 01-端到端关键数据流.md
-
-**（原属：## 待核实）**
-
-> **本节已按 2026-09-22 的核证结果收尾**：6 条**全部已解答**（含 `EventParser.timestampMillis` 才是时间戳判定点、两个抑制器的计窗差异、409 无自动重试且无冲突率指标、`esRequest` 的 gateway 分支生产恒真）。
->
-> **核证方式**：8 个独立核证 agent 逐条读代码取证，每条附 `file:line`；关键结论另经本人独立复核（不径信 agent 输出）。
-
-**（原属：## 附录 A：HTTP 端点全表）**
-
-> **⚠️ 本表初稿有 4 行端点数写错，且行合计 110 ≠ 自称的 104——已按逐文件实测更正**：`CaseController` 13（初稿 15）、`RuleController` 13（初稿 14）、`SoarController` 16（初稿 18）、`AuthController` 10（初稿 11）。**总数 104 与控制器数 16 本身是对的**；错在把 104 拆到各行时的分配。
-
-
-### 02-数据面-Flink检测引擎.md
-
-**（原属：## 1. 关键类与聚合根）**
-
-> **⚠️ 初稿把最后一行写成「13–27 各」，与实测不符**：未列出的 10 个文件里 `AlertElasticsearchIndexer.java` 是 **70 行**、`RuleConfigLoader.java` 是 **62 行**（其余 8 个确在 13–27 区间）。**文件数 30 与总行数 2606、以及表内 20 行的逐行行数都是对的**——错在汇总行的措辞。
-
-**（原属：### 7.1 关键论断）**
-
-> **⚠️ 更严重的一点：这 8 个参数里有 3 个是死参数**（2026-09-22 实证）。`flink/src/main` 与测试中，**`esBatchSize` / `esMaxInFlightRequests` / `esMaxTimeInBufferMs` 从未被读取**（只出现在 `RuntimeTuning` 自身的定义与解析里）；**只有 `esMaxBufferedRequests` 被消费**——`DetectionJob.java:296` 把它传给 `AsyncDataStream.unorderedWait` 的 capacity。
->
-> **所以改那 3 个环境变量不会有任何效果。** README 的开关表把它们描述为「ES 批量大小 / 最大在途 / 缓冲最长时间」，同样未指出这一点。**这再次说明「配置项存在」≠「约束生效」**（对照 00 篇 §4.1 论断 6 的更正：预算上限也只有 4/6 生效）。
-
-**（原属：## 待核实）**
-
-> **本节已按 2026-09-22 的核证结果收尾**：9 条**全部已解答**（含 `loadEnabled` 确为死 API、`related_events` 确无上限、3 个运行参数确为死参数、CEP 的 `times` 被控制面 grammar 拦住但 Flink 侧 lint 不查、基线 `LinkedList` 确走 Kryo 序列化）。
->
-> **核证方式**：8 个独立核证 agent 逐条读代码取证，每条附 `file:line`；关键结论另经本人独立复核（不径信 agent 输出）。
-
-
-### 03-控制面-SpringBoot多模块.md
-
-**（原属：### 3.1 关键论断）**
-
-> **⚠️ 初稿写「唯一一处」是错的**（2026-09-22 实证）：`mybatis.configuration.map-underscore-to-camel-case=false` 出现在**两个**应用的配置里——`control-api`（`application.properties:3`）与 `detection-controller`（`application.properties:3`）；只有 `soar-worker` 未设。`CLAUDE.md` §持久化约定第 5 条只说「detection-controller 里…」，**并未声称唯一**——初稿把「文档重点提到的一处」读成了「代码里唯一的一处」。
-
-**所以受影响的范围比初稿写的大**：`control-api` 与 `detection-controller` **都**要显式维护 `resultMap`。
-
-**（原属：## 待核实）**
-
-> **本节已按 2026-09-22 的核证结果收尾**：10 条**全部已解答**（含 `ProductionSafetyValidator` 的 4 条 fail-closed 规则、`ConfigRevisionJournal` 是工具类不是表、ES 网关的 `e.getMessage()` 虽进 body 但当前无可达泄漏路径、ES 客户端未配连接池/超时/重试、`TenantContext.DEFAULT_TENANT` 的零成员关系自动补建为 default、`CorsConfig` 硬编码两个源）。
->
-> **核证方式**：8 个独立核证 agent 逐条读代码取证，每条附 `file:line`；关键结论另经本人独立复核（不径信 agent 输出）。
-
-
-### 04-SOAR执行子系统.md
-
-**（原属：### 2.1 关键论断）**
-
-> **⚠️ 初稿在此写错**：把 guard 说成「校验租约/版本」。租约/版本校验在**别的语句**（`renewLease` 的 `lease_owner = ? AND version = ?`、`selectLeaseHolders` 的 `FOR UPDATE`）。`SoarStore.finishNode` 的语义是「更新行数 ≠ 1 就抛 `IllegalStateException`」。
-
-**（原属：### 4.1 关键论断）**
-
-> **修正**：00 篇初稿曾写「12 个节点处理器」，**实测为 11 个**。00 篇已按此更正。这是对抗式核查捕获的一处数字错误。
-
-**（原属：### 9.2 表关系）**
-
-> **⚠️ 本图初稿画错了，已按实测更正。** 初稿把 4 张**零代码引用**的表画成了活表（`soar_node_run` / `soar_approval` / `soar_playbook_revisions` / `soar_connector_invocations` 的唯一命中是 V9/V10/V11 建表语句与测试断言）。这与本篇 §9.1 论断 1 自己给出的「`SoarMapper.xml` 只引用 8 张表」**直接矛盾**。
->
-> **已剔除的表共 6 张**（V8 的 `soar_executions` / `soar_step_executions` + V9 的 `soar_execution_events` + V10 的 `soar_playbook_revisions` / `soar_connector_runtime` / `soar_connector_invocations`），外加 V11 遗留的 `soar_node_run` 与 `soar_approval`。
->
-> **本图只画 `SoarMapper.xml` 真正读写的那 8 张表。** 把冻结表画进来会误导读者——**这正是初稿犯的错**。
-
-**（原属：## 待核实）**
-
-> **本节已按 2026-09-22 的核证结果收尾**：12 条**全部已解答**（含复数表零代码引用且无删除迁移、`soar_node_run`→`soar_node_execution` 是 V12 的行级搬迁、`deletePlaybook` 的 TOCTOU 窗口**确认存在且无外层保护**、`auditSafeConfig` **只有 1 个 handler 覆写**（其余 10 个走恒等默认）、模板语法就是 `${path.to.value}` 且无默认值/转义/函数、条件求值纯 AND 且 7 个操作符、`ConnectorAuditSanitizer` 只按 key 名子串匹配不含 value、`SoarKafkaHealthIndicator` 只看 lag 无数值阈值）。
->
-> **核证方式**：8 个独立核证 agent 逐条读代码取证，每条附 `file:line`；关键结论另经本人独立复核（不径信 agent 输出）。
-
-
-### 05-检测控制子系统.md
-
-**（原属：### 7.1 关键论断）**
-
-> **⚠️ 初稿把迁移↔表的归属写错了**（V16 写 7 张、V18 写 1 张）。实测：**V16 建 5 张**（`detection_rule` / `rule_revision` / `detection_plan` / `rule_deployment` / `rule_deployment_history`），**V17 建 4 张**（`detection_job_group` / `rule_job_assignment` / `detection_runtime_manifest` / `rule_runtime_status`），**V18 建 0 张**。**9 张表的总数是对的。**
-
-**（原属：### 7.1 关键论断）**
-
-> **⚠️ 初稿写「全项目唯一」是错的**（2026-09-22 实证）：`control-api` **也**关闭了该配置（`application.properties:3`）。**两个应用都要维护 `resultMap`**，不是只有 detection-controller。
-
-**（原属：## 待核实）**
-
-> **本节已按 2026-09-22 的核证结果收尾**：12 条**全部已解答**（含 `ValidationProfile` 只有 2 档、`ReconcileState` 6 阶段且 `transitionPhase` 是纯 UPDATE 无状态机校验、`observe` 的 fencing 靠 `FOR UPDATE` + 条件式 SQL 三重校验、`RuntimeDiff` 的三类差异且 generationMismatch 也算不同步、产物是**不可变目录树**不是 jar、`jobKey`/作业名的确定性编码、`group-buckets` 影响**作业组粒度**、**无独立调度器**（组键纯确定性派生）、health indicator **恒返回 UP**、`source-commit` 仓库内无脚本人传）。
->
-> **核证方式**：8 个独立核证 agent 逐条读代码取证，每条附 `file:line`；关键结论另经本人独立复核（不径信 agent 输出）。
-
-
-### 06-Web控制台与基础设施.md
-
-**（原属：#### 1.4.1 关键论断）**
-
-> **⚠️ 本段初稿有两处计数错误且自相矛盾**：初稿写「`utils/` 的 5 个文件」「`views/`（35 个文件，0 个测试）」——实测 `utils/` 是 **7** 个文件，`views/` 是 **36** 个文件**且含 1 个测试**（`views/logs/logSearchQuery.test.js`）。**那个测试正是本篇前文引用的 `package.json:9` 清单里的第二项**——所以初稿是自相矛盾的。
-
-**（原属：#### 2.3.1 关键论断）**
-
-> **修正**：00 篇与 01 篇初稿称「三条 Kafka topic」，**实测为四条**。两篇已按此更正。这是对抗式核查捕获的第二处数字错误（第一处是 04 篇的「12 个处理器」应为 11）。
-
-**（原属：### 2.5 Kibana）**
-
-> **⚠️ 初稿写「误提交进版本控制」是错的**（2026-09-22 实证）：这 2 个 `.pyc` **不在版本控制中**——`.gitignore:37` 的 `__pycache__/` 规则命中它们，`git ls-files | grep pyc` 为空。**它们是未跟踪的本地构建产物**，不存在「误提交」。
->
-> **教训**：初稿从 `find` 的结果推断版本控制状态，**没有用 `git ls-files` / `git check-ignore` 验证**。
-
-**（原属：## 待核实）**
-
-> **本节已按 2026-09-22 的核证结果收尾**：15 条**全部已解答**（含仓库内**确无** SPA 回落配置、Stage D 指本仓 `docs/design/copilot-workspace-ux-brief.md`、`runtimeUrls.js` 只导出 `kibanaUrl`、Playwright 配置在 `web/playwright.config.js` 覆盖 5 个 spec、`landingRoute` 是 `role==='ops'?'/health':'/overview'`、`canAccessRoles` **缺省放行**、`LogstashConfigGenerator` 自己不写文件**是 `ActivationCoordinator` 更新 `pipelines.yml`**、TI 富化在主 pipeline 的 `if [source.ip]` 内、`infra/auth/users.yaml` 是**空列表**、`SECURITY.md` 18 行 4 条硬要求、`validate-deployment.sh` 6 组校验、`update-ti.py` 数据源是 AbuseIPDB CSV）。
->
-> **核证方式**：8 个独立核证 agent 逐条读代码取证，每条附 `file:line`；关键结论另经本人独立复核（不径信 agent 输出）。
