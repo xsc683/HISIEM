@@ -22,7 +22,7 @@
 - Flink 检测作业：`flink/src/main/java/`、`flink/src/test/java/`、`flink/pom.xml`；
 - React/Vite 控制台：`web/src/`、`web/package.json`、`web/vite.config.js`；
 - 部署与数据面：`infra/docker-compose.yml`、Logstash pipeline、Kafka 脚本、Elasticsearch 模板、规则和部署脚本；
-- 项目说明：`README.md`、`CLAUDE.md`、`docs/architecture.md`、`docs/deployment.md`、`docs/design-decisions.md`、Story/设计文档；
+- 项目说明：`README.md`、`CLAUDE.md`、`docs/architecture.md`、`docs/deployment.md`、`docs/design/decisions.md`、设计文档；
 - PostgreSQL 模型：`src/main/resources/db/migration/V1__control_plane.sql` 至 `src/main/resources/db/migration/V7__outbox_task_leases.sql`。
 
 未读取或披露 `infra/elasticsearch/config/elasticsearch.keystore` 的内容。仓库中未发现 Gradle、MySQL、Redis、独立后端 `server/` 目录或独立端到端浏览器测试工程；它们不属于当前实现。

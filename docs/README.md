@@ -35,7 +35,7 @@
 
 | 文档 | 适用问题 |
 | --- | --- |
-| [设计决策](design-decisions.md) | 为什么采用 ECS、事件时间、Kafka/Flink checkpoint、YAML 规则和当前部署方式 |
+| [设计决策](design/decisions.md) | 为什么采用 ECS、事件时间、Kafka/Flink checkpoint、YAML 规则和当前部署方式 |
 | [事件与告警 Schema](event-alert-schema.md) | 当前事件、告警、时间字段、处置字段和 ES mapping 约束 |
 | [规则引擎](rule-engine.md) | 如何理解和扩展单事件、窗口、CEP、基线检测 |
 | [Managed detection runtime Phase 5A/5B](design/managed-detection-runtime.md) | detection controller 的 claim/lease/fencing、immutable artifact、Flink process adapter、real observed state、adapter 模式与 5B 限制 |
@@ -53,7 +53,7 @@
 
 ## 代码级证据层
 
-[`architecture-analysis/`](architecture-analysis/README.md) 是**代码级取证层**：7 篇（`00`–`06`）按子系统记录 `file:line` 锚点、反直觉的真实形态和边界，回答的是「代码真的是这样吗」。
+[`evidence/architecture-analysis/`](evidence/architecture-analysis/README.md) 是**代码级取证层**：7 篇（`00`–`06`）按子系统记录 `file:line` 锚点、反直觉的真实形态和边界，回答的是「代码真的是这样吗」。
 
 它**不是契约，也不是入门材料**：权威仍在[产品契约](product-contract.md)、[系统架构](architecture.md) 和代码本身；与契约冲突时以契约为准，而**代码是最终事实**。想快速建立整体认知，先读[入门指引](guide/01-这个系统在解决什么问题.md) 或[架构总览](architecture-overview.md)。
 
@@ -71,7 +71,7 @@
 
 ## Story 迁移
 
-原 `docs/story/story-01` 至 `story-10` 及模板均已删除，因为它们重复 API/路由/状态并产生多份互相矛盾的契约。迁移说明和不复制 API 的新增验收记录见 [`story/README.md`](story/README.md)，当前接口统一在[产品契约](product-contract.md)。
+`docs/story/` **已整体删除**（含 `story-01`–`story-11` 与模板）：它们重复 API、路由和状态，产生多份互相矛盾的契约。当前接口统一在[产品契约](product-contract.md)，验收路径在[部署](deployment.md)与[运维](operations.md)。
 
 ## 审计与历史材料
 

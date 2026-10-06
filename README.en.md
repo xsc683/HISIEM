@@ -415,7 +415,7 @@ control plane / boundaries).
 
 **If you want the engineering depth:** [`docs/architecture-deep-dive.md`](docs/architecture-deep-dive.md)
 is the full technical walkthrough (configuration compilation, stream processing,
-reliability, security, frontend). [`docs/design-decisions.md`](docs/design-decisions.md)
+reliability, security, frontend). [`docs/design/decisions.md`](docs/design/decisions.md)
 covers the *why* behind the major choices.
 
 | Goal | Document |
@@ -430,7 +430,7 @@ covers the *why* behind the major choices.
 | Security hardening gates | [`docs/design/security-rbac.md`](docs/design/security-rbac.md) |
 | **Entry guide** (project-first) | [`docs/guide/`](docs/guide/01-这个系统在解决什么问题.md) |
 | Index of the design reference set | [`docs/design/README.md`](docs/design/README.md) |
-| **Code-level evidence layer** | [`docs/architecture-analysis/`](docs/architecture-analysis/README.md) — per-subsystem `file:line` forensics; not a contract, and the contract wins on conflict |
+| **Code-level evidence layer** | [`docs/evidence/architecture-analysis/`](docs/evidence/architecture-analysis/README.md) — per-subsystem `file:line` forensics; not a contract, and the contract wins on conflict |
 | Concepts and experiments | [`docs/learn/`](docs/learn/README.md) |
 | History / audit material | [`docs/archive/`](docs/archive/README.md) |
 | Agent conventions | [`AGENTS.md`](AGENTS.md) / [`CLAUDE.md`](CLAUDE.md) |

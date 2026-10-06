@@ -78,7 +78,7 @@ HISIEM 已完成检测链路、控制面、接入向导、告警处置、调查�
 
 - “现在是什么”：先看本页、[架构](architecture.md)和[运维手册](operations.md)。
 - “怎么部署”：看[部署指南](deployment.md)；不要从 Story 或学习文档复制部署命令。
-- “为什么这样设计”：看[设计决策](design-decisions.md)和 `docs/design/`。
+- “为什么这样设计”：看[设计决策](design/decisions.md)和 `docs/design/`。
 - “怎么验收一个功能”：看[当前产品契约](product-contract.md)；它是当前验收契约，不复制历史 Story 长文。
 - “怎么学习组件”：看 `docs/learn/`；学习文档允许保留简化示例，不替代生产配置。
 - “历史审计证据”：看 [`archive/architecture-audit-2026-08.md`](archive/architecture-audit-2026-08.md)。它保留分析过程和风险证据，不作为日常入口。

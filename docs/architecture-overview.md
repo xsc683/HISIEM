@@ -239,7 +239,7 @@ platform's web application. The Copilot repository contains no frontend.
 |---|---|
 | Data/control plane detail and boundaries | [`architecture.md`](architecture.md) |
 | Full technical walkthrough | [`architecture-deep-dive.md`](architecture-deep-dive.md) |
-| Why these choices were made | [`design-decisions.md`](design-decisions.md) |
+| Why these choices were made | [`design/decisions.md`](design/decisions.md) |
 | Detection engine and rule authoring | [`rule-engine.md`](rule-engine.md) |
 | Event and alert schema, ES mappings | [`event-alert-schema.md`](event-alert-schema.md) |
 | SOAR execution chain | [`soar.md`](soar.md), [`design/soar-runtime-architecture.md`](design/soar-runtime-architecture.md) |

@@ -357,7 +357,7 @@ cd web && npx playwright test
 
 **如果你有 30 分钟：** 加上 [`docs/architecture.md`](docs/architecture.md)（数据面 / 控制面 / 边界）。
 
-**如果你想要工程深度：** [`docs/architecture-deep-dive.md`](docs/architecture-deep-dive.md) 是完整的技术走查（配置编译、流处理、可靠性、安全、前端）。[`docs/design-decisions.md`](docs/design-decisions.md) 覆盖主要选择背后的 *为什么*。
+**如果你想要工程深度：** [`docs/architecture-deep-dive.md`](docs/architecture-deep-dive.md) 是完整的技术走查（配置编译、流处理、可靠性、安全、前端）。[`docs/design/decisions.md`](docs/design/decisions.md) 覆盖主要选择背后的 *为什么*。
 
 日常先看[当前状态](docs/current-status.md)，再按目标选择部署、运行、架构或产品契约文档；专项设计和学习资料作为深入参考。
 
@@ -380,7 +380,7 @@ cd web && npx playwright test
 | [docs/agent-integration.md](docs/agent-integration.md) | 从告警/案件详情启动 HISIEM-SOC-Copilot 的服务端代理 |
 | [docs/guide/](docs/guide/01-这个系统在解决什么问题.md) | **入门指引**（项目优先）：这个系统在解决什么问题 → 一条日志的完整旅程 → 从告警到处置决策 |
 | [docs/design/README.md](docs/design/README.md) | `docs/design/` 专项参考的索引（分工、状态规则、使用边界） |
-| [docs/architecture-analysis/](docs/architecture-analysis/README.md) | **代码级证据层**：按子系统的 `file:line` 取证与反直觉形态；不是契约，冲突时以契约为准 |
+| [docs/evidence/architecture-analysis/](docs/evidence/architecture-analysis/README.md) | **代码级证据层**：按子系统的 `file:line` 取证与反直觉形态；不是契约，冲突时以契约为准 |
 | [docs/learn/README.md](docs/learn/README.md) | 从 SIEM 基础到 Kafka/ES/Flink/Logstash 的学习地图 |
 | [docs/archive/](docs/archive/README.md) | 历史 / 审计资料 |
 | [AGENTS.md](AGENTS.md) / [CLAUDE.md](CLAUDE.md) | 面向 AI 编码助手的仓库约定（英文 / 中文） |
