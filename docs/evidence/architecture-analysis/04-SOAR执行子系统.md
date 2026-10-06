@@ -897,43 +897,6 @@ public void publish(LifecycleEvent event) {
 
 **`enabled` 来自 `app.soar.runtime-enabled`**（`LifecycleEventPublisher.java:33`，默认 `true`）。**静默**——不报错、不计数。这与 01 篇 §6.1 论断 8 是同一条观察。
 
-### 8.2 事件产生与投递
-
-```mermaid
----
-config:
-  theme: base
-  themeVariables:
-    fontFamily: YaHei
----
-flowchart TB
-    subgraph CP["control-api"]
-        ACT["人工改告警状态<br/>AlertService"]
-        CASE["案件变更<br/>CaseService"]
-        LF["LifecycleEventFactory<br/>alert / caseEvent"]
-    end
-    PUB["LifecycleEventPublisher<br/>implements LifecycleEventPort"]
-    EN{"enabled?<br/>app.soar.runtime-enabled"}
-    DROP["静默返回"]
-    OB[("lifecycle outbox 表<br/>V19")]
-    DISP["LifecycleOutboxDispatcher<br/>@Scheduled 每 5s"]
-    K["Kafka<br/>topicFor(objectType)"]
-    KC["soar-worker<br/>SoarKafkaConsumer"]
-
-    ACT --> LF
-    CASE --> LF
-    LF --> PUB --> EN
-    EN -->|false| DROP
-    EN -->|true| OB
-    OB --> DISP --> K --> KC
-
-    style EN fill:#e8f4ea,stroke:#4a7c59
-    style OB fill:#e8f4ea,stroke:#4a7c59
-    style DROP fill:#fdf0e6,stroke:#b8763e
-```
-
----
-
 ## 9. 持久化：单数运行时与冻结的复数表
 
 ### 9.1 关键论断
