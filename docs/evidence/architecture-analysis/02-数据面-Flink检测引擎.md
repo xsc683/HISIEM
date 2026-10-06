@@ -98,31 +98,9 @@ classDiagram
     WindowRuleFunction --> WindowAlertSuppressor
 ```
 
-**规模实测**（`wc -l`）：
+**读法**：上半部分是**模型类**（`RuleDecl` → `RuleBuilder` → `Rule` / `WindowRule` / `RuleMeta`，条件统一落到 `Condition` 接口）；下半部分是**算子类**（解析、四类检测函数、两个抑制器、清单校验）。两条链的接口就是 §3 的声明到运行时转换与 §4 的四类分支。
 
-| 文件 | 行数 | 角色 |
-| --- | --- | --- |
-| `DetectionJob.java` | 482 | 作业装配（唯一 `main`） |
-| `RuntimeManifestVerifier.java` | 159 | 运行清单校验 |
-| `WindowRule.java` | 156 | 窗口规则模型（5 个重载构造） |
-| `BaselineAnomalyFunction.java` | 154 | 基线异常检测 |
-| `WindowAlertSuppressor.java` | 129 | 窗口告警抑制 |
-| `DetectionJobArguments.java` | 123 | 启动参数解析 |
-| `BruteforceSuccessFunction.java` | 108 | CEP 攻击链 |
-| `config/RuleDecl.java` | 102 | YAML 声明模型 |
-| `AlertSuppressor.java` | 100 | 单事件告警抑制 |
-| `AlertLifecycleEventMapper.java` | 99 | 生命周期契约映射 |
-| `config/RuleBuilder.java` | 89 | 声明 → 运行时 |
-| `Rule.java` | 86 | 单事件规则模型 |
-| `RuleRegistry.java` | 78 | 规则注册表 |
-| `WindowRuleFunction.java` | 77 | 窗口求值 |
-| `config/RuntimeTuning.java` | 75 | 运行参数 |
-| `EventParsingProcessFunction.java` | 74 | 解析 + DLQ |
-| `DetectionFunction.java` | 72 | 单事件求值 |
-| `EventParser.java` | 57 | JSON → 扁平字段 |
-| `Event.java` | 48 | 流元素 POJO |
-| `Ocsf.java` | 43 | OCSF 输出侧视图 |
-| 其余 10 个小类 | 13–27 各，**但有两个例外** | 条件实现 + 声明嵌套类 + **`AlertElasticsearchIndexer.java`（70 行）与 `RuleConfigLoader.java`（62 行）** |
+> 各文件的行数与清单不再列出——那是构建产物级别的统计，不是论断的依据。
 
 ---
 
@@ -132,17 +110,7 @@ classDiagram
 
 **论断 1：点分字段被显式展开为扁平 key——因为 Logstash 输出的是嵌套对象。**
 
-```java
-// EventParser.java:9-14（类注释）
-/**
- * 事件解析:将 Kafka 中的事件 JSON 解析为扁平点分字段 Map,并提取事件时间戳。
- *
- * Logstash json codec 输出的点分字段(如 source.ip)可能是嵌套对象
- * ({"source":{"ip":...}}),统一展开为扁平 key (source.ip),便于规则按字段名匹配。
- */
-```
-
-展开逻辑是递归的，且**只在遇到 `Map` 时下钻**：
+`EventParser.java:9-14` 类注释说明：Logstash `json` codec 输出的点分字段（如 `source.ip`）可能是嵌套对象（`{"source":{"ip":...}}`），统一展开为扁平 key，便于规则按字段名匹配。
 
 ```java
 // EventParser.java:46-56
@@ -153,88 +121,35 @@ private static void flatten(String prefix, Map<String, Object> map, Map<String, 
         if (value instanceof Map) {
             flatten(key, (Map<String, Object>) value, out);
         } else {
-            out.put(key, value); // List 等复杂类型原样保留
+            out.put(key, value);   // List 等复杂类型原样保留
         }
     }
 }
 ```
 
-**注意 `List` 不下钻**（`:53` 注释明说「List 等复杂类型原样保留」）。这是有意的：`related_events`、`tags` 这类数组要保持结构。
+**递归只在遇到 `Map` 时下钻**（`:53` 注释明说「List 等复杂类型原样保留」）——`related_events`、`tags` 这类数组要保持结构。
 
 **论断 2：解析失败有两种原因，都抛 `IllegalArgumentException`，且消息含原始值。**
 
-```java
-// EventParser.java:35-44
-private static long timestampMillis(Object ts) {
-    if (ts == null) {
-        throw new IllegalArgumentException("事件缺少 @timestamp");
-    }
-    try {
-        return Instant.parse(ts.toString()).toEpochMilli();
-    } catch (Exception e) {
-        throw new IllegalArgumentException("事件 @timestamp 不是 ISO-8601 时间: " + ts, e);
-    }
-}
-```
+`EventParser.java:35-44` 的 `timestampMillis`：`@timestamp` 为 `null` 时抛「事件缺少 @timestamp」；`Instant.parse` 失败时抛「事件 @timestamp 不是 ISO-8601 时间: 」+ 原值。**时间戳必须可解析才能进主链**——这是事件时间语义的前提。
 
-**两种失败**：缺 `@timestamp`、或 `@timestamp` 不是 ISO-8601。**时间戳必须可解析才能进主链**——这是事件时间语义的前提。
+**论断 3：毒消息不是重启作业，而是转成可观测记录。**
 
-**论断 3：毒消息不进 DLQ 就重启作业，而是转成可观测记录。**
-
-```java
-// EventParsingProcessFunction.java:14（类注释）
-/** Converts poison input records into an observable Kafka DLQ instead of restarting the Flink job. */
-```
-
-```java
-// EventParsingProcessFunction.java:22-30
-@Override
-public void processElement(String value, Context context, Collector<Event> output) {
-    ParseOutcome outcome = parse(value);
-    if (outcome.event() != null) {
-        output.collect(outcome.event());
-    } else {
-        context.output(DLQ, outcome.dlqRecord());
-    }
-}
-```
+`EventParsingProcessFunction.java:14` 类注释：*「Converts poison input records into an observable Kafka DLQ instead of restarting the Flink job.」*。实现是 `processElement` 里二选一（`:22-30`）：解析成功 `output.collect(outcome.event())`，否则 `context.output(DLQ, outcome.dlqRecord())`。
 
 **论断 4：DLQ 记录自身有界且有身份——两个上限 + 一个内容哈希。**
 
-```java
-// EventParsingProcessFunction.java:19-20
-private static final int MAX_ORIGINAL_CHARS = 65_536;
-private static final int MAX_ERROR_CHARS = 2_048;
-```
-
-```java
-// EventParsingProcessFunction.java:46-53
-Map<String, Object> record = new LinkedHashMap<>();
-record.put("@timestamp", Instant.now().toString());
-record.put("dlq.id", sha256(original == null ? "<null>" : original));
-record.put("dlq.stage", "flink.event-parser");
-record.put("dlq.error_type", error.getClass().getName());
-record.put("dlq.error_message", errorMessage);
-record.put("event.original", safeOriginal);
-record.put("event.original_truncated", truncated);
-```
-
-**三个设计点值得单独看**：
+上限是 `MAX_ORIGINAL_CHARS = 65_536` 与 `MAX_ERROR_CHARS = 2_048`（`EventParsingProcessFunction.java:19-20`）；记录字段是 `dlq.id`、`dlq.stage`、`dlq.error_type`、`dlq.error_message`、`event.original`、`event.original_truncated`（`:46-53`）。三个设计点：
 
 | 点 | 说明 |
 | --- | --- |
 | `dlq.id = sha256(原始串)` | **同一条坏消息重复投递产生同一个 id** → DLQ 消费方可以据此去重 |
 | `dlq.stage = "flink.event-parser"` | 标明失败发生在**哪一段**——DLQ 可被多个阶段共用 |
-| `event.original_truncated` | **截断是显式标记的**，不是静默丢数据（对比：Flink 侧截断有标记） |
+| `event.original_truncated` | **截断是显式标记的**，不是静默丢数据 |
 
 **论断 5：`OutputTag` 是静态常量，uid 由作业侧绑定。**
 
-```java
-// EventParsingProcessFunction.java:17
-public static final OutputTag<String> DLQ = new OutputTag<String>("siem-event-parser-dlq") { };
-```
-
-`DetectionJob` 用 `.uid("event-parser-dlq-kafka")` 绑定到 Kafka sink（`DetectionJob.java:167`）。
+`EventParsingProcessFunction.java:17` 定义 `public static final OutputTag<String> DLQ = new OutputTag<String>("siem-event-parser-dlq") { }`；`DetectionJob` 用 `.uid("event-parser-dlq-kafka")` 把它绑到 Kafka sink（`DetectionJob.java:167`）。
 
 ## 3. 规则模型：声明 → 运行时
 
@@ -242,134 +157,42 @@ public static final OutputTag<String> DLQ = new OutputTag<String>("siem-event-pa
 
 **论断 1：规则声明的单一来源是 `infra/rules/*.yaml`，共 6 条。**
 
-实测 `ls infra/rules/`：`rule-auth-rate-anomaly-001`、`rule-common-user-bruteforce-001`、`rule-root-login-failure-001`、`rule-ssh-auth-failure-001`、`rule-ssh-brute-force-001`、`rule-ssh-bruteforce-success-001`。
+实测 `ls infra/rules/`：`rule-auth-rate-anomaly-001`、`rule-common-user-bruteforce-001`、`rule-root-login-failure-001`、`rule-ssh-auth-failure-001`、`rule-ssh-brute-force-001`、`rule-ssh-bruteforce-success-001`。`config/RuleDecl.java:9` 类注释把自己的定位写死了：*「检测规则声明(infra/rules/*.yaml,检测即代码的单一来源)」*。
 
-`RuleDecl` 类注释写明定位：*「检测规则声明(infra/rules/*.yaml,检测即代码的单一来源)」*（`config/RuleDecl.java:9`）。
-
-**论断 2：`category` 决定走哪条分支，四类互斥。**
-
-```java
-// config/RuleDecl.java:11-17（类注释）
- * 四种类型(type):
- * - single_event:单事件条件匹配(condition)→ 复用 Rule/DetectionFunction
- * - window:窗口计数(keyField 分组,windowMinutes 窗口内 condition 命中数 ≥ threshold)→ 复用 WindowRule
- * - cep:序列关联(cep.pattern)→ 构建 Flink CEP Pattern
- * - baseline:统计基线异常(baseline 参数)→ 复用 BaselineAnomalyFunction
- *
- * enabled=false 时 Flink 启动不注册该规则(启停 = 改 enabled → deploy → 重启 job)。
-```
-
-**注意 `category` 与 `type` 是两个不同字段**：
+**论断 2：`category` 决定走哪条分支（四类互斥），它与 `type` 是两个不同字段。**
 
 | 字段 | 作用 | 示例值 |
 | --- | --- | --- |
 | `category` | **分支依据**（走哪个算子） | `window` |
 | `type` | **告警的 `alert.type`** | `ssh_brute_force` |
 
-`RuleDecl.java:25-27` 的注释分得很清楚：`category` 是「规则类别(分支依据)」，`type` 是「告警 type(如 ssh_authentication_failure / ssh_bruteforce_success),进 alert.type」。
+`RuleDecl.java:11-17` 列明四类：`single_event`（条件匹配）、`window`（窗口内命中数 ≥ threshold）、`cep`（序列）、`baseline`（统计基线）。`:25-27` 的注释把两个字段分开写：`category` 是「规则类别(分支依据)」，`type` 是「告警 type(如 ssh_authentication_failure / ssh_bruteforce_success),进 alert.type」。
 
-**论断 3：启停是「改 YAML + 重新部署 + 重启 job」——不是运行时热开关。**
+**论断 3：启停是「改 YAML + 重新部署 + 重启 job」，不是运行时热开关。**
 
-`RuleDecl.java:17` 写明：*「启停 = 改 enabled → deploy → 重启 job」*。`RuleConfigLoader.loadEnabled` 只返回 `enabled=true` 的：
-
-```java
-// config/RuleConfigLoader.java:58-61
-/** 仅返回 enabled=true 的规则(启动注册依据)。 */
-public List<RuleDecl> loadEnabled(String dir) {
-    return loadDir(dir).stream().filter(d -> d.enabled).toList();
-}
-```
-
-> **但 `DetectionJob` 实际用的是 `loadDir` 再自己 filter**（`DetectionJob.java:119,122`），`loadEnabled` 未被主流程调用——**这是「提供了但没用上」的 API**，属于可清理项，记录在 §9 待核实。
+`RuleDecl.java:17`：*「启停 = 改 enabled → deploy → 重启 job」*。`RuleConfigLoader.loadEnabled`（`config/RuleConfigLoader.java:58-61`）只返回 `enabled=true` 的规则，**但 `DetectionJob` 实际用的是 `loadDir` 再自己 filter**（`DetectionJob.java:119,122`）——**`loadEnabled` 是一个「提供了但没被主流程调用」的 API**。
 
 **论断 4：加载期校验很硬——目录不存在、目录为空、id 为空、id 重复都会抛异常。**
 
-```java
-// config/RuleConfigLoader.java:27-56（节选）
-public List<RuleDecl> loadDir(String dir) {
-    Path d = Path.of(dir);
-    if (!Files.isDirectory(d)) {
-        throw new IllegalStateException("规则目录不存在: " + dir);
-    }
-    ...
-                if (declaration == null || declaration.id == null || declaration.id.isBlank()) {
-                    throw new IllegalStateException("规则 ID 为空: " + f.getName());
-                }
-                if (!ids.add(declaration.id)) {
-                    throw new IllegalStateException("规则 ID 重复: " + declaration.id);
-                }
-    ...
-    if (decls.isEmpty()) {
-        throw new IllegalStateException("规则目录为空: " + dir);
-    }
-    return decls;
-}
-```
+`config/RuleConfigLoader.java:27-56`：`!Files.isDirectory(d)` → 「规则目录不存在」；id 为 `null` 或空白 → 「规则 ID 为空」；id 重复 → 「规则 ID 重复」；`decls.isEmpty()` → 「规则目录为空」。
 
-**「目录为空也抛异常」是 fail-fast 的关键一条**：避免作业以「零规则」的静默状态启动——那样会看起来一切正常却完全无检测能力。
+**「目录为空也抛异常」是 fail-fast 的关键一条**：避免作业以「零规则」的静默状态启动——那样会看起来一切正常却完全无检测能力。文件按**文件名排序**加载（`:35` `Arrays.sort(files, Comparator.comparing(File::getName))`），保证加载顺序确定。
 
-文件按**文件名排序**加载（`:35` `Arrays.sort(files, Comparator.comparing(File::getName))`），保证加载顺序确定。
+**论断 5：条件声明递归支持嵌套，共 5 种类型。**
 
-**论断 5：条件声明递归支持嵌套，5 种类型。**
-
-```java
-// config/RuleBuilder.java:54-77
-/** 条件声明 → Condition 接口实现(递归支持 all/any/not 嵌套)。 */
-public static Condition buildCondition(RuleDecl.ConditionSpec spec) {
-    if (spec == null) {
-        throw new IllegalArgumentException("规则缺少 condition");
-    }
-    return switch (spec.type) {
-        case "field_equals" -> new FieldEqualsCondition(spec.field, spec.value);
-        case "field_in" -> { ... new FieldInCondition(spec.field, spec.values.toArray()); }
-        case "all" -> new AllCondition(subConditions(spec, "all"));
-        case "any" -> new AnyCondition(subConditions(spec, "any"));
-        case "not" -> {
-            if (spec.conditions == null || spec.conditions.size() != 1) {
-                throw new IllegalArgumentException("not 条件需要恰好一个子条件");
-            }
-            yield new NotCondition(buildCondition(spec.conditions.get(0)));
-        }
-        default -> throw new IllegalArgumentException("未知条件类型: " + spec.type);
-    };
-}
-```
-
-**`not` 强制恰好一个子条件**（`:70-72`）——多子条件的 `not` 语义有歧义（NOT(a AND b) 还是 NOT(a) AND NOT(b)？），所以直接拒绝。
+`config/RuleBuilder.java:54-77` 的 `buildCondition` 用 switch 分发：`field_equals`、`field_in`、`all`、`any`、`not`，未知类型抛异常。**`not` 强制恰好一个子条件**（`:70-72`）——多子条件的 `not` 语义有歧义（`NOT(a AND b)` 还是 `NOT(a) AND NOT(b)`？），所以直接拒绝。
 
 **论断 6：`window` 规则的三参数是强制的，缺失即抛异常。**
 
-```java
-// config/RuleBuilder.java:33-35
-if (d.keyField == null || d.windowMinutes == null || d.threshold == null) {
-    throw new IllegalArgumentException("window 规则缺少 keyField/windowMinutes/threshold: " + d.id);
-}
-```
+`config/RuleBuilder.java:33-35`：`keyField` / `windowMinutes` / `threshold` 任一为 `null` 即抛异常。
 
-**论断 7：`WindowRule` 的抑制时长默认回退到窗口长度，且有 5 个重载构造。**
+**论断 7：`WindowRule` 的抑制时长默认回退到窗口长度。**
 
-```java
-// WindowRule.java:84-87
-long suppression = alertSuppressionMinutes == null ? windowMinutes : alertSuppressionMinutes;
-if (suppression <= 0) {
-    throw new IllegalArgumentException("alertSuppressionMinutes 必须 > 0: " + id);
-}
-```
+`WindowRule.java:84-87`：`alertSuppressionMinutes == null ? windowMinutes : alertSuppressionMinutes`，且 `<= 0` 抛异常。**「抑制时长缺省 = 窗口长度」是个合理默认**：窗口 5 分钟，抑制也 5 分钟。
 
-**「抑制时长缺省 = 窗口长度」是个合理默认**：窗口 5 分钟，抑制也 5 分钟。
+**论断 8：`RuleMeta` 专门服务无法用 `Rule` 表达的分支。**
 
-**论断 8：`type` 与 `Rule` 的元数据分工——`RuleMeta` 专门服务无法用 `Rule` 表达的分支。**
-
-```java
-// RuleMeta.java:6-10（类注释）
-/**
- * 规则元数据(告警输出用),由 RuleDecl 构建,
- * 传给 CEP(BruteforceSuccessFunction)与基线(BaselineAnomalyFunction)等
- * 无法直接用 Rule 表达的函数。
- */
-```
-
-**这是「模型跟着分支形态走」的例子**：单事件规则需要 `condition`（`Rule` 有），窗口规则需要 `keyField`+`threshold`（`WindowRule` 有），而 CEP 与基线的判定逻辑完全在算子内部（Pattern 与 μ+3σ），所以只需要元数据——于是有了 `RuleMeta`。
+`RuleMeta.java:6-10` 类注释：元数据由 `RuleDecl` 构建，传给 CEP（`BruteforceSuccessFunction`）与基线（`BaselineAnomalyFunction`）等**无法直接用 `Rule` 表达的函数**。**这是「模型跟着分支形态走」**：单事件规则需要 `condition`（`Rule` 有），窗口规则需要 `keyField` + `threshold`（`WindowRule` 有），而 CEP 与基线的判定逻辑完全在算子内部（Pattern 与 μ+3σ），只需要元数据——于是有了 `RuleMeta`。
 
 ### 3.2 声明到运行时的转换图
 
@@ -416,128 +239,37 @@ flowchart LR
 
 **论断 1：单事件规则是「逐条事件 × 逐条规则」的双层循环——没有索引。**
 
-```java
-// DetectionFunction.java:27-35
-@Override
-public void flatMap(Event event, Collector<String> out) throws Exception {
-    Map<String, Object> fields = event.getFields();
-    for (Rule rule : registry.getRules()) {
-        if (rule.getCondition().matches(fields)) {
-            out.collect(MAPPER.writeValueAsString(buildAlert(event.getRawJson(), fields, rule)));
-        }
-    }
-}
-```
+`DetectionFunction.java:27-35`：`flatMap` 对 `registry.getRules()` 逐条 `rule.getCondition().matches(fields)`。**复杂度 O(事件数 × 规则数)**，且 `RuleRegistry` 只支持整表替换（`RuleRegistry.java:22` 构造传入）。当前 6 条规则下这不是问题；规则数上千时需要重新设计。
 
-**复杂度是 O(事件数 × 规则数)**，且 `RuleRegistry` 只支持整表替换（`RuleRegistry.java:22` 构造传入）。当前 6 条规则下这不是问题；规则数上千时需要重新设计。记录在 §9。
+> `RuleRegistry` 里还有一份**硬编码的 3 条 SSH 规则构造**（`RuleRegistry.java:27-73`），注释标明「历史测试用;生产走 YAML 加载」。**生产路径不经过它**——`DetectionJob` 用 `RuleBuilder` 从 `RuleDecl` 构建。
 
-> **`RuleRegistry` 还有一个硬编码构造**（`RuleRegistry.java:27-73`，3 条 SSH 规则），注释标明「默认(硬编码 3 条,历史测试用;生产走 YAML 加载)」。**生产路径不经过它**——`DetectionJob` 用 `RuleBuilder` 从 `RuleDecl` 构建 `Rule` 列表。
+**论断 2：告警是「关键字段提升 + 完整事件存字符串」——决策 D。**
 
-**论断 2：告警结构是「关键字段提升 + 完整事件存字符串」——决策 D。**
-
-```java
-// DetectionFunction.java:14-15（类注释）
- * 告警为扁平结构(决策 D):关键事件字段提升到告警顶层,完整事件存为扁平字符串 event.raw。
-```
-
-提升的字段是**白名单**（`DetectionFunction.java:53-59`）：
-
-```java
-promote(alert, event, "log.source_id");
-promote(alert, event, "log.source_name");
-promote(alert, event, "source.ip");
-promote(alert, event, "user.name");
-promote(alert, event, "host.name");
-promote(alert, event, "event.action");
-promote(alert, event, "event.category");
-alert.put("event.raw", rawJson);
-alert.put("event_count", 1);
-```
-
-**为什么这样设计**：ES 里查告警时不必 nested 查询就能按 `source.ip` 过滤（顶层字段可索引），同时 `event.raw` 保留了完整原始上下文。
+`DetectionFunction.java:14-15` 类注释点明结构。提升的是**白名单**（`:53-59`）：`log.source_id`、`log.source_name`、`source.ip`、`user.name`、`host.name`、`event.action`、`event.category`，再把完整 JSON 存进 `event.raw`、`event_count = 1`。**为什么这样设计**：ES 里查告警时不必 nested 查询就能按 `source.ip` 过滤（顶层字段可索引），同时 `event.raw` 保留完整原始上下文。
 
 **论断 3：`alert.id` 是随机 UUID——它只是展示标识，不参与身份判定。**
 
-```java
-// DetectionFunction.java:43
-alert.put("alert.id", UUID.randomUUID().toString());
-```
+四处生成告警的函数都写 `alert.put("alert.id", UUID.randomUUID().toString())`（`DetectionFunction.java:43`、`WindowRuleFunction.java:50`、`BruteforceSuccessFunction.java:78`、`BaselineAnomalyFunction.java:135`）。**真正的身份是 `DetectionJob.alertId` 算出的 sha1**（见 01 篇 §2 论断 3）。这个「双 id」设计在 `AlertLifecycleEventMapper.java:25-27` 有显式注释警告。
 
-四处生成告警的函数都这样写（`DetectionFunction.java:43`、`WindowRuleFunction.java:50`、`BruteforceSuccessFunction.java:78`、`BaselineAnomalyFunction.java:135`）。**真正的身份是 `DetectionJob.alertId` 算出的 sha1**（见 01 篇 §2.1 论断 3）。这个「双 id」设计在 `AlertLifecycleEventMapper.java:25-27` 有显式注释警告。
+**论断 4：窗口规则的实体是显式写入的，正是它为确定性 ID 提供了输入。**
 
-**论断 4：窗口规则的实体是显式写入的，且为确定性 ID 提供了输入。**
+`WindowRuleFunction.java:57-63` 除 `alert.put(rule.getKeyField(), key)` 外还写 `alert.put("alert.entity", key)`，注释写明「窗口规则的分组字段可能是 source.ip/host.name/自定义字段,显式记录实体供下游去重和 ES 确定性 _id 使用」。
 
-```java
-// WindowRuleFunction.java:57-63
-// 窗口规则的分组字段可能是 source.ip/host.name/自定义字段,
-// 显式记录实体供下游去重和 ES 确定性 _id 使用。
-alert.put("alert.entity", key);
-...
-alert.put(rule.getKeyField(), key);
-```
+**这是关键的一处**：窗口的 `keyField` 可以是任意字段，而 `alertId` 的实体优先级链第一项就是 `alert.entity`——所以窗口告警**无论 keyField 是什么都能得到稳定身份**。**反过来看单事件**：`DetectionFunction` **不写 `alert.entity`**，只 promote `source.ip` / `user.name`，所以单事件告警的身份回退到 `source.ip` → `user.name`。两个分支的解析路径不同，但收敛到同一套 `alertId` 逻辑——这是 §8 不变式 3 能成立的原因。
 
-**这是关键的一处**：窗口规则的 `keyField` 可以是任意字段（`source.ip` / `host.name` / 自定义）。`alertId` 的实体优先级链第一项就是 `alert.entity`——所以窗口告警**无论 keyField 是什么，都能得到稳定身份**。
+**论断 5：窗口的 `event_count` 是条件命中数而非窗口内事件总数；`related_events` 是命中项的完整快照，且无上限。**
 
-**反过来看单事件规则**：`DetectionFunction` **不写 `alert.entity`**，只 promote `source.ip` / `user.name`。所以单事件告警的身份回退到 `source.ip` → `user.name`。
+`WindowRuleFunction.java:33-41` 先只把 `condition` 命中的事件收进 `matched`，再判 `matched.size() >= rule.getThreshold()`。所以**不匹配的事件不计数**——一条窗口规则可以复用同一个 `keyBy` 分区而只数自己关心的动作。产出时 `alert.put("event_count", matched.size())`、`alert.put("related_events", matched)`（`:72-73`），**`related_events` 没有截断**：窗口 5 分钟 + 攻击者高频重试时可能很大。这是**有意的取舍**（保留完整攻击叙事），但没有上限是风险点。
 
-**两个分支的实体解析路径不同但收敛到同一套 `alertId` 逻辑**——这是 §7 不变式 3 能成立的原因。
+**论断 6：CEP 只认「失败序列 + 后续成功」，成功事件为空的匹配直接丢弃。**
 
-**论断 5：窗口的 `event_count` 是这个规则**实际命中**的数，不是窗口内事件总数。**
+`BruteforceSuccessFunction.java:64-71` 用 `match.getOrDefault(failureStep, List.of())` 与 `getOrDefault(successStep, List.of())`，`successes.isEmpty()` 就 `return`。步骤名来自规则声明，默认 `"failures"` / `"success"`（`:38`），空串则拒绝（`:59`）。
 
-```java
-// WindowRuleFunction.java:33-41
-List<Map<String, Object>> matched = new ArrayList<>();
-for (Event e : elements) {
-    if (rule.getCondition().matches(e.getFields())) {
-        matched.add(e.getFields());
-    }
-}
-if (matched.size() >= rule.getThreshold()) {
-    out.collect(MAPPER.writeValueAsString(buildAlert(key, matched, context.window().getEnd())));
-}
-```
+**论断 7：CEP 告警的 `@timestamp` 用成功事件的时间，`event_count` = 失败数 + 1，`event.action` 被硬编码。**
 
-**`matched.size()` 而非 `elements` 的 size**——即 `condition` 不匹配的事件**不计数**。所以一条窗口规则可以复用同一个 `keyBy` 分区而只数自己关心的动作。
+`BruteforceSuccessFunction.java:74` 取 `success.getTimestampMillis()`；`:95-96` 写 `event.action = "authentication_success"` 与 `event_count = failures.size() + 1`。**`+1` 是把成功事件自己算进去**，语义是「这条攻击链一共发生了 N 个事件」；**`event.action` 覆写了成功事件的原始值**——告警语义是「得逞」，不是「成功登录」。
 
-**论断 6：`related_events` 存的是完整字段快照列表，无上限。**
-
-```java
-// WindowRuleFunction.java:72-73
-alert.put("event_count", matched.size());
-alert.put("related_events", matched);
-```
-
-**这里没有截断**。窗口 5 分钟 + 阈值 5 + 攻击者高频重试时，`related_events` 可能很大。这是**有意的取舍**（保留完整攻击叙事），但**没有上限**是一个待核实的风险点，见 §9。
-
-**论断 7：CEP 只认「失败序列 + 后续成功」，成功事件为空的匹配直接丢弃。**
-
-```java
-// BruteforceSuccessFunction.java:64-71
-@Override
-public void processMatch(Map<String, List<Event>> match, Context ctx, Collector<String> out) throws Exception {
-    List<Event> failures = match.getOrDefault(failureStep, List.of());
-    List<Event> successes = match.getOrDefault(successStep, List.of());
-    if (successes.isEmpty()) {
-        return;
-    }
-    Event success = successes.get(0);
-```
-
-**防御性写法**：`getOrDefault` 而非 `get`，且显式判空。步骤名来自规则声明（`failureStep` / `successStep`），有默认值 `"failures"` / `"success"`（`:38`），空串则拒绝（`:59`）。
-
-**论断 8：CEP 告警的 `@timestamp` 用成功事件的时间，`event_count` = 失败数 + 1。**
-
-```java
-// BruteforceSuccessFunction.java:74,95-96
-alert.put("@timestamp", Instant.ofEpochMilli(success.getTimestampMillis()).toString());
-...
-alert.put("event.action", "authentication_success");
-alert.put("event_count", failures.size() + 1);
-```
-
-**`+1` 是把成功事件自己算进去**——语义是「这个攻击链一共发生了 N 个事件」。注意 `event.action` 被**硬编码为 `authentication_success`**（覆写了成功事件的原始值）——告警语义是「得逞」，不是「成功登录」。
-
-**论断 9：基线用 `μ + σ×multiplier`，且要求基线样本数达标。**
+**论断 8：基线用 `μ + σ×multiplier`，三个边界条件写得很实。**
 
 ```java
 // BaselineAnomalyFunction.java:110-118
@@ -552,51 +284,21 @@ static boolean isAnomaly(List<Double> baseline, double current, int minBaselineH
 }
 ```
 
-**三个边界条件写得很实**：
-
 | 条件 | 作用 |
 | --- | --- |
 | `baseline.size() < minBaselineHours` | **基线不足不判异常**——冷启动期不误报 |
 | `threshold > 0` | **阈值为 0 或负时永不告警**——否则「0 次也是异常」 |
 | `current > threshold` | 严格大于，等于不算 |
 
-**论断 10：基线状态是有界的 `LinkedList`，超出 `baselineHours` 就从头尾淘汰。**
+告警带三个可解释字段（`BaselineAnomalyFunction.java:148-150`）：`anomaly.baseline_mean`、`anomaly.baseline_sigma`、`anomaly.threshold`。**分析员能直接看到「当前 87 次 vs 基线 μ=6.2 σ=2.1 阈值=12.5」**，而不是只看到一个「异常」标签。
 
-```java
-// BaselineAnomalyFunction.java:98-102
-baseline.add(current);
-while (baseline.size() > baselineHours) {
-    baseline.removeFirst();
-}
-baselineState.update(baseline);
-```
+**论断 9：基线状态是有界 `LinkedList`，且当前窗口不参与自己的基线。**
 
-**注意顺序**：先判定异常，**再**把当前值加入基线（`:92` 判定在 `:98` 之前）。所以**当前窗口不参与自己的基线**——否则异常值会抬高自己的阈值。
+`BaselineAnomalyFunction.java:98-102`：先 `baseline.add(current)`，再 `while (baseline.size() > baselineHours) baseline.removeFirst()`。**顺序是关键**——判定在 `:92`、加入在 `:98`，**所以当前窗口不参与判定自己的阈值**，否则异常值会抬高自己的门限。
 
-**论断 11：基线的统计量用总体方差（除以 N），不是样本方差（除以 N-1）。**
+**论断 10：统计量用总体方差（除以 N），不是样本方差（除以 N-1）。**
 
-```java
-// BaselineAnomalyFunction.java:121-126
-static double[] meanSigma(List<Double> values) {
-    double mean = values.stream().mapToDouble(Double::doubleValue).average().orElse(0);
-    double variance = values.stream()
-            .mapToDouble(v -> (v - mean) * (v - mean)).average().orElse(0);
-    return new double[]{mean, Math.sqrt(variance)};
-}
-```
-
-`.average()` 是除以元素个数——**总体方差**。样本小时总体方差偏小（更敏感）。这是明确的选择，不是笔误。
-
-**论断 12：基线告警带三个可解释字段——这比只报「异常」有用得多。**
-
-```java
-// BaselineAnomalyFunction.java:148-150
-alert.put("anomaly.baseline_mean", Math.round(mean * 100.0) / 100.0);
-alert.put("anomaly.baseline_sigma", Math.round(sigma * 100.0) / 100.0);
-alert.put("anomaly.threshold", Math.round(threshold * 100.0) / 100.0);
-```
-
-**分析员能直接看到「当前 87 次 vs 基线 μ=6.2 σ=2.1 阈值=12.5」**，而不是只看到一个「异常」标签。
+`BaselineAnomalyFunction.java:121-126` 的 `meanSigma` 对 `(v - mean)²` 取 `.average()`——`.average()` 除以元素个数，即**总体方差**。样本小时总体方差偏小（更敏感）。**这是明确的选择，不是笔误。**
 
 ### 4.2 四类分支的求值对比
 
@@ -642,250 +344,86 @@ flowchart TB
 
 ### 5.1 关键论断
 
-**论断 1：两个抑制器都用「处理时间」，不是事件时间——且理由是显式写下的。**
+**论断 1：两个抑制器都用「处理时间」，不是事件时间——且理由写在注释里。**
 
-```java
-// AlertSuppressor.java:18-19（类注释）
- * 实现:keyBy(rule_id + 实体) + 处理时间(墙钟)窗口。用处理时间而非事件时间,
- * 语义是"1 小时内同一实体同一规则不要刷屏",与事件时间窗口(暴力破解)区分。
-```
-
-```java
-// WindowAlertSuppressor.java:18-19（类注释）
- * 窗口本身仍使用事件时间,这里的抑制使用处理时间表达「告警通知不要刷屏」:
-```
-
-**这是本项目里一处清晰的语义分层**：
+`AlertSuppressor.java:18-19`：*「用处理时间而非事件时间,语义是"1 小时内同一实体同一规则不要刷屏",与事件时间窗口(暴力破解)区分。」*；`WindowAlertSuppressor.java:18-19` 同旨。
 
 | 层 | 时间语义 | 目的 |
 | --- | --- | --- |
-| 窗口/CEP 检测 | **事件时间** | 判定「这段时间内发生了 N 次」 |
+| 窗口 / CEP 检测 | **事件时间** | 判定「这段时间内发生了 N 次」 |
 | 告警抑制 | **处理时间** | 判定「不要再刷屏」 |
 
 **混用是刻意的**：事件时间适合业务判定，处理时间适合运维节奏。若抑制也用事件时间，历史数据回放时会「按历史时间抑制」，反而刷屏。
 
 **论断 2：抑制模式的骨架一致——首个立即出、期内只累加、期末出最终值。**
 
-```java
-// AlertSuppressor.java:21-25（类注释）
- * 行为:
- * - 首个命中:立即产出告警(deduplicated_count=1),登记窗口结束定时器,缓存首个告警 JSON;
- * - 窗口内后续命中:仅累加状态计数,不产出;
- * - 窗口结束(onTimer):产出带最终 count 的告警(首个告警 JSON 的 @timestamp 不变 → _id 稳定,
- *   ES upsert 覆盖更新),随后清空状态。
-```
+`AlertSuppressor.java:21-25` 类注释写明三步：首个命中**立即**产出（`deduplicated_count=1`）并缓存首个告警 JSON；窗口内后续命中只累加状态计数、不产出；`onTimer` 时产出带最终 count 的告警，**首个告警 JSON 的 `@timestamp` 不变 → `_id` 稳定，ES upsert 覆盖更新**，随后清空状态。
 
-**「首个立即出 + 期末更新」是关键手法**：分析员**立刻**看到告警（不必等窗口结束），而最终计数又通过**同一个 `_id`** 覆盖更新。**延迟与完整性兼得。**
+**「首个立即出 + 期末更新」是关键手法**：分析员**立刻**看到告警（不必等窗口结束），而最终计数又通过同一个 `_id` 覆盖更新——**延迟与完整性兼得**。
 
 **论断 3：`_id` 稳定的机制是「复用首个告警的 JSON」。**
 
-```java
-// AlertSuppressor.java:74
-cur.firstAlertJson = alert;   // 首个告警(含首事件 @timestamp,保证 _id 稳定)
-```
+`AlertSuppressor.java:74` 把首个告警（含首事件 `@timestamp`）存进 `cur.firstAlertJson`，`AlertSuppressor.java:88-92` 在 `onTimer` 里用 `updateCount(cur.firstAlertJson, cur.count)` 产出最终值。因为 `alertId = sha1(rule_id | entity | @timestamp)`，而 `firstAlertJson` 保留了**首个事件的 `@timestamp`**，所以三次输出都算出同一个 `_id`。
 
-```java
-// AlertSuppressor.java:88-92
-if (cur != null && cur.firstAlertJson != null) {
-    // 产出最终 count(同一 _id,ES upsert 更新);随后清状态
-    out.collect(updateCount(cur.firstAlertJson, cur.count));
-}
-state.clear();
-```
+**论断 4：两个抑制器的 `suppressionKey` 回退链长度不同。**
 
-**`alertId = sha1(rule_id | entity | @timestamp)`**，而 `firstAlertJson` 保留了**首个事件的 `@timestamp`**——所以三次输出（首个、期末、以及可能的重启后）都算出同一个 `_id`。
+- 单事件版（`AlertSuppressor.java:45-54`）：`rule_id | source.ip → user.name → "unknown"`，两级。
+- 窗口版（`WindowAlertSuppressor.java:50-62`）：`rule_id | 规则自己的 keyField → source.ip → user.name → "unknown"`，三级。
 
-**论断 4：两个抑制器的 `suppressionKey` 不同——窗口版优先用规则自己的 keyField。**
-
-单事件版：
-
-```java
-// AlertSuppressor.java:45-54
-/** 抑制键 = rule_id + 实体(source.ip 优先,其次 user.name)。供 keyBy 使用。 */
-public static String suppressionKey(String alertJson) throws Exception {
-    ...
-    Object ip = alert.get("source.ip");
-    Object user = alert.get("user.name");
-    String entity = ip != null ? String.valueOf(ip)
-            : (user != null ? String.valueOf(user) : "unknown");
-    return ruleId + "|" + entity;
-}
-```
-
-窗口版：
-
-```java
-// WindowAlertSuppressor.java:50-62
-/** 窗口规则优先使用自己的 keyField,否则回退到 source.ip/user.name。 */
-public static String suppressionKey(String alertJson, String preferredEntityField) throws Exception {
-    Map<String, Object> alert = MAPPER.readValue(alertJson, Map.class);
-    String ruleId = String.valueOf(alert.getOrDefault("alert.rule_id", "unknown"));
-    Object entity = preferredEntityField == null ? null : alert.get(preferredEntityField);
-    if (entity == null) {
-        entity = alert.get("source.ip");
-    }
-    if (entity == null) {
-        entity = alert.get("user.name");
-    }
-    return ruleId + "|" + (entity == null ? "unknown" : entity);
-}
-```
-
-**三级回退：规则自己的 keyField → source.ip → user.name → "unknown"。** 而单事件版是两级。原因是窗口规则的实体由 `alert.entity` + `alert.put(keyField, key)` 显式写入（见 §4.1 论断 4），所以按 keyField 能取到。
+原因是窗口规则的实体由 `alert.entity` + `alert.put(keyField, key)` 显式写入（§4 论断 4），所以按 keyField 取得到。
 
 **论断 5：窗口抑制器多一个兜底——定时器可能未及时触发。**
 
-```java
-// WindowAlertSuppressor.java:75-79
-if (current == null || now >= current.suppressUntil) {
-    if (current != null) {
-        // 定时器可能尚未在本条记录前触发,先完成旧抑制期的最终更新。
-        out.collect(mergeLatest(current));
-    }
-```
+`WindowAlertSuppressor.java:75-79`：新记录到达时若 `now >= current.suppressUntil`，**先 `out.collect(mergeLatest(current))` 结算旧期**，再开新期；注释写明「定时器可能尚未在本条记录前触发,先完成旧抑制期的最终更新」。
 
-**这是对 Flink 定时器语义的正确处理**：处理时间定时器在 watermark/时间推进时触发，**不保证在下一条记录之前**。若直接开始新抑制期而不先结算旧的，**旧期的最终计数就丢了**。代码显式补了这一步。
+**这是对 Flink 处理时间定时器语义的正确处理**：定时器在时间推进时触发，**不保证在下一条记录之前**；直接开新期会丢掉旧期的最终计数。
 
-**论断 6：窗口抑制器的 `mergeLatest` 取 `event_count` 的最大值，并保留 `related_events`。**
+**论断 6：`mergeLatest` 取窗口 `event_count` 的最大值，并与 `deduplicated_count` 分工。**
 
-```java
-// WindowAlertSuppressor.java:105-118
-private static String mergeLatest(SuppressState state) throws Exception {
-    Map<String, Object> first = MAPPER.readValue(state.firstAlertJson, Map.class);
-    Map<String, Object> latest = MAPPER.readValue(state.latestAlertJson, Map.class);
-
-    int firstCount = intValue(first.get("event_count"));
-    int latestCount = intValue(latest.get("event_count"));
-    first.put("event_count", Math.max(firstCount, latestCount));
-    Object related = latest.get("related_events");
-    if (related instanceof List<?>) {
-        first.put("related_events", related);
-    }
-    first.put("alert.deduplicated_count", state.windowCount);
-    return MAPPER.writeValueAsString(first);
-}
-```
-
-**三处细节**：
+`WindowAlertSuppressor.java:105-118`：`first.put("event_count", Math.max(firstCount, latestCount))`，`related_events` 用 `latest` 覆盖，再 `first.put("alert.deduplicated_count", state.windowCount)`。
 
 | 细节 | 原因 |
 | --- | --- |
 | `Math.max` 而非相加 | `event_count` 是**窗口内**命中数，不是累计；取最大窗口更合理 |
 | `related_events` 用 `latest` 覆盖 | 保留**最新**窗口的事件明细 |
-| `alert.deduplicated_count = windowCount` | 抑制期**收敛了几个窗口**——与 `event_count` 是两个不同量 |
+| `deduplicated_count = windowCount` | 抑制期**收敛了几个窗口**——与 `event_count` 是两个不同量 |
 
-**这是 `event_count` 与 `deduplicated_count` 的语义分工**：前者「一个窗口里发生了几次」，后者「抑制期合并了几个窗口」。
+**论断 7：两个抑制器的校验强度不一致。**
 
-**论断 7：`WindowAlertSuppressor` 拒绝非正抑制时长，`AlertSuppressor` 不校验。**
-
-```java
-// WindowAlertSuppressor.java:31-36
-public WindowAlertSuppressor(Duration suppressionWindow) {
-    if (suppressionWindow == null || suppressionWindow.isZero() || suppressionWindow.isNegative()) {
-        throw new IllegalArgumentException("窗口告警抑制时长必须 > 0");
-    }
-    this.suppressionMillis = suppressionWindow.toMillis();
-}
-```
-
-**两者校验强度不一致**（`AlertSuppressor.java:34-36` 直接赋值 `window.toMillis()`）。这是可改进点，见 §9。
+`WindowAlertSuppressor.java:31-36` 构造器拒绝 `null` / 零 / 负时长；`AlertSuppressor.java:34-36` 直接 `window.toMillis()`，不校验。**可改进点。**
 
 **论断 8：抑制状态由 Flink checkpoint 托管——重启不丢。**
 
-```java
-// WindowAlertSuppressor.java:22（类注释）
- * 状态由 Flink checkpoint 管理,作业重启后不会因为算子内存丢失而重复建档。
-```
+`WindowAlertSuppressor.java:22` 类注释：状态由 checkpoint 管理，作业重启后不会因为算子内存丢失而重复建档。两者都用 `ValueState`（`AlertSuppressor.java:58-60`、`WindowAlertSuppressor.java:66-67`），不是普通字段。
 
-两者都用 `ValueState`（`AlertSuppressor.java:58-60`、`WindowAlertSuppressor.java:66-67`），不是普通字段。
+**论断 9：单事件抑制时长有三条约束，其中一条最反直觉。**
 
-**论断 9：单事件抑制时长在两处校验——构造器不校验，作业装配侧校验。**
-
-```java
-// DetectionJob.java:186,192
-long singleSuppressionMinutes = singleEventSuppressionMinutes(singleDecls);
-...
-.process(new AlertSuppressor(Duration.ofMinutes(singleSuppressionMinutes)))
-```
-
-```java
-// DetectionJob.java:317-329
-static long singleEventSuppressionMinutes(List<RuleDecl> declarations) {
-    long selected = 60L;
-    boolean explicit = false;
-    for (RuleDecl declaration : declarations) {
-        if (declaration.alertSuppressionMinutes == null) {
-            continue;
-        }
-        long value = declaration.alertSuppressionMinutes;
-        if (value <= 0) {
-            throw new IllegalArgumentException("single_event alertSuppressionMinutes 必须 > 0");
-        }
-        if (explicit && selected != value) {
-            throw new IllegalArgumentException("同一 Job Group 的 single_event 抑制时长必须一致");
-        }
-        ...
-```
-
-**三个事实**：
+`DetectionJob.java:317-329` 的 `singleEventSuppressionMinutes` 把各规则自己的 `alertSuppressionMinutes` 收敛成一个值，三条约束：
 
 | 事实 | 值 | 锚点 |
 | --- | --- | --- |
-| 单事件抑制默认时长 | **60 分钟** | `DetectionJob.java:318` |
+| 默认时长 | **60 分钟** | `DetectionJob.java:318` |
 | 显式值必须 > 0 | 否则抛异常 | `:325-327` |
 | **同一 Job Group 内必须一致** | 否则抛异常 | `:328-330` |
 
-> **「同一 Job Group 抑制时长必须一致」是本篇最值得注意的一条约束**。原因是：**所有单事件规则共用同一个 `single-event-detection` 算子与同一个 `alert-suppression` 算子**（§3.1 论断 1 的算子表）。既然共用一个抑制器，抑制时长就只能有一个值——**规则级的 `alertSuppressionMinutes` 在此不是「各自生效」，而是「必须投票出一致值」**。
+收敛出的时长在 `DetectionJob.java:186,192` 交给 `new AlertSuppressor(Duration.ofMinutes(...))`。
+
+> **「同一 Job Group 抑制时长必须一致」是本篇最值得注意的约束。** 原因是**所有单事件规则共用同一个 `single-event-detection` 算子与同一个 `alert-suppression` 算子**（§3 论断 1 的算子表）。既然共用一个抑制器，时长就只能有一个值——**规则级的 `alertSuppressionMinutes` 在单事件分支下不是「各自生效」，而是「必须投票出一致值」**。
 >
-> 这与**窗口规则形成鲜明对比**：窗口抑制是「每规则一个算子」（`window-alert-suppression-<ruleId>`），所以每条窗口规则可以有自己的抑制时长。**同样的 YAML 字段 `alertSuppressionMinutes`，在单事件与窗口两个分支下的语义强度不同**——单事件是「全局一致约束」，窗口是「逐规则独立」。
+> 这与**窗口规则形成鲜明对比**：窗口抑制是「每规则一个算子」（`window-alert-suppression-<ruleId>`），每条窗口规则可以有自己的抑制时长。**同一个 YAML 字段在两个分支下的语义强度不同**——单事件是全局一致约束，窗口是逐规则独立。
 
-**论断 10：CEP 的 Pattern 是逐 step 折叠构建的，且 `times` 的三种组合分别处理。**
+**论断 10：CEP 的 Pattern 逐 step 折叠构建，`times` 只在首步生效。**
 
-```java
-// DetectionJob.java:416-446
-private static Pattern<Event, ?> buildCepPattern(RuleDecl.CepDecl cep) {
-    if (cep == null || cep.pattern == null || cep.pattern.isEmpty()) {
-        throw new IllegalArgumentException("cep 规则缺少 pattern");
-    }
-    Pattern<Event, ?> p = null;
-    for (RuleDecl.CepStep step : cep.pattern) {
-        SimpleCondition<Event> cond = SimpleCondition.of(
-                (FilterFunction<Event>) e ->
-                        RuleBuilder.buildCondition(step.condition).matches(e.getFields()));
-        if ("begin".equals(step.type)) {
-            Pattern<Event, ?> begin = Pattern.<Event>begin(step.name).where(cond);
-            if (step.timesMax != null) {
-                int min = step.timesMin == null ? step.timesMax : step.timesMin;
-                begin = begin.times(min, step.timesMax);
-            } else if (step.timesMin != null) {
-                begin = begin.times(step.timesMin);
-            }
-            p = begin;
-        } else if ("next".equals(step.type)) {
-            p = p.next(step.name).where(cond);
-        } else if ("followedBy".equals(step.type)) {
-            p = p.followedBy(step.name).where(cond);
-        } else {
-            throw new IllegalArgumentException("未知 CEP 步骤类型: " + step.type);
-        }
-    }
-    if (p != null && cep.withinMinutes != null) {
-        p = p.within(Duration.ofMinutes(cep.withinMinutes));
-    }
-    return p;
-}
-```
-
-**四点值得注意**：
+`DetectionJob.java:416-446` 的 `buildCepPattern`：
 
 | 点 | 说明 |
 | --- | --- |
-| **`times` 只在 `begin` 步生效** | `next` / `followedBy` 分支**完全不读 `timesMin`/`timesMax`**——即重复次数**只能写在首步** |
+| **`times` 只在 `begin` 步生效** | `next` / `followedBy` 分支**完全不读 `timesMin`/`timesMax`**——重复次数**只能写在首步** |
 | `timesMin` 缺省回退到 `timesMax` | `:428` `int min = step.timesMin == null ? step.timesMax : step.timesMin` |
 | **条件在每个 step 内独立构建** | 复用 `RuleBuilder.buildCondition`，所以 CEP 步骤条件支持全部 5 种条件类型（含嵌套 `all`/`any`/`not`） |
 | **`within` 在循环外统一应用** | 整个序列一个时间上限，不是每步一个 |
 
-**对照实际规则声明**：`rule-ssh-bruteforce-success-001.yaml:21-28` 正是「首步 `begin` 带 `timesMin: 5` / `timesMax: 100`，次步 `next` 无 times」——**与代码的约束一致**。
+未知步骤类型抛异常（`:438-440`）。**对照实际规则声明**：`rule-ssh-bruteforce-success-001.yaml:21-28` 正是「首步 `begin` 带 `timesMin: 5` / `timesMax: 100`，次步 `next` 无 times」——**与代码的约束一致**。
 
 ### 5.2 抑制状态机
 
@@ -916,56 +454,15 @@ stateDiagram-v2
 
 **论断 1：告警字段是 ECS 存储 + OCSF 视图并存。**
 
-```java
-// Ocsf.java:5-9（类注释）
-/**
- * OCSF 可移植视图(Phase 3.2):在 ECS 存储的告警上附加 OCSF 核心字段,
- * 使规则/看板未来换平台或对接 AWS Security Lake 时不必重写。
- * 存储仍以 ECS 为准,此为输出侧补充视图;完整映射见 docs/design/ocsf-mapping.md。
- */
-```
+`Ocsf.java:5-9` 类注释：OCSF 是**可移植视图**，在 ECS 存储的告警上附加 OCSF 核心字段，使规则/看板未来换平台或对接 AWS Security Lake 时不必重写；**存储仍以 ECS 为准**，完整映射见 `docs/design/ocsf-mapping.md`。所以一条告警里同时有 `source.ip`（ECS）与 `ocsf.src_endpoint.ip`（OCSF）。
 
-**「存储以 ECS 为准，OCSF 是附加视图」**——一条告警里同时有 `source.ip`（ECS）与 `ocsf.src_endpoint.ip`（OCSF）。
+**论断 2：OCSF 视图只有四个字段，`class_uid` 是常量。**
 
-**论断 2：OCSF 视图只有四个字段，且 `class_uid` 是常量。**
-
-```java
-// Ocsf.java:15-16, 33-42
-public static final int CLASS_AUTHENTICATION = 3002;
-...
-public static Map<String, Object> applyAuthView(Map<String, Object> alert, String severity) {
-    alert.put("ocsf.class_uid", CLASS_AUTHENTICATION);
-    alert.put("ocsf.severity_id", severityId(severity));
-    Object ip = alert.get("source.ip");
-    if (ip != null) {
-        alert.put("ocsf.src_endpoint.ip", ip);
-    }
-    return alert;
-}
-```
-
-`3002` 是 OCSF 的 Authentication 事件类。**`ocsf.src_endpoint.ip` 只在 `source.ip` 存在时才写**（`:37-40`）——不写 null。
+`Ocsf.java:15` 定义 `CLASS_AUTHENTICATION = 3002`（OCSF 的 Authentication 事件类）；`applyAuthView`（`:33-42`）写 `ocsf.class_uid`、`ocsf.severity_id`，且**只在 `source.ip` 存在时才写 `ocsf.src_endpoint.ip`**（`:37-40`）——不写 null。
 
 **论断 3：severity 映射是五档，未知值回落到 0（Unknown）而非抛异常。**
 
-```java
-// Ocsf.java:19-31
-public static int severityId(String severity) {
-    if (severity == null) {
-        return 0;
-    }
-    switch (severity.toLowerCase()) {
-        case "info": return 1;
-        case "low": return 2;
-        case "medium": return 3;
-        case "high": return 4;
-        case "critical": return 5;
-        default: return 0;
-    }
-}
-```
-
-**输入做了 `toLowerCase()`**，所以 `"HIGH"` 与 `"high"` 等价。**对照 `AlertLifecycleEventMapper` 侧**：那里的 `severity` 是直接透传原值（`AlertLifecycleEventMapper.java:32`），不做归一——**两处对 severity 的处理严格度不同**，见 §9。
+`Ocsf.java:19-31`：`null` → 0；`info` / `low` / `medium` / `high` / `critical` → 1..5；其它 → 0。**输入做了 `toLowerCase()`**，所以 `"HIGH"` 与 `"high"` 等价。**对照 `AlertLifecycleEventMapper.java:32`**：那里的 `severity` 直接透传原值，不做归一——**两处对 severity 的处理严格度不同**。
 
 **论断 4：四类告警共享同一个字段骨架，差异只在分支特有字段。**
 
@@ -978,22 +475,13 @@ public static int severityId(String severity) {
 | `rule.tags` / `status` / `version` | ✓ | ✓ | ✓ | ✓ |
 | `alert.status` = `"open"` | ✓ | ✓ | ✓ | ✓ |
 | `alert.entity` | — | **✓ = key** | — | — |
-| `event_count` | **1** | 命中数 | 失败数+1 | 命中数 |
+| `event_count` | **1** | 命中数 | 失败数 + 1 | 命中数 |
 | `related_events` | — | ✓ | ✓ | — |
 | `event.raw` | ✓ | — | — | — |
 | 分支特有 | — | — | `event.action` 硬编码 | `anomaly.*` 三字段 |
 | `ocsf.*` | ✓ | ✓ | ✓ | ✓ |
 
-> **`@timestamp` 的取值因分支而异**是本表最该注意的一点：单事件用**事件自身**时间，窗口与基线用**窗口结束**时间，CEP 用**成功事件**时间。这直接影响确定性 `alertId` 的输入。
-
-### 6.2 字段来源锚点
-
-| 分支 | 构造方法 | `@timestamp` 来源 |
-| --- | --- | --- |
-| single | `DetectionFunction.java:37-64` | `event.get("@timestamp")`（`:39`） |
-| window | `WindowRuleFunction.java:44-76` | `Instant.ofEpochMilli(windowEndMillis)`（`:46`） |
-| cep | `BruteforceSuccessFunction.java:73-106` | `success.getTimestampMillis()`（`:74`） |
-| baseline | `BaselineAnomalyFunction.java:128-153` | `Instant.ofEpochMilli(windowEnd)`（`:131`） |
+> **`@timestamp` 的取值因分支而异**是本表最该注意的一点：单事件用**事件自身**时间，窗口与基线用**窗口结束**时间，CEP 用**成功事件**时间。它直接决定确定性 `alertId` 的输入。
 
 ---
 
@@ -1001,14 +489,9 @@ public static int severityId(String severity) {
 
 ### 7.1 关键论断
 
-**论断 1：所有运行参数都有「默认值 + 环境变量/system property 双层覆盖」。**
+**论断 1：所有运行参数都是「默认值 + system property / 环境变量双层覆盖」。**
 
-```java
-// config/RuntimeTuning.java:16-18
-public static RuntimeTuning defaults() {
-    return new RuntimeTuning(30_000, 10 * 60_000, 10_000, 5, 250, 3, 500, 500);
-}
-```
+`config/RuntimeTuning.java:16-18` 的 `defaults()` 给出八个默认值：
 
 | 序号 | 字段 | 默认 | 环境变量 |
 | --- | --- | --- | --- |
@@ -1021,77 +504,27 @@ public static RuntimeTuning defaults() {
 | 7 | `esMaxBufferedRequests` | 500 | `SIEM_FLINK_ES_MAX_BUFFERED` |
 | 8 | `esMaxTimeInBufferMs` | 500 | `SIEM_FLINK_ES_MAX_BUFFER_MS` |
 
-**system property 优先于环境变量**：
+`value()`（`config/RuntimeTuning.java:46-49`）先读 `System.getProperty(key)`，为空才读 `System.getenv(key)`——**system property 优先**。
 
-```java
-// config/RuntimeTuning.java:46-49
-private static String value(String key) {
-    String property = System.getProperty(key);
-    return property == null || property.isBlank() ? System.getenv(key) : property;
-}
-```
+**论断 2：这八个参数里有三个是死参数。**
 
-**论断 2：非法值静默回退到默认值，且带最小值门限。**
+`esBatchSize`、`esMaxInFlightRequests`、`esMaxTimeInBufferMs` 在 `flink/src/main` 与测试中**从未被读取**（只出现在 `RuntimeTuning` 自身的定义与解析里）；**只有 `esMaxBufferedRequests` 被消费**——`DetectionJob.java:296` 把它传给 `AsyncDataStream.unorderedWait` 的 capacity。
 
-**这 8 个参数里有 3 个是死参数**：`flink/src/main` 与测试中，**`esBatchSize` / `esMaxInFlightRequests` / `esMaxTimeInBufferMs` 从未被读取**（只出现在 `RuntimeTuning` 自身的定义与解析里）；**只有 `esMaxBufferedRequests` 被消费**——`DetectionJob.java:296` 把它传给 `AsyncDataStream.unorderedWait` 的 capacity。
+**所以改那三个环境变量不会有任何效果。** 现有文档把它们描述为「ES 批量大小 / 最大在途 / 缓冲最长时间」，同样没有指出这一点。**「配置项存在」≠「约束生效」。**
 
-**所以改那 3 个环境变量不会有任何效果。** README 的开关表把它们描述为「ES 批量大小 / 最大在途 / 缓冲最长时间」，同样未指出这一点。**这再次说明「配置项存在」≠「约束生效」。**
+非法值的处置是**静默回退**：`parseLong`（`config/RuntimeTuning.java:67-74`）解析失败、或解析结果小于最小值（`1`）时都回退默认值，不报错。配错一个环境变量不会让作业启动失败，只是不生效——这是可运维性上的取舍点。
 
-```java
-// config/RuntimeTuning.java:67-74
-private static long parseLong(String value, long fallback, long minimum) {
-    try {
-        long parsed = Long.parseLong(value);
-        return parsed >= minimum ? parsed : fallback;
-    } catch (Exception ignored) {
-        return fallback;
-    }
-}
-```
+**论断 3：重启策略是 `exponential-delay`，参数硬编码。**
 
-**最小值 `1`**——所以 `0` 或负数都被拒绝并回退。**注意这是静默的**：配错一个环境变量不会报错，作业照常启动用默认值。这是可运维性上的取舍点，见 §9。
-
-**论断 3：重启策略是 `exponential-delay`，且参数写死。**
-
-```java
-// DetectionJob.java:94-99
-conf.set(RestartStrategyOptions.RESTART_STRATEGY, "exponential-delay");
-conf.set(RestartStrategyOptions.RESTART_STRATEGY_EXPONENTIAL_DELAY_INITIAL_BACKOFF, Duration.ofSeconds(5));
-conf.set(RestartStrategyOptions.RESTART_STRATEGY_EXPONENTIAL_DELAY_MAX_BACKOFF, Duration.ofMinutes(2));
-conf.set(RestartStrategyOptions.RESTART_STRATEGY_EXPONENTIAL_DELAY_BACKOFF_MULTIPLIER, 1.5);
-conf.set(RestartStrategyOptions.RESTART_STRATEGY_EXPONENTIAL_DELAY_JITTER_FACTOR, 0.1);
-conf.set(RestartStrategyOptions.RESTART_STRATEGY_EXPONENTIAL_DELAY_ATTEMPTS, 10);
-```
-
-**5 秒起、2 分钟封顶、1.5 倍增长、0.1 抖动、最多 10 次。** 注释（`:93`）记录了 Flink 2.x 的重要变化：*「旧版 `RestartStrategies` 工厂已移除」*——只能用 `Configuration` 选项配置。
-
-**注意这些值**不走 `RuntimeTuning`**，是硬编码的。** 与上面 8 个可调参数形成对比。
+`DetectionJob.java:94-99`：初始 5 秒、上限 2 分钟、1.5 倍增长、0.1 抖动、最多 10 次。注释（`:93`）记录 Flink 2.x 的变化：**「旧版 `RestartStrategies` 工厂已移除」**，只能用 `Configuration` 选项配置。**这些值不走 `RuntimeTuning`**，与上面八个可调参数形成对比。
 
 **论断 4：状态目录按 `jobKey` 隔离——managed 作业之间不共享状态。**
 
-```java
-// DetectionJob.java:84-88
-String checkpointRoot = System.getenv().getOrDefault("SIEM_CHECKPOINT_ROOT", DEFAULT_CHECKPOINT_ROOT);
-String savepointRoot = System.getenv().getOrDefault("SIEM_SAVEPOINT_ROOT", DEFAULT_SAVEPOINT_ROOT);
-String stateSuffix = arguments.managed() ? "/" + arguments.jobKey() : "";
-
-// checkpoint/savepoint 落到 Docker 挂载的持久卷,按 jobKey 隔离 managed jobs。
-Configuration conf = new Configuration();
-conf.setString("state.checkpoints.dir", appendPath(checkpointRoot, stateSuffix));
-```
-
-**legacy 启动用共享路径**（`stateSuffix = ""`），注释（`:82-83`）说明了原因：*「Legacy launches retain the historical shared path until they are redeployed with the typed 5B arguments」*。
+`DetectionJob.java:84-88`：checkpoint / savepoint 根目录可由 `SIEM_CHECKPOINT_ROOT` / `SIEM_SAVEPOINT_ROOT` 覆盖，managed 作业在路径后拼 `/<jobKey>`，落进 Docker 挂载的持久卷。**legacy 启动用共享路径**（`stateSuffix = ""`），注释（`:82-83`）说明是为兼容历史部署，重部署到 5B 参数后即消失。
 
 **论断 5：运行清单校验是「启动前的强闸门」，四道检查串行。**
 
-```java
-// DetectionJob.java:119-121
-RuleConfigLoader loader = new RuleConfigLoader();
-List<RuleDecl> decls = loader.loadDir(rulesDir);
-new RuntimeManifestVerifier().verify(Path.of(rulesDir), arguments, decls);
-```
-
-**注意传入的是 `decls`（全部规则），不是 `enabled`**——因为 filter 在下一行（`:122`）。所以**运行清单覆盖全部规则，包括被禁用的**。这是有意的：「禁用」是运行决策，「清单」是部署完整性证明。
+`DetectionJob.java:119-121` 先 `loadDir`、再 `new RuntimeManifestVerifier().verify(Path.of(rulesDir), arguments, decls)`——**传入的是全部规则而不是过滤后的 `enabled`**（filter 在下一行 `:122`）。所以**运行清单覆盖全部规则、包括被禁用的**：这是有意的，「禁用」是运行决策，「清单」是部署完整性证明。
 
 四道检查（`RuntimeManifestVerifier.java`）：
 
@@ -1102,102 +535,19 @@ new RuntimeManifestVerifier().verify(Path.of(rulesDir), arguments, decls);
 | 3 | **generation 与作业参数一致** | `:75-79` | `generation does not match job arguments` |
 | 4 | **ruleKey 集合与已加载规则完全一致** | `:104-113` | `missing=... extra=...` |
 
-**第 4 道检查是双向的**：
+**第 4 道是双向的**：`manifestIds.equals(loadedIds)` 不成立时，`missing`（清单有但没加载）与 `extra`（加载了但清单没有）**分开报**——这是两种不同的部署错乱。
 
-```java
-// RuntimeManifestVerifier.java:104-113
-if (!manifestIds.equals(loadedIds)) {
-    Set<String> missing = new TreeSet<>(manifestIds);
-    missing.removeAll(loadedIds);
-    Set<String> extra = new TreeSet<>(loadedIds);
-    extra.removeAll(manifestIds);
-    throw new IllegalStateException("runtime manifest rule IDs differ from loaded rules; missing="
-            + missing + ", extra=" + extra);
-}
-```
+**论断 6：哈希算的是原始字节，且 UTF-8 解码用严格模式。**
 
-**`missing` 与 `extra` 分开报**——「清单里有但没加载」与「加载了但清单没有」是两种不同的部署错乱。
+`RuntimeManifestVerifier.java:49-60` 读 `rulesDir.resolve("runtime-manifest.json")` 后用 `Files.readAllBytes(...)` 取原始字节再 `sha256(raw)`，比的是**字节**而不是解析后的对象——所以格式变化也逃不掉。解码走 `decodeUtf8`（`:123-129`），`onMalformedInput(REPORT)` + `onUnmappableCharacter(REPORT)`——**非法字节直接抛异常，不静默替换**。**字节级哈希 + 严格解码，是「不可变清单」真正不可变的前提。**
 
-**论断 6：哈希算的是**原始字节**，不是解析后的对象——所以格式变化也逃不掉。**
+**论断 7：legacy 启动跳过校验，但让「跳过」成为返回值里可见的事实。**
 
-```java
-// RuntimeManifestVerifier.java:49-60
-Path manifest = rulesDir.resolve("runtime-manifest.json").normalize();
-byte[] raw;
-try {
-    raw = Files.readAllBytes(manifest);
-} ...
-String actualHash = sha256(raw);
-if (!actualHash.equalsIgnoreCase(arguments.manifestHash())) {
-    throw new IllegalStateException("runtime manifest SHA-256 mismatch: expected "
-            + arguments.manifestHash() + ", actual " + actualHash);
-}
-```
+`RuntimeManifestVerifier.java:44-47` 在 `arguments.legacy()` 时打印一行并返回 `legacyVerification()`；`:155-157` 构造 `new Verification(true, null, 0L, Set.of())`。`Verification` 是 `record`（`:149`），构造器做防御性拷贝（`:151-153`）。**校验是否发生不是隐含状态，而是 `Verification.legacy` 这个字段。**
 
-**并且 UTF-8 解码是严格模式**：
+**论断 8：`DetectionJobArguments` 有两条 managed 路径 + 一条 legacy 回退。**
 
-```java
-// RuntimeManifestVerifier.java:123-129
-private static String decodeUtf8(byte[] raw) throws CharacterCodingException {
-    return StandardCharsets.UTF_8.newDecoder()
-            .onMalformedInput(CodingErrorAction.REPORT)
-            .onUnmappableCharacter(CodingErrorAction.REPORT)
-            .decode(ByteBuffer.wrap(raw))
-            .toString();
-}
-```
-
-**`REPORT` 而非 `REPLACE`**——非法字节直接抛异常，不静默替换。**这一类细节（字节级哈希 + 严格解码）是「不可变清单」真正不可变的前提。**
-
-**论断 7：legacy 启动跳过校验，但显式声明。**
-
-```java
-// RuntimeManifestVerifier.java:44-47
-if (arguments.legacy()) {
-    System.out.println("[DetectionJob] legacy launch: runtime manifest verification skipped");
-    return Verification.legacyVerification();
-}
-```
-
-```java
-// RuntimeManifestVerifier.java:155-157
-public static Verification legacyVerification() {
-    return new Verification(true, null, 0L, Set.of());
-}
-```
-
-**`Verification.legacy = true` 让「跳过了校验」成为**返回值里可见的事实**，不是隐含状态。`Verification` 是 `record`（`:149`），构造器做防御性拷贝（`:151-153`）。
-
-**论断 8：`DetectionJobArguments` 有两条启动路径——参数式与环境变量式。**
-
-```java
-// DetectionJobArguments.java:11-12（类注释）
- * generation and the SHA-256 of the raw runtime manifest as arguments 1-3.  A one-argument launch
- * remains supported for pre-5B jobs and is explicitly marked as legacy.
-```
-
-```java
-// DetectionJobArguments.java:44-69（节选）
-public static DetectionJobArguments parse(String[] args, Map<String, String> environment) {
-    ...
-    String rulesDir = args.length > 0 ? args[0] : ...;
-    if (args.length == 4) {
-        return managed(rulesDir, args[1], args[2], args[3]);
-    }
-    ...
-    String generation = environment.get("SIEM_JOB_GENERATION");
-    boolean anyManaged = key != null || generation != null || hash != null;
-    if (anyManaged) {
-        if (key == null || generation == null || hash == null) {
-            ...  // 三个必须同时给
-        }
-        return managed(rulesDir, key, generation, hash);
-    }
-    return legacy(rulesDir);
-}
-```
-
-**两种 managed 路径（4 参数 / 3 环境变量），以及一条 legacy 回退。** 且 `managed` 与 `legacy` 互斥（`:26-28`）：*「legacy arguments cannot carry managed identity」*。
+`DetectionJobArguments.java:11-12` 类注释：managed 启动把 generation 与运行清单 SHA-256 作为第 1–3 个参数；单参数启动为 pre-5B 作业保留并**显式标记为 legacy**。`parse`（`:44-69`）接受 4 参数式，或 `SIEM_JOB_KEY` / `SIEM_JOB_GENERATION` / `SIEM_JOB_MANIFEST_SHA256` 三环境变量的形式——**三个必须同时给**，只给一部分即抛异常；都没有则回退 `legacy`。`managed` 与 `legacy` 互斥（`:26-28`）。
 
 ## 8. 关键不变式（代码强制）
 
@@ -1307,11 +657,5 @@ flowchart LR
 **数据面唯一「向外写」的两个目标是 ES 的 `siem-alerts` 与 Kafka 的 `siem-alert-lifecycle`。** 它**从不写 PostgreSQL**——所有持久化状态（checkpoint/savepoint）只落在 Flink 自己的状态目录。
 
 > **`siem-alerts` 是共享写目标**（控制面 `AlertService` 也写）。这个双写事实在 01 篇 §4.1 论断 2 与 §7.1 论断 3 有详细说明——**数据面靠确定性 `_id` 幂等，控制面靠 ES 乐观锁**，两个机制互补而非互斥。
-
----
-
-## 待核实
-
-本节 9 条待核实项均已解答，答案已并入正文：`loadEnabled` 确为死 API；`related_events` 确无上限；3 个运行参数确为死参数；CEP 的 `times` 被控制面 grammar 拦住但 Flink 侧 lint 不查；基线 `LinkedList` 确走 Kryo 序列化。
 
 ---
