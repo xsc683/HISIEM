@@ -17,7 +17,6 @@
 | [`learn/`](learn/) | 技术概念优先（先讲 Kafka/ES/Flink 本身） | 想学组件原理 |
 | [`evidence/`](evidence/) | **代码级取证**：每条论断带 `file:line` | 要核实"代码真的是这样吗" |
 | [`interview/`](interview/) | 面试复习材料 | — |
-| [`archive/`](archive/) | 历史材料，**不进入默认阅读路径** | 只在需要追溯时进入 |
 
 ## 先看这 7 份
 
@@ -82,13 +81,9 @@
 
 [学习地图](learn/README.md)按“SIEM 基础 → 全链路 → Kafka → Elasticsearch → Flink → Logstash”组织。学习文档用于解释概念和实验，不替代代码、`infra/` 配置或[产品契约](contracts/product-contract.md)。
 
-## Story 迁移
+## 已删除的历史材料
 
-`docs/story/` **已整体删除**（含 `story-01`–`story-11` 与模板）：它们重复 API、路由和状态，产生多份互相矛盾的契约。当前接口统一在[产品契约](contracts/product-contract.md)，验收路径在[部署](operations/deployment.md)与[运维](operations/operations.md)。
-
-## 审计与历史材料
-
-[架构审计归档](archive/architecture-audit-2026-08.md)保留历史分析、验证证据和风险记录，仅用于追溯，不作为开发入口。[阶段任务清单](archive/project-task-status.md)（原名 `design/project-task-status.md`）于 2026-09-23 归档：按本文规则 2，阶段计划只写入[路线图](status/roadmap.md)。归档内容可能包含当时已修复的问题或旧接口，使用前必须回到[当前状态](status/current-status.md)和代码确认。
+本仓曾保存两类历史材料，现均已删除：`docs/story/`（重复 API/路由/状态）与 `docs/archive/`（架构审计与阶段任务清单——**实现过程的进度记录，不是设计本身**）。当前接口统一在[产品契约](contracts/product-contract.md)，**当前状态与风险登记**在[当前状态](status/current-status.md)，需要追溯历史版本时用 git。
 
 ## 基础设施局部说明
 

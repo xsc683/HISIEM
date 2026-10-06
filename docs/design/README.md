@@ -15,9 +15,7 @@
 | [ocsf-mapping.md](ocsf-mapping.md) | ECS 之外的最小 OCSF 辅助视图 | 明确区分已落地和设计值 |
 | [security-rbac.md](security-rbac.md) | ES/Kafka 生产安全加固参考 | 未执行的步骤不是当前能力 |
 | [threat-intel.md](threat-intel.md) | 本地 TI 字典富化实现和升级边界 | 以 `infra/ti` 与 Logstash 配置为准 |
-| [copilot-workspace-ux-brief.md](copilot-workspace-ux-brief.md) | HISIEM-SOC-Copilot Stage D 调查工作台的实现级 UX brief（跨仓参考，权威在 Copilot 仓 `docs/archive/engineering-history/stage-contracts/`） | 只描述增量补齐；与 Copilot 仓契约和本仓已有实现同步 |
-
-已归档：[`project-task-status.md`](../archive/project-task-status.md)——跨仓阶段任务清单，按 [`../README.md`](../README.md) 规则 2 归档（阶段计划只写入 [`../roadmap.md`](../status/roadmap.md)）。
+| [copilot-workspace-ux-brief.md](copilot-workspace-ux-brief.md) | HISIEM-SOC-Copilot Stage D 调查工作台的实现级 UX brief（跨仓参考；它原先把 Authority 指向一份已删除的冻结契约，现在指向 Copilot 仓 `docs/status/architecture-diagrams.md` §1 的平面模型） | 只描述增量补齐；与 Copilot 仓契约和本仓已有实现同步 |
 
 ## 使用边界
 

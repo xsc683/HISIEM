@@ -431,7 +431,6 @@ reliability, security, frontend), and every claim in it traces back to code and 
 | Index of the design reference set | [`docs/design/README.md`](docs/design/README.md) |
 | **Code-level evidence layer** | [`docs/evidence/architecture-analysis/`](docs/evidence/architecture-analysis/README.md) — per-subsystem `file:line` forensics; not a contract, and the contract wins on conflict |
 | Concepts and experiments | [`docs/learn/`](docs/learn/README.md) |
-| History / audit material | [`docs/archive/`](docs/archive/README.md) |
 | Agent conventions | [`AGENTS.md`](AGENTS.md) / [`CLAUDE.md`](CLAUDE.md) |
 
 Full index: [`docs/README.md`](docs/README.md).

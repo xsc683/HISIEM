@@ -381,7 +381,6 @@ cd web && npx playwright test
 | [docs/design/README.md](docs/design/README.md) | `docs/design/` 专项参考的索引（分工、状态规则、使用边界） |
 | [docs/evidence/architecture-analysis/](docs/evidence/architecture-analysis/README.md) | **代码级证据层**：按子系统的 `file:line` 取证与反直觉形态；不是契约，冲突时以契约为准 |
 | [docs/learn/README.md](docs/learn/README.md) | 从 SIEM 基础到 Kafka/ES/Flink/Logstash 的学习地图 |
-| [docs/archive/](docs/archive/README.md) | 历史 / 审计资料 |
 | [AGENTS.md](AGENTS.md) / [CLAUDE.md](CLAUDE.md) | 面向 AI 编码助手的仓库约定（英文 / 中文） |
 
 完整索引：[`docs/README.md`](docs/README.md)。

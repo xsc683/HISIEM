@@ -1,7 +1,7 @@
 # SOC Copilot 调查工作台 — Stage D UX Brief（实现级）
 
 **Scope:** 分析师体验产品化（不是全站重设计、不是 Chat、不是 dashboard 改版）。
-**Authority:** `HISIEM-SOC-Copilot/docs/archive/engineering-history/stage-contracts/00_Four-Plane_Architecture_Contract_Freeze.md` §6、`04_Stage-D_*`（原位于仓库外的 `four-plane/`，2026-09-23 已迁入 Copilot 仓）。
+**Authority:** Copilot 仓的当前契约——平面模型见 `HISIEM-SOC-Copilot/docs/status/architecture-diagrams.md` §1，工作台与权威语义见其 `docs/contracts/investigation-workspace.md` 与 `docs/contracts/domain-model.md`。（原先指向的 2026-09-14 冻结契约已于 2026-10-06 删除：它是该架构的一个旧版本，当前版本由上述契约持有。）
 **现有实现:** P1 workspace（`aa93666`）+ P2 响应工作流（`0305490`/`bf70fa8`/`5f46ac1`）。本 brief 只描述 **增量补齐**，不重做已有部分。
 
 ## 1. 信息层级（Investigation Landing = 概览）
