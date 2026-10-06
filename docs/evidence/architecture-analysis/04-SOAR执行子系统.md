@@ -399,64 +399,6 @@ if (loopState != null) {
 
 **这解释了持久化的 `soar_parallel_branch` 与 `soar_loop_state` 表存在的必要性**：它们是「节点已经被 fan-out / 进入循环」的标记，让引擎在重新领取同一节点时知道「我该走 arrive/advance 而不是 execute」。
 
-### 3.2 执行内核流
-
-```mermaid
----
-config:
-  theme: base
-  themeVariables:
-    fontFamily: YaHei
----
-flowchart TB
-    CLAIM["worker claimDue"]
-    P["process(claimed)"]
-    OWN["processOwned"]
-    L1["requireLease(claimed)"]
-    GET["getExecution(重读)"]
-    L2["requireLease(execution)"]
-    CAN{"cancelRequested<br/>或 status=cancelled?"}
-    RET["直接返回<br/>（已取消）"]
-    NODE["从 graphSnapshot 找 currentNodeId"]
-    PB{"parallelBranch<br/>存在?"}
-    LS{"loopState<br/>存在?"}
-    ARR["arriveParallel + 推进"]
-    ADV["advanceLoop + 推进"]
-    RP["SoarRetryPolicy.resolve"]
-    RUN{"nodeRun == null?"}
-    START{"startNode<br/>exhausted?"}
-    TERM["terminalFailure<br/>次数耗尽"]
-    EXE["handler.execute"]
-    COMMIT{"Outcome?"}
-    OK["store.advance / succeed / waitUntil<br/>createApproval / fanOut / startLoop"]
-    ERR{"retryable 且<br/>attempt < max?"}
-    SCHED["scheduleRetry<br/>next_attempt_at"]
-    FAIL["store.fail 终态"]
-
-    CLAIM --> P --> OWN --> L1 --> GET --> L2 --> CAN
-    CAN -->|是| RET
-    CAN -->|否| NODE --> PB
-    PB -->|是| ARR
-    PB -->|否| LS
-    LS -->|是| ADV
-    LS -->|否| RP --> RUN
-    RUN -->|是| START
-    START -->|是| TERM
-    START -->|否| EXE
-    RUN -->|否| EXE
-    EXE --> COMMIT --> OK
-    EXE -.抛异常.-> ERR
-    ERR -->|是| SCHED
-    ERR -->|否| FAIL
-
-    style L1 fill:#e8f4ea,stroke:#4a7c59
-    style L2 fill:#e8f4ea,stroke:#4a7c59
-    style TERM fill:#fdecea,stroke:#b3453a
-    style FAIL fill:#fdecea,stroke:#b3453a
-```
-
----
-
 ## 4. 十一个节点处理器
 
 ### 4.1 关键论断
@@ -872,38 +814,6 @@ public Set<String> outgoingBranches() {
 ```
 
 **所以「拒绝」也是一条正常分支，不是失败**——Playbook 可以为拒绝设计后续动作（比如通知、记录）。**这与「Agent 建议、人工授权」的分工一致**：拒绝是预期内的结果。
-
-### 7.2 人工审批流
-
-```mermaid
----
-config:
-  theme: base
-  themeVariables:
-    fontFamily: YaHei
----
-sequenceDiagram
-    autonumber
-    participant ENG as SoarExecutionEngine
-    participant DB as soar_approval + soar_approval_task
-    participant API as control-api SoarController
-    participant USER as 分析员
-
-    ENG->>DB: createApproval(execution, node, nodeRun, prompt)
-    Note over ENG: worker 立即释放，不阻塞
-    API->>DB: 查询待办（带 tenantId）
-    USER->>API: POST /api/soar/approvals/{id}/approve
-    API->>DB: decideApproval(tenantId, id, 决策)
-    DB->>DB: resumeWaitingHuman(nextNodeId, id)
-    Note over DB: nextNodeId 由 approve 分支在恢复时算出
-    ENG->>DB: 下轮 claimDue 领取已恢复的执行
-    alt 决策是 reject
-        API->>DB: 走 reject 分支目标
-        Note over DB: 拒绝也是正常分支，不是失败
-    end
-```
-
----
 
 ## 8. 生命周期事件
 

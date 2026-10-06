@@ -134,38 +134,6 @@ public interface ControlPlaneStore
 
 **接口的 javadoc 承载了「不要绕过我」这条约束**——这是把架构规约写在类型系统可见的位置，比写在文档里更难被忽略。
 
-### 2.2 装配时序
-
-```mermaid
----
-config:
-  theme: base
-  themeVariables:
-    fontFamily: YaHei
----
-sequenceDiagram
-    autonumber
-    participant BOOT as Spring Boot
-    participant DB as ControlPlaneDatabaseConfig
-    participant FLY as Flyway
-    participant MYB as 三个 MyBatis 工厂
-    participant SCAN as 三条 MapperScan
-    participant APP as control-api
-
-    BOOT->>DB: 装配 @Bean flyway(dataSource)
-    DB->>FLY: migrate
-    FLY-->>DB: 迁移完成（V1..V19）
-    Note over DB,FLY: bean 依赖顺序保证迁移先于存储
-    BOOT->>MYB: controlPlaneSqlSessionFactory（@Primary）
-    BOOT->>MYB: detectionSqlSessionFactory
-    BOOT->>MYB: soarSqlSessionFactory（非 Primary）
-    BOOT->>SCAN: 按 basePackageClasses / basePackages 注册 mapper
-    SCAN->>APP: 各 mapper 绑定到指定工厂
-    APP->>APP: 处理器与过滤器就绪，开始服务
-```
-
----
-
 ## 3. 持久化分层：四件套
 
 ### 3.1 关键论断
@@ -572,42 +540,6 @@ flowchart TB
 **论断 4：CORS 有独立配置类。**
 
 `applications/control-api/.../onboarding/CorsConfig.java` —— 与 `SecurityConfig` 里的 `.cors(cors -> {})`（启用 CORS 但用外部配置源）配合。
-
-### 5.2 错误处理流
-
-```mermaid
----
-config:
-  theme: base
-  themeVariables:
-    fontFamily: YaHei
----
-sequenceDiagram
-    autonumber
-    participant C as 客户端
-    participant F as 过滤器链
-    participant CTRL as Controller
-    participant SVC as Service
-    participant GEH as GlobalExceptionHandler
-
-    C->>F: 请求
-    F->>CTRL: 认证与租户已就绪
-    CTRL->>SVC: 业务调用
-    alt 正常
-        SVC-->>CTRL: 结果
-        CTRL-->>C: 200 + JSON
-    else 域异常
-        SVC-->>CTRL: 抛 NotFoundException 等
-        CTRL->>GEH: @ExceptionHandler 接管
-        GEH-->>C: 404/409/400/403 + ApiError
-    else AgentLaunchException
-        SVC-->>CTRL: 自带 status 与 code
-        CTRL->>GEH: @ExceptionHandler
-        GEH-->>C: HttpStatus.valueOf(e.status()) + e.code()
-    end
-```
-
----
 
 ## 6. 四类面向 API 的业务模块
 

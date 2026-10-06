@@ -236,37 +236,6 @@ public static final OutputTag<String> DLQ = new OutputTag<String>("siem-event-pa
 
 `DetectionJob` 用 `.uid("event-parser-dlq-kafka")` 绑定到 Kafka sink（`DetectionJob.java:167`）。
 
-### 2.2 时序图
-
-```mermaid
----
-config:
-  theme: base
-  themeVariables:
-    fontFamily: YaHei
----
-sequenceDiagram
-    autonumber
-    participant K as Kafka siem-events
-    participant P as EventParsingProcessFunction
-    participant EP as EventParser
-    participant D as 下游检测算子
-    participant DLQ as Kafka siem-events-dlq
-
-    K->>P: String value
-    P->>EP: parseEvent(value)
-    EP->>EP: readValue 得到嵌套 Map
-    EP->>EP: flatten 点分展开，List 不下钻
-    alt 有 @timestamp 且是 ISO-8601
-        EP-->>P: Event(rawJson, fields, millis)
-        P->>D: collect(event)
-    else 缺 @timestamp 或格式无效
-        EP-->>P: IllegalArgumentException
-        P->>P: dlq() 截断到 65536 / 2048 字符
-        P->>DLQ: output(DLQ, 带 dlq.id 与 dlq.stage 的记录)
-    end
-```
-
 ## 3. 规则模型：声明 → 运行时
 
 ### 3.1 关键论断
@@ -1229,50 +1198,6 @@ public static DetectionJobArguments parse(String[] args, Map<String, String> env
 ```
 
 **两种 managed 路径（4 参数 / 3 环境变量），以及一条 legacy 回退。** 且 `managed` 与 `legacy` 互斥（`:26-28`）：*「legacy arguments cannot carry managed identity」*。
-
-### 7.2 启动闸门时序
-
-```mermaid
----
-config:
-  theme: base
-  themeVariables:
-    fontFamily: YaHei
----
-sequenceDiagram
-    autonumber
-    participant OP as 操作者
-    participant DJ as DetectionJob.main
-    participant ARG as DetectionJobArguments
-    participant RC as RuleConfigLoader
-    participant MV as RuntimeManifestVerifier
-    participant ENV as Flink 运行时
-
-    OP->>DJ: flink run detection-job.jar rulesDir jobKey generation manifestHash
-    DJ->>ARG: parse(args)
-    ARG-->>DJ: managed=true 或 legacy=true
-    DJ->>RC: loadDir(rulesDir)
-    alt 目录缺失 / 为空 / id 重复
-        RC-->>DJ: IllegalStateException
-        Note over DJ,ENV: 作业不启动
-    else 加载成功
-        RC-->>DJ: 全部 RuleDecl
-        DJ->>MV: verify(rulesDir, arguments, decls)
-        alt legacy
-            MV-->>DJ: Verification(legacy=true) 仅打印提示
-        else managed
-            MV->>MV: 读原始字节，SHA-256 比对
-            MV->>MV: schemaVersion 受支持
-            MV->>MV: generation 一致
-            MV->>MV: ruleKey 集合双向比对
-            MV-->>DJ: Verification(false, hash, gen, keys)
-        end
-        DJ->>DJ: filter enabled
-        DJ->>ENV: env.execute()
-    end
-```
-
----
 
 ## 8. 关键不变式（代码强制）
 
