@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 # HISIEM 平台 — 项目速览
 
-轻量级 SIEM(Elastic Stack + Flink)。Phase 3.0-3.5 检测引擎基线与 Phase 4.0-4.4.1 控制台/运维能力已完成，其后又落地了确定性 SOAR 闭环、Managed Detection Runtime（5A/5B）和接入 SOC Copilot 的 AI 调查工作台；控制面为 Spring Boot + PostgreSQL/Flyway + MyBatis，数据面为 Elastic Stack + Kafka + Flink。当前事实与未闭环风险见 [docs/current-status.md](docs/status/current-status.md)，文档导航见 [docs/](docs/README.md)。
+轻量级 SIEM(Elastic Stack + Flink)。Phase 3.0-3.5 检测引擎基线与 Phase 4.0-4.4.1 控制台/运维能力已完成，其后又落地了确定性 SOAR 闭环、Managed Detection Runtime（5A/5B）和接入 SOC Copilot 的 AI 调查工作台；控制面为 Spring Boot + PostgreSQL/Flyway + MyBatis，数据面为 Elastic Stack + Kafka + Flink。当前事实与未闭环风险见 [当前状态](docs/status/current-status.md)，文档导航见 [docs/](docs/README.md)。
 
 ## 数据链路
 
@@ -49,7 +49,7 @@ flowchart LR
 3. **端口契约分层**：业务侧依赖 `*RepositoryPort`（typed）接口；`MyBatis*Repository`（`@Repository`）实现端口并调用 mapper；detection/`DetectionControllerRepository` 等旧零 SQL `*Repository` 类已 `@Deprecated`，只是新 adapter 的外观（用 `jdbc.getDataSource()` 引导 mapper）。新 repository 走「Mapper 接口 + XML + `*RepositoryPort` + `MyBatis*Repository`」四件套。例外：`SoarStore`、`SoarConnectorActionInvocation`、`SoarBusinessActionInvocation` 作为具体 `@Repository` 直接注入 `SoarMapper`（soar-core 主代码/`SoarWorkerTest` 以具体类消费，不套端口）。`@Transactional` 标注在 store/service 上，让 mapper 语句与调用方同一事务，保住 `FOR UPDATE`/乐观版本/租约语义。
 4. **UUID 列类型**：`UuidTypeHandler` 是共享的 PostgreSQL `uuid`↔`String` 处理器，注册在 `DetectionMyBatisConfiguration`；未使用它的场景可回退 UUID 自动映射。
 5. **下划线映射**：detection-controller 里 `mybatis.configuration.map-underscore-to-camel-case=false`，column→property 靠显式 `resultMap`/`@Results`，不要依赖自动驼峰映射。mapper XML 增加字段时同时维护 resultMap。JSON 列持久化为 String（`jdbcType=VARCHAR`），`Instant` 用 `jdbcType=TIMESTAMP`。
-6. **测试**：根 `mvn test` 含 `MyBatisMapperSmokeTest`（control-api）、`PostgresMigrationContainerTest`（Testcontainers + 真实 PostgreSQL，Docker 可用时执行）、`SoarRuntimeIntegrationTest`（H2 PostgreSQL 模式跑全 Soar 租约/fencing/并行/循环路径），以及针对 `*RepositoryPort` 的 controller/service 集成测试。根测试可能因 Docker 不可用跳过 Testcontainers 用例，见 docs/current-status.md。
+6. **测试**：根 `mvn test` 含 `MyBatisMapperSmokeTest`（control-api）、`PostgresMigrationContainerTest`（Testcontainers + 真实 PostgreSQL，Docker 可用时执行）、`SoarRuntimeIntegrationTest`（H2 PostgreSQL 模式跑全 Soar 租约/fencing/并行/循环路径），以及针对 `*RepositoryPort` 的 controller/service 集成测试。根测试可能因 Docker 不可用跳过 Testcontainers 用例，见 docs/status/current-status.md。
 
 ## 常用命令
 
@@ -105,7 +105,7 @@ bash /mnt/d/Project/SIEM/infra/simulator/brute-force-test.sh
 13. **定时任务隔离**：非 SOAR 的 BackgroundTaskRecovery、CaseAggregateJob、CaseMirrorDispatcher/CaseMirrorReconcileJob 和 NotificationScanner 都受 `app.operations.runtime-enabled` 控制；control API 默认 true，worker 默认 false。不要仅依赖 WebApplicationType 判断。
 15. **检测 controller 隔离**：`control-api` 只持久化 desired state 并返回 `202 PENDING`，不得依赖或注入 `RulesDeployer`/`ProcessRulesDeployer`；`detection-controller` 是独立 `WebApplicationType.NONE` 进程，使用 V18 durable claim/lease/fencing。默认 `app.detection.runtime-adapter=disabled` 只报告 UNKNOWN，不执行 Docker/Flink 物理部署；设置为 `process` 才启用 5B 单集群 process adapter。
 16. **控制面物理命令隔离**：WSL/Docker `ProcessBuilder` 实现在 `platform-operations-adapters` 模块；control-api 为保持既有非 Detection 运维行为显式依赖该模块，默认 `app.operations.process-adapters=enabled`，可通过环境变量禁用，未来再拆独立 operations worker。Detection controller 不依赖该模块；Detection 5B process adapter 位于 `detection-runtime`，仅在显式 `app.detection.runtime-adapter=process` 时启用。
-17. **AI 调查工作台边界**：浏览器只调用 HISIEM（`/api/agent-investigations/**` 与告警/案件详情上的 `agent-investigation` 启动端点），Copilot 地址、工作台跳转基址与服务凭据只在服务端配置（`app.agent.*`），不进入前端 bundle；`app.agent.bearer-token` 为空时进程启动即失败，不发匿名请求。反向的 `/api/internal/soar/**` 是独立安全链，`app.internal-service.token` 未配置时拒绝所有请求。注意 `soar-worker` 的组件扫描覆盖 `com.xscsiem.hsiem_platform`，因此它也必须在自己的 `application.properties` 里绑定 `app.agent.*` 与 `app.internal-service.token`，否则启动失败。契约见 [docs/agent-integration.md](docs/contracts/agent-integration.md)。
+17. **AI 调查工作台边界**：浏览器只调用 HISIEM（`/api/agent-investigations/**` 与告警/案件详情上的 `agent-investigation` 启动端点），Copilot 地址、工作台跳转基址与服务凭据只在服务端配置（`app.agent.*`），不进入前端 bundle；`app.agent.bearer-token` 为空时进程启动即失败，不发匿名请求。反向的 `/api/internal/soar/**` 是独立安全链，`app.internal-service.token` 未配置时拒绝所有请求。注意 `soar-worker` 的组件扫描覆盖 `com.xscsiem.hsiem_platform`，因此它也必须在自己的 `application.properties` 里绑定 `app.agent.*` 与 `app.internal-service.token`，否则启动失败。契约见 [docs/contracts/agent-integration.md](docs/contracts/agent-integration.md)。
 
 ## 模块边界与进程角色
 

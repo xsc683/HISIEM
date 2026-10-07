@@ -1,8 +1,8 @@
-# SOC Copilot 调查工作台 — Stage D UX Brief（实现级）
+# SOC Copilot 调查工作台 UX 设计（实现级）
 
 **Scope:** 分析师体验产品化（不是全站重设计、不是 Chat、不是 dashboard 改版）。
 **Authority:** Copilot 仓的当前契约——平面模型见 `HISIEM-SOC-Copilot/docs/status/architecture-diagrams.md` §1，工作台与权威语义见其 `docs/contracts/investigation-workspace.md` 与 `docs/contracts/domain-model.md`。（原先指向的 2026-09-14 冻结契约已于 2026-10-06 删除：它是该架构的一个旧版本，当前版本由上述契约持有。）
-**现有实现:** P1 workspace（`aa93666`）+ P2 响应工作流（`0305490`/`bf70fa8`/`5f46ac1`）。本 brief 只描述 **增量补齐**，不重做已有部分。
+**现有实现:** 当前调查工作台（`aa93666`）+ 当前响应工作流（`0305490`/`bf70fa8`/`5f46ac1`）。本文档描述当前设计要求与它们的对应关系，不重做已有部分。
 
 ## 1. 信息层级（Investigation Landing = 概览）
 
@@ -80,11 +80,11 @@ UI 不合并任何中间状态：提案 ≠ 审批 ≠ 提交 ≠ 执行成功�
 
 Start / Cancel / Approve / Reject / 创建提案全部经 `web/src/api/index.js` → HISIEM BFF → Copilot 正式应用边界；UI 不做任何本地业务变更，不生成审批或执行真值。
 
-## 10. 本轮增量（gap）——已全部落地
+## 10. 设计要求与当前实现
 
-这份清单是**当时**的增量范围。六项都已实现，本节保留为「设计条目 ↔ 落地位置」的对应记录：
+六项设计要求都已实现，本节保留为「设计要求 ↔ 落地位置」的对应记录：
 
-| # | 增量（当时的缺失项） | 落地位置 |
+| # | 设计要求 | 落地位置 |
 | --- | --- | --- |
 | 1 | 状态摘要（需要处理 / 响应生命周期） | `web/src/components/copilot/InvestigationStateSummary.vue` |
 | 2 | 权威类别标签（Platform Fact / Knowledge Context 等） | `web/src/components/copilot/AuthorityTag.vue` |
@@ -93,4 +93,4 @@ Start / Cancel / Approve / Reject / 创建提案全部经 `web/src/api/index.js`
 | 5 | 窄屏行为 | `InvestigationWorkspaceView.vue` 的 pane 布局 |
 | 6 | 上述各项的单元与浏览器验收测试 | `web/e2e/copilot-authority.spec.js`（权威语义 / 知识来源 / 状态表达 / 窄屏）、`web/e2e/response-workflow.spec.js`（响应生命周期） |
 
-**所以本节不是「设计稿」**：对应界面已在 `web/` 中实现。但**测试的执行状态要单独看**——`web/e2e/` 的 Playwright 用例在最近一轮验证中**未执行**，以 [../current-status.md](../status/current-status.md) 为准。
+**所以本节不是「设计稿」**：对应界面已在 `web/` 中实现。但**测试的执行状态要单独看**——`web/e2e/` 的 Playwright 用例在最近一轮验证中**未执行**，以 [当前状态](../status/current-status.md) 为准。
