@@ -7,7 +7,7 @@
 > **结论以当前代码为准**（分支 `add_frame` @ `36b967f`）
 > **文档集**：00–06 共 7 篇，见 [`README.md`](README.md)
 
-> **读法**：Web 控制台与基础设施在权威文档侧几乎没有系统覆盖——只有 [`../product-contract.md`](../../contracts/product-contract.md) §1 的路由表与 `infra/*/README.md` 的局部说明，**本篇是代码级覆盖**；确认「现在到底怎样」时回到代码。
+> **读法**：Web 控制台与基础设施在权威文档侧几乎没有系统覆盖——只有 [`../../contracts/product-contract.md`](../../contracts/product-contract.md) §1 的路由表与 `infra/*/README.md` 的局部说明，**本篇是代码级覆盖**；确认「现在到底怎样」时回到代码。
 
 ---
 
@@ -266,7 +266,7 @@ sequenceDiagram
 | `copilot.test.js` | Copilot 数据映射 | 契约转换 |
 | **`copilotStageD.test.js`** | **Copilot Stage D** | 一个按阶段命名的展示契约测试 |
 
-> **「Stage D」指本仓的设计文档**，不是外部仓库：[`../design/copilot-workspace-ux-brief.md`](../../design/copilot-workspace-ux-brief.md) 的标题就是「SOC Copilot 调查工作台 — Stage D UX Brief（实现级）」，该测试文件第一行也写着*「Stage D — 分析师体验的展示契约测试」*。
+> **「Stage D」指本仓的设计文档**，不是外部仓库：[`../../design/copilot-workspace-ux-brief.md`](../../design/copilot-workspace-ux-brief.md) 的标题就是「SOC Copilot 调查工作台 — Stage D UX Brief（实现级）」，该测试文件第一行也写着*「Stage D — 分析师体验的展示契约测试」*。
 
 **e2e 覆盖 5 个 spec**：`web/playwright.config.js` 的 `testDir: './e2e'`，目录下是 `copilot-authority`、`investigation-workspace`、`log-search-overview`、`playbook-editor`、`response-workflow` 五个 `.spec.js`。
 

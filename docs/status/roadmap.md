@@ -107,11 +107,11 @@ npm.cmd --prefix web run test:e2e
 - lifecycle DLQ/replay、OR 条件、动态 map/while、子 Playbook、Connector 凭据/mTLS/代理/隔离、**SOAR 内的 AI 节点**，以及跨地域容量验证。
   （注意：这里的「AI Agent」指能在 Playbook 里充当判断节点的 AI；**AI 调查工作台**是另一条链路，由外部 SOC Copilot 经控制台 BFF 代理接入，已落地且不再是路线图事项——见[产品契约](../contracts/product-contract.md)与[当前状态](current-status.md)。）
 
-- OCSF 可移植层补齐 4 个仍是「设计值」的字段（`ocsf.class_name`、`ocsf.category_uid`、`ocsf.metadata.version`、`ocsf.time`）——见 [design/ocsf-mapping.md](../design/ocsf-mapping.md) §1 各行标着「待 `Ocsf.java` 补写」的格子。
+- OCSF 可移植层补齐 4 个仍是「设计值」的字段（`ocsf.class_name`、`ocsf.category_uid`、`ocsf.metadata.version`、`ocsf.time`）——见 [../design/ocsf-mapping.md](../design/ocsf-mapping.md) §1 各行标着「待 `Ocsf.java` 补写」的格子。
 
 ## 学习路线
 
-学习任务不再和产品阶段混写：按 [`learn/README.md`](../learn/README.md) 的“概念 → 小实验 → 项目改造 → 测试 → 部署 → 复盘”推进。每个改造任务应注明它是项目修复、学习实践或两者兼有。
+学习任务不再和产品阶段混写：按 [`../learn/README.md`](../learn/README.md) 的“概念 → 小实验 → 项目改造 → 测试 → 部署 → 复盘”推进。每个改造任务应注明它是项目修复、学习实践或两者兼有。
 
 ## 变更规则
 

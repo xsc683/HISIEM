@@ -1,6 +1,6 @@
 # SOAR 模块架构设计与后端执行数据流
 
-> 状态：已实现。本文重点解释 V11/V12 基础持久执行内核；V13–V15 的并行、循环、Connector、手动触发和验证器链见 [`soar-capability-runtime.md`](soar-capability-runtime.md)。功能契约见 [`../soar.md`](../status/soar.md)。
+> 状态：已实现。本文重点解释 V11/V12 基础持久执行内核；V13–V15 的并行、循环、Connector、手动触发和验证器链见 [`soar-capability-runtime.md`](soar-capability-runtime.md)。功能契约见 [`../status/soar.md`](../status/soar.md)。
 
 ## 1. 设计目标与运行边界
 

@@ -105,7 +105,7 @@ HISIEM 已完成检测链路、控制面、接入向导、告警处置、调查�
 | Case 镜像 DELETE 200 被判断为失败 | 任意 2xx/404 均视为幂等成功 |
 | keystore 被 Git 或 rsync 带入仓库/覆盖环境 | `.gitignore` 与 `deploy.sh` 双重排除 |
 
-旧 V8–V10 SOAR 原型仍不是运行事实。当前以 V11–V15、[`soar.md`](soar.md) 和 [`design/soar-capability-runtime.md`](../design/soar-capability-runtime.md) 为准。
+旧 V8–V10 SOAR 原型仍不是运行事实。当前以 V11–V15、[`soar.md`](soar.md) 和 [`../design/soar-capability-runtime.md`](../design/soar-capability-runtime.md) 为准。
 
 ## 文档使用规则
 
