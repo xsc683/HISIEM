@@ -1,6 +1,6 @@
 # HISIEM 平台 — 轻量级 SIEM
 
-> **中文对应版本。** 英文版 [README.en.md](README.en.md) 是主入口与事实来源；本文件与其 14 节一一对应，并保留中文版独有的仓库结构、文档入口、模块依赖与快速开始细节。深度技术细节见 [docs/](docs/)，阅读顺序见 [§13](#13-文档阅读顺序)。
+> **本文件是仓库的唯一入口与事实来源**，共 14 节，包含仓库结构、文档入口、模块依赖与快速开始细节。深度技术细节见 [docs/](docs/)，阅读顺序见 [§13](#13-文档阅读顺序)。
 
 基于 **Elastic Stack + Kafka + Flink** 的轻量级 SIEM(Security Information and Event Management)平台，控制面由 **Spring Boot** 承载；覆盖日志采集、解析与标准化、实时检测、告警存储、分析员控制台和确定性 SOAR 响应执行。
 
@@ -410,6 +410,8 @@ echo 'Aug 1 10:20:00 server03 sshd[9999]: Failed password for test from 172.16.1
 ./mvnw test
 # 只运行 Flink 模块测试
 ./mvnw -f flink/pom.xml test
+# 只打包不跑测试
+./mvnw -q -DskipTests package
 
 # 7. 启动控制面(另开终端;默认连接 localhost:5432/siem)
 ./mvnw -pl applications/control-api spring-boot:run
@@ -420,6 +422,10 @@ echo 'Aug 1 10:20:00 server03 sshd[9999]: Failed password for test from 172.16.1
 
 # 9. 启动前端(另开终端)
 npm --prefix web run dev
+
+# 10. 控制台
+#    Kibana:      http://localhost:5601
+#    Vue 控制台:  见 docs/operations/deployment.md
 ```
 
 > 详细步骤见 [docs/deployment.md](docs/operations/deployment.md)。
