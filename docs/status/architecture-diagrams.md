@@ -1,19 +1,18 @@
-# HISIEM — Architecture Diagram & Data Flow Diagram
+# HISIEM — 架构图与数据流图
 
-Two canonical diagrams for the platform:
+本平台的两张规范图：
 
-1. **[Architecture diagram](#1-architecture-diagram)** — *what the system is made of*
-2. **[Data flow diagram](#2-data-flow-diagram)** — *what happens when a real log line flows through it*
+1. **[架构图](#1-架构图)** — *系统由什么构成*
+2. **[数据流图](#2-数据流图)** — *一条真实日志流过它时会发生什么*
 
-Companion documents: [`architecture.md`](architecture.md) (data/control plane boundaries),
-[`evidence/architecture-analysis/`](../evidence/architecture-analysis/README.md) (code-level evidence).
+配套文档：[`architecture.md`](architecture.md)（数据面/控制面边界）、
+[`evidence/architecture-analysis/`](../evidence/architecture-analysis/README.md)（代码级证据）。
 
 ---
 
-## 1. Architecture Diagram
+## 1. 架构图
 
-Every component grouped by the responsibility plane that owns it, with the flows that cross
-plane boundaries made explicit.
+每个组件都归到拥有它的那个职责平面，并显式画出跨平面边界的那些流。
 
 ```mermaid
 graph TB
@@ -92,13 +91,13 @@ graph TB
         COPI["HISIEM-SOC-Copilot<br/>AI investigation &amp; response decision layer"]
     end
 
-    %% ---- Ingest ----
+    %% ---- 摄取 ----
     SYSLOG --> LS
     LS -->|"parse failed: archive only"| ES
     LS -->|"parse ok"| ES
     LS -->|"parse ok"| T_EVENTS
 
-    %% ---- Detection ----
+    %% ---- 检测 ----
     T_EVENTS --> KSRC
     KSRC --> PARSE
     PARSE -->|"invalid JSON / event time"| DLQS
@@ -116,13 +115,13 @@ graph TB
     CEPH --> ESIDX
     BASE --> ESIDX
 
-    %% ---- Alert persistence and announcement ----
+    %% ---- 告警落库与对外播报 ----
     ESIDX --> ES
     ESIDX -->|"only after ES 2xx"| LCM
     LCM --> LSK
     LSK --> T_ALERT
 
-    %% ---- Control plane ----
+    %% ---- 控制面 ----
     ES --> ALERTAPI
     ES --> LOGAPI
     ES --> CASEAPI
@@ -137,13 +136,13 @@ graph TB
     CA --> STORES
     STORES --> PG
 
-    %% ---- Detection control ----
+    %% ---- 检测控制 ----
     RULEAPI --> DCTL
     DCTL --> DRT
     DCTRLR --> DCTL
     CA --> DCTL
 
-    %% ---- Cross-store convergence ----
+    %% ---- 跨存储收敛 ----
     JOBS -->|"enqueueCaseMirror"| STORES
     STORES -->|"case_mirror_outbox: lease + reclaim"| ES
 
@@ -160,37 +159,36 @@ graph TB
     STORES --> LOD
     LOD --> T_ALERT
 
-    %% ---- Console ----
+    %% ---- 控制台 ----
     WEB -->|"/api/**"| CA
 
-    %% ---- Cross-system bridge ----
+    %% ---- 跨系统桥 ----
     WEB -->|"/api/agent-investigations/**"| BFF
     BFF -->|"service bearer + server-asserted tenant/actor"| COPI
     COPI -->|"proxied read model"| BFF
     SOARAPI -->|"execution state query"| COPI
 ```
 
-### What this diagram solves
+### 这张图解决了什么
 
-It answers **"which plane owns which responsibility, and where does a flow cross a plane
-boundary?"** The crossing points are where the interesting engineering lives — each one is a
-place where two different correctness models meet.
+它回答的是「**哪个平面拥有哪项职责，以及一条流在哪里跨过平面边界？**」跨点正是有意思的工程所在——
+每一处都是两套不同正确性模型相遇的地方。
 
-### Component responsibilities
+### 组件职责
 
-| Plane | Owns | Notable non-responsibility |
+| 平面 | 拥有 | 值得点明的「不负责」 |
 |---|---|---|
-| **Ingestion** | Parse, normalize to ECS, route by parse outcome | Does not detect |
-| **Detection (Flink)** | Event-time windowing, CEP, baselines, suppression, alert identity | Does not store or manage cases |
-| **Message Bus** | Durable fan-out, DLQ, lifecycle contract carrier | Does not compute |
-| **Persistence** | PostgreSQL = transactional truth; Elasticsearch = rebuildable search read model | Neither alone is a complete truth |
-| **SOAR** | Playbook execution: node-by-node advance under lease, with fencing | Does not decide *whether* to run — that is a durable command from the control plane |
-| **Control Plane** | Cases, alerts surface, rules, log search, IAM/RBAC, ops APIs, the Copilot BFF | **Does not perform physical detection deployment** |
-| **Detection Control** | Rule definitions, desired vs. observed runtime state, reconciliation | **No physical deployment responsibility** |
-| **Console** | Analyst presentation and authoring | Holds no authority of its own |
-| **Sibling System** | AI investigation, evidence, response *proposal*, human-authority workflow | **Does not detect and does not execute** |
+| **摄取** | 解析、归一化成 ECS、按解析结果路由 | 不检测 |
+| **检测（Flink）** | 事件时间窗口、CEP、基线、抑制、告警身份 | 不存储、不管理案件 |
+| **消息总线** | 持久扇出、DLQ、生命周期契约载体 | 不计算 |
+| **持久化** | PostgreSQL = 事务真相；Elasticsearch = 可重建的检索读模型 | 两者单独都不是完整真相 |
+| **SOAR** | Playbook 执行：在租约下逐节点推进，带 fencing | 不决定*是否*运行——那是一条来自控制面的持久命令 |
+| **控制面** | 案件、告警面、规则、日志检索、IAM/RBAC、运维 API、Copilot BFF | **不做物理检测部署** |
+| **检测控制** | 规则定义、期望 vs 观测运行时状态、对账 | **没有物理部署职责** |
+| **控制台** | 分析员呈现与编写 | 自身不持有任何权威 |
+| **兄弟系统** | AI 调查、证据、响应*提案*、人工授权流程 | **不检测、也不执行** |
 
-### Where data comes from and goes
+### 数据从哪里来、到哪里去
 
 ```text
 IN    Log lines arrive at Logstash from syslog / agents / the simulator.
@@ -206,7 +204,7 @@ CROSS The console never talks to the sibling system directly. It calls HISIEM's
       credential and a tenant/actor taken from HISIEM's already-validated context.
 ```
 
-### Where truth and authority live
+### 真相与权威分别住在哪
 
 ```text
 PostgreSQL                    = control-plane transactional truth
@@ -220,24 +218,24 @@ Sibling-system execution view = NOT authoritative here; HISIEM's observed state 
                                 the final execution truth for the combined system
 ```
 
-### Reliability boundaries
+### 可靠性边界
 
-| # | Boundary | Where | What can go wrong |
+| # | 边界 | 位置 | 可能出什么错 |
 |---|---|---|---|
-| 1 | Parse boundary | Logstash → ES raw / ES events + Kafka | Unparseable records must be retained, never silently dropped |
-| 2 | Event-time boundary | Kafka → Flink timestamp assignment | Source clock is trusted; skew is not reconciled |
-| 3 | Sink boundary | Flink → Elasticsearch | Non-transactional write; convergence relies on deterministic `_id` |
-| 4 | Announcement boundary | ES 2xx → Kafka lifecycle event | Ordering is load-bearing: downstream must never learn of an unstored alert |
-| 5 | Cross-store boundary | PostgreSQL ↔ Elasticsearch | No distributed transaction; convergence via `case_mirror_outbox` with lease + reclaim |
-| 6 | Execution boundary | Control plane → SOAR | Playbook advancement is lease-protected; **node-side-effect idempotency belongs to the connector** |
-| 7 | Cross-system boundary | HISIEM BFF → sibling system | Tenant/actor are server-asserted; the browser can never override them |
-| 8 | Single-JVM lock boundary | control plane in-process guards | `synchronized`, `lifecycleInFlight` and the port lock cover **one JVM only**; a multi-replica control plane needs a distributed lock |
-| 9 | Rule-state vs. deploy boundary | Flink savepoint ↔ detection-controller reconcile | Savepoints protect rule *state*; start/stop is driven by desired generation and reconcile, and the process adapter only rebuilds the affected job group when an artifact must be replaced. Wider scale still needs dynamic rule broadcast or versioned jobs |
-| 10 | Environment boundary | local Compose | PLAINTEXT, single node and RF=1 are local-only; production must pass `ProductionSafetyValidator`'s TLS/SASL gate and add topology HA |
+| 1 | 解析边界 | Logstash → ES raw / ES events + Kafka | 无法解析的记录必须被留存，绝不静默丢弃 |
+| 2 | 事件时间边界 | Kafka → Flink 时间戳赋予 | 来源时钟被信任；时钟偏移不被对账 |
+| 3 | Sink 边界 | Flink → Elasticsearch | 非事务写入；收敛依赖确定性 `_id` |
+| 4 | 播报边界 | ES 2xx → Kafka 生命周期事件 | 顺序是承重的：下游绝不能得知一条未落库的告警 |
+| 5 | 跨存储边界 | PostgreSQL ↔ Elasticsearch | 没有分布式事务；经带租约 + 回收的 `case_mirror_outbox` 收敛 |
+| 6 | 执行边界 | 控制面 → SOAR | Playbook 推进受租约保护；**节点副作用的幂等属于 connector** |
+| 7 | 跨系统边界 | HISIEM BFF → 兄弟系统 | 租户/actor 由服务端断言；浏览器永远无法覆盖它们 |
+| 8 | 单 JVM 锁边界 | 控制面进程内守卫 | `synchronized`、`lifecycleInFlight` 与端口锁只覆盖**一个 JVM**；多副本控制面需要分布式锁 |
+| 9 | 规则状态与部署边界 | Flink savepoint ↔ detection-controller 对账 | Savepoint 保护的是规则*状态*；启停由期望 generation 与对账驱动，而 process adapter 只在产物必须替换时重建受影响的 job group。更大规模仍需要动态规则广播或版本化作业 |
+| 10 | 环境边界 | 本地 Compose | PLAINTEXT、单节点与 RF=1 只适用于本地；生产必须通过 `ProductionSafetyValidator` 的 TLS/SASL 门禁，并补上拓扑 HA |
 
-### Event-time boundary, in detail
+### 事件时间边界，细说
 
-Three mechanisms that are easy to conflate, and the boundary that follows from them.
+三个容易被混为一谈的机制，以及由它们导出的那条边界。
 
 ```mermaid
 flowchart LR
@@ -273,24 +271,21 @@ flowchart LR
     WINDOW --> LATE
 ```
 
-| Mechanism | Value here | What it does |
+| 机制 | 这里的取值 | 它做什么 |
 |---|---|---|
-| Bounded out-of-orderness | 10 seconds | Lets the watermark trail the newest observed event time by a fixed bound, so modest reordering is absorbed rather than treated as late |
-| Idleness | 60 seconds | Stops a source that has gone quiet from holding every window open forever |
-| Window trigger | watermark ≥ window end | Windows fire on event time. **Once a window has fired, there is no allowed-lateness re-fire** |
+| 有界乱序 | 10 秒 | 让 watermark 以一个固定界落后于最新观测到的事件时间，于是轻度的乱序被吸收，而不是被当作迟到 |
+| 空闲 | 60 秒 | 阻止一个已经安静下来的来源把每个窗口永远撑开 |
+| 窗口触发 | watermark ≥ 窗口结束 | 窗口按事件时间触发。**窗口一旦触发过，就不会因为 allowed-lateness 再触发一次** |
 
-**There is no `allowedLateness` configuration in this job, and no late-event side output.**
-The boundary is therefore: reordering inside the 10-second bound is absorbed; an event that
-arrives after its window has already fired does not contribute to that window's result and is
-not separately captured. See [Known Limits](../../README.en.md#12-known-limits).
-
-
+**这个作业里没有 `allowedLateness` 配置，也没有迟到事件的 side output。** 因此边界是：10 秒界内的乱序
+被吸收；在其窗口已经触发之后到达的事件既不计入该窗口结果，也不会被单独捕获。见
+[已知限制](../../README.md#12-已知限制)。
 
 ---
 
-## 2. Data Flow Diagram
+## 2. 数据流图
 
-One real log line, followed end to end.
+一条真实日志，端到端走一遍。
 
 ```mermaid
 sequenceDiagram
@@ -307,21 +302,21 @@ sequenceDiagram
     participant CP as Sibling System (SOC Copilot)
 
     rect rgb(245,248,255)
-        Note over SRC,MQ: Ingestion — two different failure policies
+        Note over SRC,MQ: 摄取 —— 两种不同的失败策略
     end
 
     SRC->>LS: raw log line
     LS->>LS: Grok parse + ECS mapping + date parsing
     alt parse failed
         LS->>ES: write siem-events-raw-YYYY.MM.dd
-        Note over LS,ES: archived for forensics, NOT published to Kafka
+        Note over LS,ES: 归档供取证，不发布到 Kafka
     else parse ok
         LS->>ES: write siem-events-*
         LS->>MQ: publish siem-events
     end
 
     rect rgb(245,255,245)
-        Note over MQ,ES: Detection — event-time streaming
+        Note over MQ,ES: 检测 —— 事件时间流式处理
     end
 
     MQ->>FL: KafkaSource consumes siem-events
@@ -330,7 +325,7 @@ sequenceDiagram
         FL->>MQ: side output to siem-events-dlq
     else valid
         FL->>FL: assign timestamp, advance watermark (OOO 10s, idle 60s)
-        Note over FL: one shared watermark feeds window / CEP / baseline
+        Note over FL: 一条共享 watermark 供给 window / CEP / baseline
         FL->>FL: single-event rules (no watermark)
         FL->>FL: window rules over event time
         FL->>FL: CEP pattern match
@@ -340,21 +335,21 @@ sequenceDiagram
     end
 
     rect rgb(255,250,240)
-        Note over FL,MQ: Alert persistence then announcement
+        Note over FL,MQ: 告警先落库，再播报
     end
 
     FL->>ES: POST /siem-alerts/_update/{_id}
     alt ES write failed
         ES--xFL: non-2xx
-        Note over FL,ES: exception raised, NO lifecycle event emitted
+        Note over FL,ES: 抛异常，不发出任何生命周期事件
     else ES write succeeded
         ES-->>FL: 2xx
         FL->>MQ: alert.created with deterministic message_id
-        Note over FL,MQ: downstream never learns of an unstored alert
+        Note over FL,MQ: 下游永远不会得知一条未落库的告警
     end
 
     rect rgb(250,245,255)
-        Note over API,PG: Case handling and cross-store convergence
+        Note over API,PG: 案件处理与跨存储收敛
     end
 
     WEB->>API: analyst opens alert
@@ -364,22 +359,22 @@ sequenceDiagram
     API->>API: CaseAggregateJob may aggregate alerts into a case
     API->>PG: persist case fact (single transaction)
     API->>PG: enqueueCaseMirror into case_mirror_outbox
-    Note over API,PG: fact and outbox row commit together
+    Note over API,PG: 事实与 outbox 行一起提交
     PG->>ES: dispatcher claims batch under lease, writes case mirror
-    Note over PG,ES: eventually consistent, no distributed transaction
+    Note over PG,ES: 最终一致，没有分布式事务
 
     rect rgb(245,255,250)
-        Note over MQ,PG: SOAR execution
+        Note over MQ,PG: SOAR 执行
     end
 
     MQ->>SOAR: alert.created / case lifecycle event
     SOAR->>SOAR: validate lifecycle contract (message_id required)
     SOAR->>PG: claim execution under lease, carry fencing token
-    loop advance node by node
+    loop 逐节点推进
         SOAR->>SOAR: route to next node and run its handler
         alt human approval node
             SOAR->>PG: persist state, release worker
-            Note over SOAR,PG: the work resumes from persisted state, not memory
+            Note over SOAR,PG: 工作从持久化状态恢复，而不是从内存
         else ordinary node
             SOAR->>PG: update execution state
         end
@@ -387,32 +382,31 @@ sequenceDiagram
     SOAR->>PG: persist terminal execution state
 
     rect rgb(255,245,245)
-        Note over WEB,CP: Cross-system bridge
+        Note over WEB,CP: 跨系统桥
     end
 
     WEB->>API: open AI investigation workbench
     API->>CP: proxy as service: bearer + server-asserted tenant/actor
-    Note over API,CP: the browser never holds a Copilot credential
+    Note over API,CP: 浏览器从不持有 Copilot 凭据
     CP-->>API: bounded JSON read model
     API-->>WEB: workspace projection
 ```
 
-### What this diagram solves
+### 这张图解决了什么
 
-It answers **"what actually happens, in order, and where can each step fail?"** The three
-`alt` branches are the parts worth memorizing: parse failure, event-time validation failure,
-and a failed alert write. Each one has a *different* policy, and mixing them up is the most
-common way to misdescribe this pipeline.
+它回答的是「**按顺序，实际发生了什么，以及每一步能在哪里失败？**」三个 `alt` 分支是值得记住的部分：
+解析失败、事件时间校验失败、告警写入失败。每一个都有*不同的*策略，把它们混为一谈，是对这条管线最
+常见的误述。
 
-### The three failure policies, side by side
+### 三种失败策略，并列对照
 
-| Failure | Destination | Policy |
+| 失败 | 去处 | 策略 |
 |---|---|---|
-| Logstash parse failure | ES `siem-events-raw-YYYY.MM.dd` | **Retained for forensics**; daily index, short retention, never enters Kafka or Flink |
-| Flink validation failure (JSON / event time) | Kafka `siem-events-dlq` | **Quarantined** for reprocessing; no automated replay tooling today |
-| Elasticsearch alert write failure | exception, and **no lifecycle event** | The announcement is suppressed so no downstream system sees a phantom alert |
+| Logstash 解析失败 | ES `siem-events-raw-YYYY.MM.dd` | **留存供取证**；按日索引、短留存，永不进入 Kafka 或 Flink |
+| Flink 校验失败（JSON / 事件时间） | Kafka `siem-events-dlq` | **隔离**待重处理；今天没有自动重放工具 |
+| Elasticsearch 告警写入失败 | 抛异常，且**不发出生命周期事件** | 播报被抑制，任何下游系统都不会看到一条幽灵告警 |
 
-### Load-bearing ordering
+### 承重次序
 
 ```text
 1. The alert must be STORED before it is ANNOUNCED.
@@ -425,7 +419,7 @@ common way to misdescribe this pipeline.
    That is what makes a human-approval node resumable rather than blocking.
 ```
 
-### Where the sibling system meets HISIEM
+### 兄弟系统在哪里与 HISIEM 相接
 
 ```text
 Browser  →  HISIEM /api/agent-investigations/**  (Spring Security RBAC)
@@ -437,5 +431,5 @@ A browser cannot override them through a request body or header, and Copilot
 credentials are never returned to the client.
 ```
 
-The reverse direction is equally deliberate: the execution state that matters for the
-combined system is the one **HISIEM records**, not the one the sibling believes it submitted.
+反方向同样刻意：对这套组合系统而言要紧的执行状态，是 **HISIEM 记录**的那个，不是兄弟系统自以为提交的
+那个。
