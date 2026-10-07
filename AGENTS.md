@@ -1,24 +1,19 @@
-# Repository Guidelines
+# 仓库约定
 
-## Project Structure & Module Organization
+## 项目结构与模块组织
 
-The Spring Boot code is organized into Maven modules under `modules/` and
-application composition roots under `applications/`; each module mirrors its
-packages under its own `src/main/java/` and `src/test/java/` trees. `flink/` is
-an independent Maven module for the detection job; its entry point is
-`com.siem.DetectionJob`, with tests under `flink/src/test/java/`. The Vue 3/Vite
-console lives in `web/`. Keep `web/src/App.vue` as a thin root, define real
-routes in `web/src/router/index.js`, centralize HTTP behavior in
-`web/src/api/index.js`, and split business pages under `web/src/views/<module>/`.
-Treat `infra/` as the source of truth for Docker Compose, Logstash pipelines,
-Elasticsearch templates, detection-rule YAML, and deployment scripts.
-Architecture and operational decisions belong in `docs/`. Do not commit
-generated `target/`, `web/dist/`, or `web/node_modules/` content.
+Spring Boot 代码组织为 `modules/` 下的 Maven 模块与 `applications/` 下的应用组合根；每个模块在自己的
+`src/main/java/` 与 `src/test/java/` 目录树下镜像其包结构。`flink/` 是检测作业的独立 Maven 模块，入口
+是 `com.siem.DetectionJob`，测试在 `flink/src/test/java/` 下。Vue 3/Vite 控制台在 `web/`。保持
+`web/src/App.vue` 是一个薄根组件，真实路由定义在 `web/src/router/index.js`，HTTP 行为集中在
+`web/src/api/index.js`，业务页面拆分到 `web/src/views/<module>/` 下。把 `infra/` 当作 Docker Compose、
+Logstash pipeline、Elasticsearch 模板、检测规则 YAML 与部署脚本的唯一来源。架构与运维决策写在
+`docs/`。不要提交生成物 `target/`、`web/dist/` 或 `web/node_modules/`。
 
-## Build, Test, and Development Commands
+## 构建、测试与开发命令
 
-Run commands from the repository root with Java 21. The Chinese-language
-counterpart of this file is [`CLAUDE.md`](CLAUDE.md) - keep the two in sync.
+在仓库根目录、用 Java 21 执行。本文件与 [`CLAUDE.md`](CLAUDE.md) 需保持同步——两者面向不同的 AI 编码
+工具，内容以同一套事实为准。
 
 ```bash
 ./mvnw test                            # test the whole Spring Boot reactor
@@ -29,23 +24,26 @@ npm --prefix web run dev               # start Vite on port 5173
 npm --prefix web run build             # create the production frontend bundle
 ```
 
-On Windows, use `mvnw.cmd`. Use `wsl bash /mnt/d/Project/SIEM/infra/deploy.sh` only for integration deployment; see `docs/operations/deployment.md` first.
+Windows 上用 `mvnw.cmd`。`wsl bash /mnt/d/Project/SIEM/infra/deploy.sh` 只用于集成部署；先看
+`docs/operations/deployment.md`。
 
-## Coding Style & Naming Conventions
+## 代码风格与命名约定
 
-Java uses the repository Spotless check with Google Java Format AOSP style;
-keep lowercase packages, `PascalCase` types, and `camelCase` members. Keep
-controllers thin and place behavior in feature services/stores. Follow the
-existing Vue frontend style: Composition API, two-space indentation, single
-quotes, no semicolons, `PascalCase` `.vue` components, and `camelCase`
-API/composable functions. List, form, and detail experiences should remain
-separate routes; do not move cross-page state into the root layout. YAML uses
-two spaces and kebab-case identifiers such as `rule-ssh-brute-force-001`.
+Java 使用仓库的 Spotless 检查配 Google Java Format AOSP 风格；包名小写、类型 `PascalCase`、成员
+`camelCase`。保持 controller 薄，行为放在 feature service/store 里。前端沿用既有 Vue 风格：
+Composition API、两空格缩进、单引号、不加分号、`.vue` 组件 `PascalCase`、API/composable 函数
+`camelCase`。列表、表单、详情应保持为各自独立的路由；不要把跨页状态挪进根布局。YAML 用两个空格与
+kebab-case 标识符，例如 `rule-ssh-brute-force-001`。
 
-## Testing Guidelines
+## 测试约定
 
-Tests use JUnit 5, Mockito, and Flink operator test harnesses. Name classes `*Test` and methods after observable behavior, for example `create_duplicatePort_conflict409`. Add success and failure-path tests for behavior changes. Every proposed change must state its validation command, expected result, and rollback or observability note. Run both Maven suites when changing shared schemas or detection rules. No numeric coverage gate is configured.
+测试使用 JUnit 5、Mockito 与 Flink operator test harness。类名用 `*Test`，方法名按可观测行为命名，
+例如 `create_duplicatePort_conflict409`。行为变更要补成功路径与失败路径测试。每个提议的改动都必须
+写明它的验证命令、预期结果，以及回滚或可观测性说明。改动共享 schema 或检测规则时要跑两套 Maven
+测试。没有配置覆盖率数值门禁。
 
-## Commit & Pull Request Guidelines
+## 提交与 Pull Request 约定
 
-History follows Conventional Commit-style prefixes, chiefly `feat:`, `fix:`, and `docs:`, followed by a concise imperative summary. Pull requests should explain scope and operational impact, link the relevant issue/story, list verification commands, and include screenshots for console changes. Highlight schema, index-template, rule, port, or deployment changes explicitly; never commit credentials or local runtime state.
+历史遵循 Conventional Commit 风格前缀，主要是 `feat:`、`fix:` 与 `docs:`，其后跟一句简明的祈使式
+摘要。Pull Request 应说明范围与运维影响、关联相关 issue/story、列出验证命令，并对控制台改动附截图。
+schema、索引模板、规则、端口或部署改动要显式点出；绝不提交凭据或本地运行期状态。
